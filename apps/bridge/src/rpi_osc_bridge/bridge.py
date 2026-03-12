@@ -21,19 +21,21 @@ except ImportError:
     print("ERROR: evdev not installed. Run: sudo pip3 install evdev")
     sys.exit(1)
 
-from constants import FEEDBACK_STATE_FILE, REGISTRATION_FILE
+from constants import FEEDBACK_STATE_FILE, REGISTRATION_FILE, NEXT_KEYS, PREV_KEYS, IGNORED_KEYS
 from config import MultiDeviceConfig, DeviceTarget
 from devices import find_keyboards_with_ports, get_usb_port_info
-from osc import BroadcastSender, FeedbackListener
+from osc import BroadcastSender, FeedbackListener, MdnsAnnouncer
+from satellite import CompanionSatellite
+from file_utils import safe_read_json, safe_write_json
 
 
 @dataclass
 class ActiveDevice:
-    """Tracks an active device with its input and broadcast sender."""
+    """Tracks an active device with its input and sender (broadcast or satellite)."""
     input_device: InputDevice
     usb_phys: str
     target: Optional[DeviceTarget]
-    broadcast_sender: Optional[BroadcastSender]
+    sender: object  # BroadcastSender or CompanionSatellite (duck-typed)
 
 
 class MultiDeviceBridge:
@@ -48,6 +50,8 @@ class MultiDeviceBridge:
         self.running = False
         self.active_devices: Dict[int, ActiveDevice] = {}  # fd -> ActiveDevice
         self.feedback_listeners: Dict[str, FeedbackListener] = {}  # channel -> listener
+        self.mdns_announcers: Dict[str, MdnsAnnouncer] = {}  # channel -> announcer
+        self.satellite: Optional[CompanionSatellite] = None  # shared satellite instance
         self.registration_mode = False
 
         signal.signal(signal.SIGINT, self.signal_handler)
@@ -59,7 +63,7 @@ class MultiDeviceBridge:
         self.running = False
 
     def setup(self) -> bool:
-        """Initialize all registered devices with their broadcast senders."""
+        """Initialize all registered devices with their senders."""
         keyboards = find_keyboards_with_ports()
 
         logging.info(f"Found {len(keyboards)} keyboard device(s):")
@@ -67,6 +71,22 @@ class MultiDeviceBridge:
             pc_str = " [Perfect Cue]" if kb.get("is_perfect_cue") else ""
             logging.info(f"  - {kb['name']} at {kb['path']}{pc_str}")
             logging.info(f"    PHYS: {kb.get('usb_phys', 'unknown')}")
+
+        is_satellite = self.config.mode == "satellite"
+
+        # In satellite mode, create one shared satellite instance
+        if is_satellite:
+            if not self.config.satellite_host:
+                logging.error("Satellite mode requires satellite.host to be configured")
+                return False
+            self.satellite = CompanionSatellite(
+                host=self.config.satellite_host,
+                port=self.config.satellite_port,
+            )
+            self.satellite.start()
+            logging.info(f"Mode: satellite -> {self.config.satellite_host}:{self.config.satellite_port}")
+        else:
+            logging.info("Mode: broadcast")
 
         active_channels = set()
 
@@ -88,22 +108,28 @@ class MultiDeviceBridge:
                 input_device = InputDevice(kb["path"])
                 input_device.grab()
 
-                sender = BroadcastSender(
-                    channel=target.channel,
-                    port=self.config.broadcast_port
-                )
+                if is_satellite:
+                    sender = self.satellite
+                else:
+                    sender = BroadcastSender(
+                        channel=target.channel,
+                        port=self.config.broadcast_port
+                    )
+                    active_channels.add(target.channel)
 
                 active = ActiveDevice(
                     input_device=input_device,
                     usb_phys=usb_phys,
                     target=target,
-                    broadcast_sender=sender
+                    sender=sender
                 )
 
                 self.active_devices[input_device.fd] = active
-                active_channels.add(target.channel)
 
-                logging.info(f"  {target.label} -> channel '{target.channel}'")
+                if is_satellite:
+                    logging.info(f"  {target.label} -> satellite")
+                else:
+                    logging.info(f"  {target.label} -> channel '{target.channel}'")
 
             except Exception as e:
                 logging.error(f"Failed to setup device {kb['name']}: {e}")
@@ -128,7 +154,7 @@ class MultiDeviceBridge:
                     input_device=input_device,
                     usb_phys=usb_phys,
                     target=None,
-                    broadcast_sender=None
+                    sender=None
                 )
 
                 self.active_devices[input_device.fd] = active
@@ -140,22 +166,37 @@ class MultiDeviceBridge:
         if not self.active_devices:
             logging.warning("No devices found")
 
-        # Setup feedback listeners for active channels
-        try:
-            os.makedirs(os.path.dirname(FEEDBACK_STATE_FILE), exist_ok=True)
+        # In broadcast mode, setup feedback listeners and mDNS
+        if not is_satellite:
+            try:
+                os.makedirs(os.path.dirname(FEEDBACK_STATE_FILE), exist_ok=True)
+
+                for channel in active_channels:
+                    listener = FeedbackListener(
+                        channel=channel,
+                        port=self.config.feedback_port,
+                        state_file=FEEDBACK_STATE_FILE
+                    )
+                    listener.start()
+                    self.feedback_listeners[channel] = listener
+                    logging.info(f"Feedback listener for channel '{channel}' on port {self.config.feedback_port}")
+
+            except Exception as e:
+                logging.warning(f"Could not start feedback listener: {e}")
 
             for channel in active_channels:
-                listener = FeedbackListener(
-                    channel=channel,
-                    port=self.config.feedback_port,
-                    state_file=FEEDBACK_STATE_FILE
-                )
-                listener.start()
-                self.feedback_listeners[channel] = listener
-                logging.info(f"Feedback listener for channel '{channel}' on port {self.config.feedback_port}")
-
-        except Exception as e:
-            logging.warning(f"Could not start feedback listener: {e}")
+                try:
+                    announcer = MdnsAnnouncer(
+                        channel=channel,
+                        port=self.config.broadcast_port,
+                        bridge_id=self.config.bridge_id,
+                        bridge_name=self.config.bridge_name
+                    )
+                    announcer.start()
+                    self.mdns_announcers[channel] = announcer
+                    logging.info(f"mDNS announcer for channel '{channel}' started")
+                except Exception as e:
+                    logging.warning(f"Could not start mDNS announcer for {channel}: {e}")
 
         return True
 
@@ -163,6 +204,7 @@ class MultiDeviceBridge:
         """Rescan for new USB keyboard devices. Returns count of newly added devices."""
         keyboards = find_keyboards_with_ports()
         new_count = 0
+        is_satellite = self.config.mode == "satellite"
 
         for kb in keyboards:
             usb_phys = kb.get("usb_phys")
@@ -183,23 +225,27 @@ class MultiDeviceBridge:
 
                 sender = None
                 if target:
-                    sender = BroadcastSender(
-                        channel=target.channel,
-                        port=self.config.broadcast_port
-                    )
-                    logging.info(f"Hot-plugged: {target.label} -> channel '{target.channel}'")
+                    if is_satellite:
+                        sender = self.satellite
+                        logging.info(f"Hot-plugged: {target.label} -> satellite")
+                    else:
+                        sender = BroadcastSender(
+                            channel=target.channel,
+                            port=self.config.broadcast_port
+                        )
+                        logging.info(f"Hot-plugged: {target.label} -> channel '{target.channel}'")
 
-                    if target.channel not in self.feedback_listeners:
-                        try:
-                            listener = FeedbackListener(
-                                channel=target.channel,
-                                port=self.config.feedback_port,
-                                state_file=FEEDBACK_STATE_FILE
-                            )
-                            listener.start()
-                            self.feedback_listeners[target.channel] = listener
-                        except Exception as e:
-                            logging.warning(f"Could not start feedback listener for {target.channel}: {e}")
+                        if target.channel not in self.feedback_listeners:
+                            try:
+                                listener = FeedbackListener(
+                                    channel=target.channel,
+                                    port=self.config.feedback_port,
+                                    state_file=FEEDBACK_STATE_FILE
+                                )
+                                listener.start()
+                                self.feedback_listeners[target.channel] = listener
+                            except Exception as e:
+                                logging.warning(f"Could not start feedback listener for {target.channel}: {e}")
                 else:
                     logging.info(f"Hot-plugged: {kb['name']} -> (unregistered, available for registration)")
 
@@ -207,7 +253,7 @@ class MultiDeviceBridge:
                     input_device=input_device,
                     usb_phys=usb_phys,
                     target=target,
-                    broadcast_sender=sender
+                    sender=sender
                 )
                 self.active_devices[input_device.fd] = active
                 new_count += 1
@@ -220,29 +266,21 @@ class MultiDeviceBridge:
     def check_registration_mode(self):
         """Check if registration mode is requested via file."""
         try:
-            if os.path.exists(REGISTRATION_FILE):
-                with open(REGISTRATION_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.registration_mode = data.get("active", False)
+            data = safe_read_json(REGISTRATION_FILE, default={})
+            self.registration_mode = data.get("active", False)
         except Exception:
             self.registration_mode = False
 
     def write_registration_detection(self, usb_phys: str, device_name: str):
         """Write detected device info for registration."""
         try:
-            os.makedirs(os.path.dirname(REGISTRATION_FILE), exist_ok=True)
-
-            data = {}
-            if os.path.exists(REGISTRATION_FILE):
-                with open(REGISTRATION_FILE, 'r') as f:
-                    data = json.load(f)
+            data = safe_read_json(REGISTRATION_FILE, default={})
 
             data["detected_phys"] = usb_phys
             data["detected_name"] = device_name
             data["detected_at"] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
-            with open(REGISTRATION_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
+            safe_write_json(REGISTRATION_FILE, data)
 
             logging.debug(f"Registration detection: {usb_phys}")
 
@@ -257,8 +295,8 @@ class MultiDeviceBridge:
         if event.value != 1:
             return
 
-        # Ignore KEY_B (fires after arrow presses on Perfect Cue)
-        if event.code == ecodes.KEY_B:
+        # Ignore phantom keys (e.g. KEY_B fires after arrow presses on Perfect Cue)
+        if event.code in IGNORED_KEYS:
             return
 
         self.check_registration_mode()
@@ -270,16 +308,16 @@ class MultiDeviceBridge:
             if not active_device.target:
                 return
 
-        if not active_device.target or not active_device.broadcast_sender:
+        if not active_device.target or not active_device.sender:
             logging.debug(f"Key from unregistered device: {active_device.usb_phys}")
             return
 
         cmd = None
-        if event.code == ecodes.KEY_LEFT:
-            active_device.broadcast_sender.send_prev()
+        if event.code in PREV_KEYS:
+            active_device.sender.send_prev()
             cmd = "prev"
-        elif event.code == ecodes.KEY_RIGHT:
-            active_device.broadcast_sender.send_next()
+        elif event.code in NEXT_KEYS:
+            active_device.sender.send_next()
             cmd = "next"
 
         if cmd:
@@ -351,6 +389,21 @@ class MultiDeviceBridge:
 
     def cleanup(self):
         """Release all resources."""
+        # Stop satellite once (shared instance, not per-device)
+        if self.satellite:
+            try:
+                self.satellite.close()
+            except Exception as e:
+                logging.error(f"Error stopping satellite: {e}")
+            self.satellite = None
+
+        for channel, announcer in self.mdns_announcers.items():
+            try:
+                announcer.stop()
+            except Exception as e:
+                logging.error(f"Error stopping mDNS announcer for {channel}: {e}")
+        self.mdns_announcers.clear()
+
         for channel, listener in self.feedback_listeners.items():
             try:
                 listener.stop()
@@ -358,12 +411,16 @@ class MultiDeviceBridge:
                 logging.error(f"Error stopping feedback listener for {channel}: {e}")
         self.feedback_listeners.clear()
 
+        closed_senders = set()
         for fd, active in list(self.active_devices.items()):
-            if active.broadcast_sender:
+            # Close per-device broadcast senders (skip shared satellite)
+            if active.sender and id(active.sender) not in closed_senders \
+                    and active.sender is not self.satellite:
                 try:
-                    active.broadcast_sender.close()
+                    active.sender.close()
                 except Exception:
                     pass
+                closed_senders.add(id(active.sender))
             try:
                 active.input_device.ungrab()
             except Exception:
@@ -402,7 +459,7 @@ def main():
     setup_logging(config.log_level)
 
     logging.info("=" * 50)
-    logging.info("RPi OSC Bridge starting (multi-device mode)...")
+    logging.info(f"RPi OSC Bridge starting (mode: {config.mode})...")
     logging.info("=" * 50)
 
     bridge = MultiDeviceBridge(config)

@@ -51,6 +51,7 @@ if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
     cp "$SCRIPT_DIR/config.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/devices.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/osc.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/file_utils.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/bridge.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/config-server.py" "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR/config.example.json" "$INSTALL_DIR/" 2>/dev/null || true
@@ -69,7 +70,7 @@ fi
 # Create venv and install Python dependencies
 echo "Creating Python virtual environment..."
 python3 -m venv "$INSTALL_DIR/venv"
-"$INSTALL_DIR/venv/bin/pip" install evdev python-osc
+"$INSTALL_DIR/venv/bin/pip" install evdev python-osc zeroconf
 
 # Create config directory and file
 echo "[3/6] Setting up configuration..."

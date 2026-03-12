@@ -3,10 +3,12 @@
 import os
 import json
 import logging
+import uuid
+import socket
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 
-from constants import VALID_CHANNELS, DEFAULT_BROADCAST_PORT
+from constants import VALID_CHANNELS, VALID_MODES, DEFAULT_BROADCAST_PORT, DEFAULT_SATELLITE_PORT
 
 
 @dataclass
@@ -20,11 +22,11 @@ class DeviceTarget:
 
 class MultiDeviceConfig:
     """
-    Configuration management with per-device channel support (v3 format).
-    Backward compatible with v1/v2 configs via migration.
-    Each device broadcasts to its own channel.
+    Configuration management with per-device channel support (v4 format).
+    Backward compatible with v1/v2/v3 configs via migration.
+    Supports broadcast mode (OSC) and satellite mode (Companion).
     """
-    CONFIG_VERSION = 3
+    CONFIG_VERSION = 4
     DEVICE_SLOTS = ["usb_1", "usb_2", "usb_3"]
 
     def __init__(self, config_path: str = "/etc/rpi-osc-bridge/config.json"):
@@ -34,12 +36,30 @@ class MultiDeviceConfig:
         self.feedback_port = DEFAULT_BROADCAST_PORT
         self.broadcast_port = DEFAULT_BROADCAST_PORT
 
+        self.mode = "broadcast"
+        self.satellite_host: Optional[str] = None
+        self.satellite_port: int = DEFAULT_SATELLITE_PORT
+
+        self.bridge_id = ""
+        self.bridge_name = ""
+
         self.devices: Dict[str, Optional[DeviceTarget]] = {
             slot: None for slot in self.DEVICE_SLOTS
         }
         self._raw_data = {}
 
         self.load()
+
+        # Auto-generate identity if missing
+        dirty = False
+        if not self.bridge_id:
+            self.bridge_id = str(uuid.uuid4())
+            dirty = True
+        if not self.bridge_name:
+            self.bridge_name = socket.gethostname()
+            dirty = True
+        if dirty:
+            self.save()
 
     def load(self):
         """Load configuration, handling v1, v2, and v3 formats."""
@@ -54,7 +74,9 @@ class MultiDeviceConfig:
 
             version = data.get("version", 1)
 
-            if version >= 3:
+            if version >= 4:
+                self._load_v4(data)
+            elif version >= 3:
                 self._load_v3(data)
             elif version >= 2:
                 self._load_v2(data)
@@ -77,6 +99,8 @@ class MultiDeviceConfig:
         self.log_level = data.get("log_level", self.log_level)
         self.feedback_port = data.get("feedback_port", self.feedback_port)
         self.broadcast_port = data.get("broadcast_port", self.broadcast_port)
+        self.bridge_id = data.get("bridge_id", "")
+        self.bridge_name = data.get("bridge_name", "")
 
         global_channel = data.get("channel", "main")
         if global_channel not in VALID_CHANNELS:
@@ -98,11 +122,34 @@ class MultiDeviceConfig:
         logging.info(f"Migrated v2 config to v3 format (default channel: {global_channel})")
 
     def _load_v3(self, data: Dict):
-        """Load v3 per-device channel config."""
+        """Load v3 per-device channel config (auto-migrates to v4)."""
+        self._load_devices_and_common(data)
+        # v3 has no mode/satellite fields — defaults are fine
+        logging.info("Migrated v3 config to v4 format (mode=broadcast)")
+
+    def _load_v4(self, data: Dict):
+        """Load v4 config with mode and satellite support."""
+        self._load_devices_and_common(data)
+
+        mode = data.get("mode", "broadcast")
+        if mode not in VALID_MODES:
+            logging.warning(f"Invalid mode '{mode}', defaulting to 'broadcast'")
+            mode = "broadcast"
+        self.mode = mode
+
+        satellite = data.get("satellite", {})
+        if isinstance(satellite, dict):
+            self.satellite_host = satellite.get("host")
+            self.satellite_port = satellite.get("port", DEFAULT_SATELLITE_PORT)
+
+    def _load_devices_and_common(self, data: Dict):
+        """Load common fields and device registrations (shared by v3/v4)."""
         self.version = data.get("version", self.CONFIG_VERSION)
         self.log_level = data.get("log_level", self.log_level)
         self.feedback_port = data.get("feedback_port", self.feedback_port)
         self.broadcast_port = data.get("broadcast_port", self.broadcast_port)
+        self.bridge_id = data.get("bridge_id", "")
+        self.bridge_name = data.get("bridge_name", "")
 
         devices_data = data.get("devices", {})
         for slot in self.DEVICE_SLOTS:
@@ -163,13 +210,20 @@ class MultiDeviceConfig:
         return self.save()
 
     def save(self) -> bool:
-        """Save configuration to file in v3 format."""
+        """Save configuration to file in v4 format."""
         try:
             data = {
                 "version": self.CONFIG_VERSION,
+                "mode": self.mode,
                 "broadcast_port": self.broadcast_port,
                 "feedback_port": self.feedback_port,
                 "log_level": self.log_level,
+                "bridge_id": self.bridge_id,
+                "bridge_name": self.bridge_name,
+                "satellite": {
+                    "host": self.satellite_host,
+                    "port": self.satellite_port,
+                },
                 "devices": {}
             }
 

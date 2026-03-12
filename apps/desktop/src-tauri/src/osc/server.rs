@@ -28,8 +28,10 @@
 //! We use a channel to signal shutdown. When `OscServerHandle::stop()` is called,
 //! it sends a message through the channel, and the main loop exits cleanly.
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Instant;
 
 use rosc::{encoder, OscPacket};
 use tokio::net::UdpSocket;
@@ -331,6 +333,11 @@ impl OscServer {
             let mut buf = [0u8; 1024];
             let mut broadcast_buf = [0u8; 1024];
 
+            // Deduplication cache: (source_addr, osc_address) -> last_seen timestamp
+            // Prevents triple-execution from bridge retry logic (3x sends)
+            let mut dedup_cache: HashMap<(SocketAddr, String), Instant> = HashMap::new();
+            let mut last_dedup_prune = Instant::now();
+
             log::info!("OSC server event loop started");
 
             // Main event loop
@@ -391,11 +398,38 @@ impl OscServer {
                         if let Ok((len, src)) = result {
                             match rosc::decoder::decode_udp(&broadcast_buf[..len]) {
                                 Ok((_, packet)) => {
+                                    let addr_str = Self::get_packet_address(&packet);
+
+                                    // Deduplication: skip if same (src, address) seen within 100ms
+                                    let dedup_key = (src, addr_str.clone());
+                                    let now = Instant::now();
+                                    if let Some(last_seen) = dedup_cache.get(&dedup_key) {
+                                        if now.duration_since(*last_seen).as_millis() < 100 {
+                                            log::trace!(
+                                                "Dedup: skipping duplicate broadcast from {}: {}",
+                                                src, addr_str
+                                            );
+                                            // Prune old entries periodically
+                                            if now.duration_since(last_dedup_prune).as_secs() >= 1 {
+                                                dedup_cache.retain(|_, t| now.duration_since(*t).as_secs() < 1);
+                                                last_dedup_prune = now;
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    dedup_cache.insert(dedup_key, now);
+
+                                    // Prune old entries periodically
+                                    if now.duration_since(last_dedup_prune).as_secs() >= 1 {
+                                        dedup_cache.retain(|_, t| now.duration_since(*t).as_secs() < 1);
+                                        last_dedup_prune = now;
+                                    }
+
                                     // Log ALL incoming broadcast packets at info level
                                     log::info!(
                                         "📡 OSC broadcast from {}: {} {}",
                                         src,
-                                        Self::get_packet_address(&packet),
+                                        addr_str,
                                         Self::get_packet_args(&packet)
                                     );
 

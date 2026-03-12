@@ -18,18 +18,25 @@ try:
     from devices import find_keyboards_with_ports
     from config import MultiDeviceConfig
     from osc import BroadcastSender
-    from constants import VALID_CHANNELS, DEFAULT_BROADCAST_PORT, CONFIG_FILE, \
-        REGISTRATION_FILE, FEEDBACK_STATE_FILE, DEVICE_SLOTS
+    from constants import VALID_CHANNELS, VALID_MODES, DEFAULT_BROADCAST_PORT, \
+        DEFAULT_SATELLITE_PORT, CONFIG_FILE, REGISTRATION_FILE, \
+        FEEDBACK_STATE_FILE, SATELLITE_STATUS_FILE, DEVICE_SLOTS
+    from file_utils import safe_read_json, safe_write_json
 except ImportError:
     print("WARNING: Could not import bridge utilities")
     find_keyboards_with_ports = None
     MultiDeviceConfig = None
     BroadcastSender = None
+    safe_read_json = None
+    safe_write_json = None
     VALID_CHANNELS = ["main", "backup"]
+    VALID_MODES = ["broadcast", "satellite"]
     DEFAULT_BROADCAST_PORT = 9002
+    DEFAULT_SATELLITE_PORT = 16622
     CONFIG_FILE = "/etc/rpi-osc-bridge/config.json"
     REGISTRATION_FILE = "/var/run/rpi-osc-bridge/registration.json"
     FEEDBACK_STATE_FILE = "/var/run/rpi-osc-bridge/feedback.json"
+    SATELLITE_STATUS_FILE = "/var/run/rpi-osc-bridge/satellite.json"
     DEVICE_SLOTS = ["usb_1", "usb_2", "usb_3"]
 
 WEB_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -47,36 +54,53 @@ def validate_channel(channel: str) -> bool:
 
 
 def get_global_config() -> dict:
-    """Get global configuration (ports, log level, valid channels)."""
+    """Get global configuration (mode, ports, satellite, log level, valid channels)."""
     if not MultiDeviceConfig:
         return {
+            "mode": "broadcast",
             "broadcast_port": DEFAULT_BROADCAST_PORT,
             "feedback_port": DEFAULT_BROADCAST_PORT,
             "log_level": "INFO",
+            "satellite": {"host": None, "port": DEFAULT_SATELLITE_PORT},
             "valid_channels": list(VALID_CHANNELS),
+            "valid_modes": list(VALID_MODES),
             "error": "MultiDeviceConfig not available"
         }
 
     try:
         config = MultiDeviceConfig()
         return {
+            "mode": config.mode,
             "broadcast_port": config.broadcast_port,
             "feedback_port": config.feedback_port,
             "log_level": config.log_level,
-            "valid_channels": list(VALID_CHANNELS)
+            "bridge_id": config.bridge_id,
+            "bridge_name": config.bridge_name,
+            "satellite": {
+                "host": config.satellite_host,
+                "port": config.satellite_port,
+            },
+            "valid_channels": list(VALID_CHANNELS),
+            "valid_modes": list(VALID_MODES),
         }
     except Exception as e:
         return {
+            "mode": "broadcast",
             "broadcast_port": DEFAULT_BROADCAST_PORT,
             "feedback_port": DEFAULT_BROADCAST_PORT,
             "log_level": "INFO",
+            "satellite": {"host": None, "port": DEFAULT_SATELLITE_PORT},
             "valid_channels": list(VALID_CHANNELS),
+            "valid_modes": list(VALID_MODES),
             "error": str(e)
         }
 
 
-def save_global_config(broadcast_port: int, feedback_port: int, log_level: str) -> tuple[bool, str]:
-    """Save global configuration (ports, log level)."""
+def save_global_config(broadcast_port: int, feedback_port: int, log_level: str,
+                       bridge_name: str = None, mode: str = None,
+                       satellite_host: str = None,
+                       satellite_port: int = None) -> tuple[bool, str]:
+    """Save global configuration (mode, ports, satellite, log level)."""
     if not MultiDeviceConfig:
         return False, "MultiDeviceConfig not available"
 
@@ -89,11 +113,25 @@ def save_global_config(broadcast_port: int, feedback_port: int, log_level: str) 
     if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR"]:
         return False, "Invalid log level"
 
+    if mode is not None and mode not in VALID_MODES:
+        return False, f"Invalid mode: {mode}"
+
+    if satellite_port is not None and not validate_port(satellite_port):
+        return False, "Invalid satellite port number"
+
     try:
         config = MultiDeviceConfig()
         config.broadcast_port = broadcast_port
         config.feedback_port = feedback_port
         config.log_level = log_level
+        if bridge_name is not None:
+            config.bridge_name = bridge_name
+        if mode is not None:
+            config.mode = mode
+        if satellite_host is not None:
+            config.satellite_host = satellite_host if satellite_host else None
+        if satellite_port is not None:
+            config.satellite_port = satellite_port
 
         if config.save():
             try:
@@ -147,6 +185,24 @@ def get_feedback_state() -> dict:
     }
 
 
+def get_satellite_status() -> dict:
+    """Read satellite connection status from file."""
+    try:
+        if os.path.exists(SATELLITE_STATUS_FILE):
+            with open(SATELLITE_STATUS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error reading satellite status: {e}", file=sys.stderr)
+
+    return {
+        "connected": False,
+        "host": None,
+        "port": None,
+        "companion_version": None,
+        "api_version": None,
+    }
+
+
 def get_recent_logs(lines: int = 50) -> list:
     """Get recent log lines from bridge service."""
     try:
@@ -197,10 +253,14 @@ def get_registered_devices() -> dict:
                 result[slot] = None
         return {
             "devices": result,
+            "mode": config.mode,
             "log_level": config.log_level,
             "feedback_port": config.feedback_port,
             "broadcast_port": config.broadcast_port,
-            "valid_channels": list(VALID_CHANNELS)
+            "bridge_id": config.bridge_id,
+            "bridge_name": config.bridge_name,
+            "valid_channels": list(VALID_CHANNELS),
+            "valid_modes": list(VALID_MODES),
         }
     except Exception as e:
         print(f"Error loading registered devices: {e}", file=sys.stderr)
@@ -213,8 +273,6 @@ def start_registration(slot: str) -> tuple[bool, str]:
         return False, f"Invalid slot: {slot}"
 
     try:
-        os.makedirs(os.path.dirname(REGISTRATION_FILE), exist_ok=True)
-
         data = {
             "active": True,
             "target_slot": slot,
@@ -223,8 +281,7 @@ def start_registration(slot: str) -> tuple[bool, str]:
             "started_at": None
         }
 
-        with open(REGISTRATION_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
+        safe_write_json(REGISTRATION_FILE, data)
 
         return True, f"Registration started for {slot}"
 
@@ -235,9 +292,9 @@ def start_registration(slot: str) -> tuple[bool, str]:
 def get_registration_status() -> dict:
     """Get current registration status."""
     try:
-        if os.path.exists(REGISTRATION_FILE):
-            with open(REGISTRATION_FILE, 'r') as f:
-                return json.load(f)
+        data = safe_read_json(REGISTRATION_FILE)
+        if data is not None:
+            return data
     except Exception as e:
         print(f"Error reading registration status: {e}", file=sys.stderr)
 
@@ -418,6 +475,9 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
         elif path == "/config/global":
             self._send_json(get_global_config())
 
+        elif path == "/satellite/status":
+            self._send_json(get_satellite_status())
+
         else:
             self.send_error(404, "Not found")
 
@@ -501,7 +561,7 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_error(500, f"Server error: {e}")
 
-        # Save global configuration (ports, log level)
+        # Save global configuration (mode, ports, satellite, log level)
         elif path == "/config/global":
             try:
                 data = self._read_json_body()
@@ -509,8 +569,18 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
                 broadcast_port = data.get("broadcast_port", DEFAULT_BROADCAST_PORT)
                 feedback_port = data.get("feedback_port", DEFAULT_BROADCAST_PORT)
                 log_level = data.get("log_level", "INFO")
+                bridge_name = data.get("bridge_name")
+                mode = data.get("mode")
 
-                success, message = save_global_config(broadcast_port, feedback_port, log_level)
+                satellite = data.get("satellite", {})
+                satellite_host = satellite.get("host") if isinstance(satellite, dict) else None
+                satellite_port = satellite.get("port") if isinstance(satellite, dict) else None
+
+                success, message = save_global_config(
+                    broadcast_port, feedback_port, log_level, bridge_name,
+                    mode=mode, satellite_host=satellite_host,
+                    satellite_port=satellite_port
+                )
                 self._send_json(
                     {"success": success, "message": message},
                     200 if success else 400

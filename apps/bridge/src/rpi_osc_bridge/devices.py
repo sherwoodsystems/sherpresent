@@ -12,6 +12,8 @@ except ImportError:
     import sys
     sys.exit(1)
 
+from constants import ALL_CLICKER_KEYS
+
 
 def is_perfect_cue(device_name: str) -> bool:
     """Check if device is a DSan Perfect Cue based on name."""
@@ -94,7 +96,7 @@ def find_keyboards_with_ports() -> List[Dict[str, str]]:
         caps = device.capabilities()
         if ecodes.EV_KEY in caps:
             keys = caps[ecodes.EV_KEY]
-            if ecodes.KEY_LEFT in keys and ecodes.KEY_RIGHT in keys:
+            if any(k in keys for k in ALL_CLICKER_KEYS):
                 port_info = get_usb_port_info(device.path)
                 is_pc = is_perfect_cue(device.name)
                 keyboard_info = {

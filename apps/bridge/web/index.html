@@ -434,8 +434,41 @@
 
     <div id="message" class="message"></div>
 
+    <!-- Mode selector -->
+    <div id="modeSection" style="margin-bottom: 20px;">
+        <div class="form-group">
+            <label>Bridge Mode</label>
+            <div style="display: flex; gap: 10px;">
+                <label style="display: inline-flex; align-items: center; gap: 5px; font-weight: normal; cursor: pointer;">
+                    <input type="radio" name="bridgeMode" value="broadcast" checked onchange="onModeChange(this.value)"> Broadcast (OSC)
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 5px; font-weight: normal; cursor: pointer;">
+                    <input type="radio" name="bridgeMode" value="satellite" onchange="onModeChange(this.value)"> Satellite (Companion)
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Satellite config (shown in satellite mode) -->
+    <div id="satelliteConfig" style="display: none; margin-bottom: 20px; border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+        <h2 style="margin-top: 0;">Companion Satellite</h2>
+        <div id="satelliteStatus" class="status" style="margin-bottom: 15px;">
+            Not connected
+        </div>
+        <div class="form-group">
+            <label for="satelliteHost">Companion Host</label>
+            <input type="text" id="satelliteHost" placeholder="192.168.1.100">
+            <p class="help-text">IP address of the computer running Bitfocus Companion</p>
+        </div>
+        <div class="form-group">
+            <label for="satellitePort">Satellite Port</label>
+            <input type="number" id="satellitePort" value="16622" min="1" max="65535">
+            <p class="help-text">TCP port for Satellite API (default: 16622)</p>
+        </div>
+    </div>
+
     <h2>Device Management</h2>
-    <p style="margin-bottom: 15px; font-size: 13px; color: #666;">
+    <p id="deviceDesc" style="margin-bottom: 15px; font-size: 13px; color: #666;">
         Register your keyboard devices and assign each to a broadcast channel.
     </p>
 
@@ -522,11 +555,11 @@
     </details>
 
     <div class="footer">
-        SherPresent OSC Bridge <span class="version-badge">v2.1.0</span> - Configuration saved automatically restarts service
+        SherPresent OSC Bridge <span class="version-badge">v2.2.0</span> - Configuration saved automatically restarts service
     </div>
 
     <script>
-        const VERSION = '2.1.0';
+        const VERSION = '2.2.0';
         const API_BASE = '';
         const DEVICE_SLOTS = ['usb_1', 'usb_2', 'usb_3'];
         const SLOT_NAMES = {
@@ -537,11 +570,15 @@
 
         // Global config state
         let globalConfig = {
+            mode: 'broadcast',
             broadcast_port: 9002,
             feedback_port: 9002,
             log_level: 'INFO',
-            valid_channels: []
+            valid_channels: [],
+            satellite: { host: null, port: 16622 }
         };
+
+        let satellitePollInterval = null;
 
         // Registration state
         let registration = {
@@ -579,15 +616,25 @@
                 const response = await fetch(`${API_BASE}/config/global`);
                 const data = await response.json();
 
+                globalConfig.mode = data.mode || 'broadcast';
                 globalConfig.broadcast_port = data.broadcast_port || 9002;
                 globalConfig.feedback_port = data.feedback_port || 9002;
                 globalConfig.log_level = data.log_level || 'INFO';
                 globalConfig.valid_channels = data.valid_channels || ['main', 'backup'];
+                globalConfig.satellite = data.satellite || { host: null, port: 16622 };
 
                 // Update UI
                 document.getElementById('broadcastPort').value = globalConfig.broadcast_port;
                 document.getElementById('feedbackPort').value = globalConfig.feedback_port;
                 document.getElementById('logLevel').value = globalConfig.log_level;
+
+                // Mode radio
+                const modeRadio = document.querySelector(`input[name="bridgeMode"][value="${globalConfig.mode}"]`);
+                if (modeRadio) modeRadio.checked = true;
+
+                // Satellite fields
+                document.getElementById('satelliteHost').value = globalConfig.satellite.host || '';
+                document.getElementById('satellitePort').value = globalConfig.satellite.port || 16622;
 
                 // Populate channel dropdown in registration modal
                 const channelSelect = document.getElementById('regChannel');
@@ -595,16 +642,77 @@
                     `<option value="${ch}">${ch}</option>`
                 ).join('');
 
+                // Apply mode UI
+                applyModeUI(globalConfig.mode);
+
             } catch (err) {
                 console.error('Failed to load global config:', err);
             }
         }
 
+        // Handle mode change
+        function onModeChange(mode) {
+            globalConfig.mode = mode;
+            applyModeUI(mode);
+        }
+
+        // Show/hide UI sections based on mode
+        function applyModeUI(mode) {
+            const isSatellite = mode === 'satellite';
+
+            document.getElementById('satelliteConfig').style.display = isSatellite ? 'block' : 'none';
+            document.getElementById('deviceDesc').textContent = isSatellite
+                ? 'Register your keyboard devices. All devices share the satellite connection.'
+                : 'Register your keyboard devices and assign each to a broadcast channel.';
+
+            // Start/stop satellite status polling
+            if (isSatellite) {
+                if (!satellitePollInterval) {
+                    pollSatelliteStatus();
+                    satellitePollInterval = setInterval(pollSatelliteStatus, 3000);
+                }
+            } else {
+                if (satellitePollInterval) {
+                    clearInterval(satellitePollInterval);
+                    satellitePollInterval = null;
+                }
+            }
+
+            // Re-render device slots to show/hide channel selectors and test buttons
+            loadRegisteredDevices();
+        }
+
+        // Poll satellite connection status
+        async function pollSatelliteStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/satellite/status`);
+                const data = await response.json();
+                const el = document.getElementById('satelliteStatus');
+
+                if (data.connected) {
+                    el.className = 'status running';
+                    el.textContent = `Connected to Companion ${data.companion_version || '?'} (API ${data.api_version || '?'})`;
+                } else {
+                    el.className = 'status stopped';
+                    el.textContent = data.host
+                        ? `Connecting to ${data.host}:${data.port}...`
+                        : 'Not connected';
+                }
+            } catch (err) {
+                const el = document.getElementById('satelliteStatus');
+                el.className = 'status stopped';
+                el.textContent = 'Status unavailable';
+            }
+        }
+
         // Save global config
         async function saveGlobalConfig() {
+            const mode = document.querySelector('input[name="bridgeMode"]:checked')?.value || 'broadcast';
             const broadcast_port = parseInt(document.getElementById('broadcastPort').value) || 9002;
             const feedback_port = parseInt(document.getElementById('feedbackPort').value) || 9002;
             const log_level = document.getElementById('logLevel').value;
+            const satellite_host = document.getElementById('satelliteHost').value.trim() || null;
+            const satellite_port = parseInt(document.getElementById('satellitePort').value) || 16622;
 
             try {
                 document.getElementById('btnSaveSettings').disabled = true;
@@ -613,7 +721,10 @@
                 const response = await fetch(`${API_BASE}/config/global`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ broadcast_port, feedback_port, log_level })
+                    body: JSON.stringify({
+                        mode, broadcast_port, feedback_port, log_level,
+                        satellite: { host: satellite_host, port: satellite_port }
+                    })
                 });
 
                 const result = await response.json();
@@ -635,6 +746,8 @@
         // Render device slots
         function renderDeviceSlots(devices) {
             const container = document.getElementById('deviceSlots');
+            const isSatellite = globalConfig.mode === 'satellite';
+
             container.innerHTML = DEVICE_SLOTS.map(slot => {
                 const device = devices[slot];
                 const isRegistered = device !== null && device !== undefined;
@@ -648,12 +761,16 @@
                             </span>
                         </div>
                         ${isRegistered ? `
+                            ${!isSatellite ? `
                             <div class="slot-info">
                                 <div><span class="info-label">Channel:</span> <span class="channel-badge">${escapeHtml(device.channel)}</span></div>
                             </div>
+                            ` : ''}
                             <div class="slot-actions">
+                                ${!isSatellite ? `
                                 <button onclick="testDevice('${slot}', 'prev')">&larr; Prev</button>
                                 <button onclick="testDevice('${slot}', 'next')">Next &rarr;</button>
+                                ` : ''}
                                 <button onclick="unregisterDevice('${slot}')">Remove</button>
                             </div>
                         ` : `

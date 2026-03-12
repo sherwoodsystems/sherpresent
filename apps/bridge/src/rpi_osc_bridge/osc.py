@@ -25,7 +25,17 @@ try:
 except ImportError:
     netifaces = None
 
-from constants import DEFAULT_BROADCAST_PORT
+try:
+    from zeroconf import Zeroconf, ServiceBrowser, ServiceInfo, ServiceStateChange
+except ImportError:
+    Zeroconf = None
+    ServiceBrowser = None
+    ServiceInfo = None
+    ServiceStateChange = None
+
+import uuid as _uuid
+
+from constants import DEFAULT_BROADCAST_PORT, MDNS_SERVICE_TYPE, BRIDGE_VERSION_STRING
 
 
 class BroadcastSender:
@@ -34,12 +44,14 @@ class BroadcastSender:
     Uses subnet broadcast address when available, falls back to 255.255.255.255.
     """
 
-    def __init__(self, channel: str, port: int = DEFAULT_BROADCAST_PORT):
+    def __init__(self, channel: str, port: int = DEFAULT_BROADCAST_PORT,
+                 peer_discovery: 'PeerDiscovery' = None):
         self.channel = channel
         self.port = port
         self.broadcast_addr = self._get_broadcast_address()
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.peer_discovery = peer_discovery
         logging.info(f"Broadcast sender ready: {self.broadcast_addr}:{self.port} channel={self.channel}")
 
     def _get_broadcast_address(self) -> str:
@@ -93,14 +105,27 @@ class BroadcastSender:
         self._send(f"/clicker/{self.channel}/goto", slide)
 
     def _send(self, address: str, *args):
-        """Send OSC message to broadcast address."""
+        """Send OSC message to broadcast address and unicast peers, 3x for reliability."""
         try:
             builder = OscMessageBuilder(address=address)
             for arg in args:
                 builder.add_arg(arg)
             msg = builder.build()
-            self.socket.sendto(msg.dgram, (self.broadcast_addr, self.port))
-            logging.debug(f"Broadcast: {address} -> {self.broadcast_addr}:{self.port}")
+
+            # Collect all targets: broadcast + unicast peers
+            targets = [(self.broadcast_addr, self.port)]
+            if self.peer_discovery:
+                for peer_addr, peer_port in self.peer_discovery.get_desktop_peers():
+                    targets.append((peer_addr, peer_port))
+
+            # Send 3x to all targets for reliability
+            for i in range(3):
+                for addr, port in targets:
+                    self.socket.sendto(msg.dgram, (addr, port))
+                if i < 2:
+                    time.sleep(0.010)  # 10ms between retries
+
+            logging.debug(f"Sent (3x) to {len(targets)} target(s): {address}")
         except Exception as e:
             logging.error(f"Broadcast send failed: {e}")
 
@@ -110,6 +135,155 @@ class BroadcastSender:
             self.socket.close()
         except Exception:
             pass
+
+
+class PeerDiscovery:
+    """
+    Discovers desktop peers via mDNS browsing.
+    Maintains a set of (ip, port) for discovered desktop instances.
+    Filters out version=bridge peers (other bridges).
+    """
+
+    def __init__(self, broadcast_port: int = DEFAULT_BROADCAST_PORT):
+        self.broadcast_port = broadcast_port
+        self._peers = {}  # name -> (ip, port)
+        self._lock = threading.Lock()
+        self._zeroconf = None
+        self._browser = None
+
+    def start(self):
+        """Start browsing for desktop peers."""
+        if Zeroconf is None:
+            logging.warning("zeroconf not available, peer discovery disabled")
+            return
+
+        try:
+            self._zeroconf = Zeroconf()
+            self._browser = ServiceBrowser(
+                self._zeroconf,
+                MDNS_SERVICE_TYPE,
+                handlers=[self._on_service_state_change]
+            )
+            logging.info("mDNS peer discovery started")
+        except Exception as e:
+            logging.warning(f"Could not start mDNS peer discovery: {e}")
+
+    def _on_service_state_change(self, zeroconf, service_type, name, state_change):
+        """Handle mDNS service state changes."""
+        if state_change == ServiceStateChange.Added or state_change == ServiceStateChange.Updated:
+            info = zeroconf.get_service_info(service_type, name)
+            if info is None:
+                return
+
+            # Filter out bridge peers
+            properties = {k.decode(): v.decode() if isinstance(v, bytes) else v
+                         for k, v in info.properties.items()}
+            if properties.get("version") == "bridge":
+                return
+
+            addresses = info.parsed_addresses()
+            if addresses:
+                ip = addresses[0]
+                # Desktop listens on broadcast port for broadcast commands
+                with self._lock:
+                    self._peers[name] = (ip, self.broadcast_port)
+                logging.debug(f"Discovered desktop peer: {name} at {ip}:{self.broadcast_port}")
+
+        elif state_change == ServiceStateChange.Removed:
+            with self._lock:
+                if name in self._peers:
+                    del self._peers[name]
+                    logging.debug(f"Desktop peer removed: {name}")
+
+    def get_desktop_peers(self):
+        """Return list of (ip, port) tuples for discovered desktop peers."""
+        with self._lock:
+            return list(self._peers.values())
+
+    def stop(self):
+        """Stop browsing."""
+        if self._browser:
+            self._browser.cancel()
+            self._browser = None
+        if self._zeroconf:
+            self._zeroconf.close()
+            self._zeroconf = None
+        logging.debug("mDNS peer discovery stopped")
+
+
+class MdnsAnnouncer:
+    """
+    Registers the bridge as a _sher-present._udp.local. mDNS service.
+    Desktop instances browsing for this service will see the bridge appear.
+    """
+
+    def __init__(self, channel: str, port: int = DEFAULT_BROADCAST_PORT,
+                 bridge_id: str = "", bridge_name: str = ""):
+        self.channel = channel
+        self.port = port
+        self._instance_id = bridge_id or str(_uuid.uuid4())
+        self._bridge_name = bridge_name or socket.gethostname()
+        self._zeroconf = None
+        self._service_info = None
+
+    def start(self):
+        """Register the mDNS service."""
+        if Zeroconf is None or ServiceInfo is None:
+            logging.warning("zeroconf not available, mDNS announcer disabled")
+            return
+
+        try:
+            local_ip = self._get_local_ip()
+            hostname = socket.gethostname()
+            self._zeroconf = Zeroconf()
+
+            self._service_info = ServiceInfo(
+                MDNS_SERVICE_TYPE,
+                f"bridge-{self.channel}-{self._instance_id[:8]}.{MDNS_SERVICE_TYPE}",
+                port=self.port,
+                addresses=[socket.inet_aton(local_ip)] if local_ip else None,
+                properties={
+                    "version": BRIDGE_VERSION_STRING,
+                    "channel": self.channel,
+                    "instance": self._instance_id,
+                    "name": self._bridge_name,
+                },
+                server=f"{hostname}.local.",
+            )
+
+            self._zeroconf.register_service(self._service_info)
+            logging.info(
+                f"mDNS service registered: bridge-{self.channel} "
+                f"name={self._bridge_name} (instance={self._instance_id[:8]}...)"
+            )
+        except Exception as e:
+            logging.warning(f"Could not register mDNS service: {e}")
+
+    def _get_local_ip(self) -> str:
+        """Find non-loopback local IP via UDP connect trick."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "127.0.0.1"
+
+    def stop(self):
+        """Unregister the mDNS service."""
+        if self._zeroconf and self._service_info:
+            try:
+                self._zeroconf.unregister_service(self._service_info)
+            except Exception:
+                pass
+        if self._zeroconf:
+            try:
+                self._zeroconf.close()
+            except Exception:
+                pass
+            self._zeroconf = None
+        logging.debug(f"mDNS announcer for channel '{self.channel}' stopped")
 
 
 class FeedbackListener:

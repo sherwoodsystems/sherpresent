@@ -1,8 +1,13 @@
 {
-  "version": 3,
+  "version": 4,
+  "mode": "broadcast",
   "broadcast_port": 9002,
   "feedback_port": 9002,
   "log_level": "INFO",
+  "satellite": {
+    "host": null,
+    "port": 16622
+  },
   "devices": {
     "usb_1": null,
     "usb_2": null,
