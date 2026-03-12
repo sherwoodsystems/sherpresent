@@ -30,3 +30,6 @@ build/
 dist/
 target/
 *.run
+
+# Reference/prototype code
+ref/

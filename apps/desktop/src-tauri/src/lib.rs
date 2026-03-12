@@ -46,6 +46,11 @@ pub fn run() {
             commands::osc::start_osc_server,
             commands::osc::stop_osc_server,
             commands::osc::is_osc_server_running,
+            // Canva
+            commands::canva::open_canva_remote,
+            commands::canva::close_canva_remote,
+            commands::canva::log_from_webview,
+            commands::canva::get_canva_connection_status,
             // Channel Discovery
             commands::discovery::get_discovered_peers,
             commands::discovery::start_discovery,
@@ -63,11 +68,19 @@ pub fn run() {
             );
 
             // Auto-start OSC server
+            // Store adapter config in AppState
+            {
+                let state = app.state::<AppState>();
+                let mut ac = state.adapter_config.lock().unwrap();
+                *ac = config.adapter_config.clone();
+            }
+
             let app_handle = app.handle().clone();
             let osc_config = config.osc.clone();
             let adapter = config.adapter.clone();
             let presentation_name = config.presentation_name.clone();
             let channel_config = config.channel.clone();
+            let adapter_config = config.adapter_config.clone();
 
             tauri::async_runtime::spawn(async move {
                 log::info!("Auto-starting OSC server on port {}", osc_config.receive_port);
@@ -83,6 +96,7 @@ pub fn run() {
                 let state_manager = Arc::new(StateManager::new(
                     adapter,
                     presentation_name,
+                    adapter_config,
                     state_change_tx,
                 ));
 

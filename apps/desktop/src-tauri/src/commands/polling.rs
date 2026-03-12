@@ -19,6 +19,7 @@ pub fn start_status_polling(
     // Clone the app handle for the thread
     let app_clone = app.clone();
     let state_ref = app.state::<AppState>().polling_active.clone();
+    let adapter_config = app.state::<AppState>().adapter_config.lock().unwrap().clone();
 
     std::thread::spawn(move || {
         loop {
@@ -31,7 +32,7 @@ pub fn start_status_polling(
             }
 
             // Get current status
-            let status = match get_adapter(&adapter) {
+            let status = match get_adapter(&adapter, &adapter_config) {
                 Some(adapter_impl) => adapter_impl.get_live_status(&presentation_name),
                 None => LiveStatus::default(),
             };

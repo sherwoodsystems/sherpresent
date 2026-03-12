@@ -1,2 +1,0 @@
-evdev>=1.6.0
-python-osc>=1.8.0

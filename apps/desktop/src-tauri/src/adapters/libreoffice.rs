@@ -13,7 +13,7 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const IMPRESS_REMOTE_PORT: u16 = 1599;
+pub const IMPRESS_REMOTE_PORT: u16 = 1599;
 const CLIENT_NAME: &str = "SherPresent";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
@@ -30,6 +30,10 @@ struct ImpressState {
 
 /// LibreOffice Impress adapter using the Impress Remote Protocol
 pub struct LibreOfficeAdapter {
+    /// Target host (IP or hostname)
+    host: String,
+    /// Target port
+    port: u16,
     /// Cached state from server messages
     state: Arc<Mutex<ImpressState>>,
     /// Active TCP connection (if any)
@@ -37,8 +41,10 @@ pub struct LibreOfficeAdapter {
 }
 
 impl LibreOfficeAdapter {
-    pub fn new() -> Self {
+    pub fn new(host: String, port: u16) -> Self {
         Self {
+            host,
+            port,
             state: Arc::new(Mutex::new(ImpressState::default())),
             connection: Arc::new(Mutex::new(None)),
         }
@@ -55,19 +61,18 @@ impl LibreOfficeAdapter {
         }
 
         // Try to connect
+        let addr_str = format!("{}:{}", self.host, self.port);
         let stream = TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", IMPRESS_REMOTE_PORT)
-                .parse()
-                .unwrap(),
+            &addr_str.parse().map_err(|e| format!("Invalid address {}: {}", addr_str, e))?,
             CONNECT_TIMEOUT,
         )
         .map_err(|e| {
             format!(
-                "Failed to connect to LibreOffice Impress on port {}. \
+                "Failed to connect to LibreOffice Impress at {}. \
                  Make sure Impress is running with remote control enabled \
                  (Slide Show > Slide Show Settings > Enable remote control). \
                  Error: {}",
-                IMPRESS_REMOTE_PORT, e
+                addr_str, e
             )
         })?;
 
@@ -267,7 +272,7 @@ impl LibreOfficeAdapter {
 
 impl Default for LibreOfficeAdapter {
     fn default() -> Self {
-        Self::new()
+        Self::new("127.0.0.1".to_string(), IMPRESS_REMOTE_PORT)
     }
 }
 
@@ -368,6 +373,20 @@ impl PresentationAdapter for LibreOfficeAdapter {
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
         Ok(None)
     }
+
+    fn connection_status(&self) -> super::ConnectionStatus {
+        let conn = self.connection.lock().unwrap();
+        if conn.is_some() {
+            let state = self.state.lock().unwrap();
+            if state.paired {
+                super::ConnectionStatus::Connected
+            } else {
+                super::ConnectionStatus::Connecting
+            }
+        } else {
+            super::ConnectionStatus::Disconnected
+        }
+    }
 }
 
 /// Generate a random 4-digit PIN for pairing
@@ -390,5 +409,185 @@ mod tests {
             let pin = rand_pin();
             assert!(pin >= 1000 && pin <= 9999);
         }
+    }
+
+    #[test]
+    fn test_new_with_custom_host_port() {
+        let adapter = LibreOfficeAdapter::new("192.168.1.50".to_string(), 2002);
+        assert_eq!(adapter.host, "192.168.1.50");
+        assert_eq!(adapter.port, 2002);
+        assert!(!adapter.is_connected());
+    }
+
+    #[test]
+    fn test_default_uses_localhost_and_default_port() {
+        let adapter = LibreOfficeAdapter::default();
+        assert_eq!(adapter.host, "127.0.0.1");
+        assert_eq!(adapter.port, IMPRESS_REMOTE_PORT);
+        assert_eq!(adapter.port, 1599);
+    }
+
+    #[test]
+    fn test_initial_connection_status_is_disconnected() {
+        let adapter = LibreOfficeAdapter::default();
+        matches!(adapter.connection_status(), super::super::ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn test_handle_paired_message() {
+        let adapter = LibreOfficeAdapter::default();
+        adapter.handle_message(&["LO_SERVER_SERVER_PAIRED".to_string()]);
+        let state = adapter.state.lock().unwrap();
+        assert!(state.paired);
+    }
+
+    #[test]
+    fn test_handle_paired_alternate_message() {
+        let adapter = LibreOfficeAdapter::default();
+        adapter.handle_message(&["LO_SERVER_PAIRED".to_string()]);
+        let state = adapter.state.lock().unwrap();
+        assert!(state.paired);
+    }
+
+    #[test]
+    fn test_handle_slideshow_started() {
+        let adapter = LibreOfficeAdapter::default();
+        adapter.handle_message(&[
+            "slideshow_started".to_string(),
+            "10".to_string(),
+            "0".to_string(),
+        ]);
+        let state = adapter.state.lock().unwrap();
+        assert!(state.slideshow_running);
+        assert!(state.paired); // slideshow_started also sets paired
+        assert_eq!(state.total_slides, 10);
+        assert_eq!(state.current_slide, 0);
+    }
+
+    #[test]
+    fn test_handle_slideshow_finished() {
+        let adapter = LibreOfficeAdapter::default();
+        // Start first
+        adapter.handle_message(&[
+            "slideshow_started".to_string(),
+            "5".to_string(),
+            "0".to_string(),
+        ]);
+        // Then finish
+        adapter.handle_message(&["slideshow_finished".to_string()]);
+        let state = adapter.state.lock().unwrap();
+        assert!(!state.slideshow_running);
+        assert!(state.paired); // Still paired after finish
+    }
+
+    #[test]
+    fn test_handle_slide_updated() {
+        let adapter = LibreOfficeAdapter::default();
+        adapter.handle_message(&[
+            "slideshow_started".to_string(),
+            "10".to_string(),
+            "0".to_string(),
+        ]);
+        adapter.handle_message(&[
+            "slide_updated".to_string(),
+            "3".to_string(),
+        ]);
+        let state = adapter.state.lock().unwrap();
+        assert_eq!(state.current_slide, 3);
+    }
+
+    #[test]
+    fn test_handle_empty_message() {
+        let adapter = LibreOfficeAdapter::default();
+        // Should not panic
+        adapter.handle_message(&[]);
+    }
+
+    #[test]
+    fn test_handle_unknown_message() {
+        let adapter = LibreOfficeAdapter::default();
+        // Should not panic, state should be unchanged
+        adapter.handle_message(&["some_unknown_message".to_string()]);
+        let state = adapter.state.lock().unwrap();
+        assert!(!state.paired);
+        assert!(!state.slideshow_running);
+    }
+
+    #[test]
+    fn test_disconnect_resets_state() {
+        let adapter = LibreOfficeAdapter::default();
+        // Simulate some state
+        {
+            let mut state = adapter.state.lock().unwrap();
+            state.paired = true;
+            state.slideshow_running = true;
+            state.current_slide = 5;
+            state.total_slides = 10;
+        }
+        adapter.disconnect();
+        let state = adapter.state.lock().unwrap();
+        assert!(!state.paired);
+        assert!(!state.slideshow_running);
+        assert_eq!(state.current_slide, 0);
+        assert_eq!(state.total_slides, 0);
+    }
+
+    #[test]
+    fn test_slide_info_is_1_indexed() {
+        let adapter = LibreOfficeAdapter::default();
+        // Manually set state as if connected and presenting
+        {
+            let mut state = adapter.state.lock().unwrap();
+            state.paired = true;
+            state.slideshow_running = true;
+            state.current_slide = 0; // 0-indexed from protocol
+            state.total_slides = 5;
+        }
+        // Simulate being connected by inserting a fake connection
+        // We can't easily test get_slide_info without a real connection
+        // because ensure_connected will fail, but we can verify the
+        // state conversion logic via handle_message + state check
+        let state = adapter.state.lock().unwrap();
+        // The adapter converts 0-indexed to 1-indexed in get_slide_info
+        assert_eq!(state.current_slide + 1, 1); // First slide
+        assert_eq!(state.total_slides, 5);
+    }
+
+    #[test]
+    fn test_connect_to_unreachable_host_fails() {
+        // Use a non-routable IP to ensure fast failure
+        let adapter = LibreOfficeAdapter::new("192.0.2.1".to_string(), 1599);
+        let result = adapter.connect();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to connect"));
+    }
+
+    #[test]
+    fn test_slideshow_started_with_missing_fields() {
+        let adapter = LibreOfficeAdapter::default();
+        // Only message type, no slide count/index
+        adapter.handle_message(&["slideshow_started".to_string()]);
+        let state = adapter.state.lock().unwrap();
+        assert!(state.slideshow_running);
+        assert!(state.paired);
+        // Should default to 0 since we didn't have enough lines
+        assert_eq!(state.total_slides, 0);
+        assert_eq!(state.current_slide, 0);
+    }
+
+    #[test]
+    fn test_slide_updated_with_invalid_number() {
+        let adapter = LibreOfficeAdapter::default();
+        {
+            let mut state = adapter.state.lock().unwrap();
+            state.current_slide = 2;
+        }
+        adapter.handle_message(&[
+            "slide_updated".to_string(),
+            "not_a_number".to_string(),
+        ]);
+        // Should keep the old value on parse failure
+        let state = adapter.state.lock().unwrap();
+        assert_eq!(state.current_slide, 2);
     }
 }

@@ -11,19 +11,24 @@
 #   ./build-installer.sh
 #
 # Output:
-#   rpi-osc-bridge-installer.run
-#
-# Deploy to Pi:
-#   scp rpi-osc-bridge-installer.run pi@<PI_IP>:/tmp/
-#   ssh pi@<PI_IP> 'sudo bash /tmp/rpi-osc-bridge-installer.run'
+#   rpi-osc-bridge-v<VERSION>.run
 #
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_FILE="rpi-osc-bridge-installer.run"
-LABEL="RPi OSC Bridge Installer v2.1.0"
+
+# Read version from VERSION file
+VERSION_FILE="$BRIDGE_DIR/VERSION"
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "ERROR: VERSION file not found at $VERSION_FILE"
+    exit 1
+fi
+VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
+
+OUTPUT_FILE="rpi-osc-bridge-v${VERSION}.run"
+LABEL="RPi OSC Bridge Installer v${VERSION}"
 
 # Check for makeself
 if ! command -v makeself &> /dev/null; then
@@ -38,6 +43,7 @@ if ! command -v makeself &> /dev/null; then
 fi
 
 echo "Building self-extracting installer..."
+echo "  Version: $VERSION"
 echo "  Source: $SCRIPT_DIR"
 echo "  Output: $OUTPUT_FILE"
 echo ""
@@ -47,12 +53,17 @@ TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
 # Copy required files (from new monorepo layout into flat deploy layout)
+cp "$BRIDGE_DIR/src/rpi_osc_bridge/constants.py" "$TEMP_DIR/"
+cp "$BRIDGE_DIR/src/rpi_osc_bridge/config.py" "$TEMP_DIR/"
+cp "$BRIDGE_DIR/src/rpi_osc_bridge/devices.py" "$TEMP_DIR/"
+cp "$BRIDGE_DIR/src/rpi_osc_bridge/osc.py" "$TEMP_DIR/"
 cp "$BRIDGE_DIR/src/rpi_osc_bridge/bridge.py" "$TEMP_DIR/"
 cp "$BRIDGE_DIR/src/rpi_osc_bridge/config_server.py" "$TEMP_DIR/config-server.py"
 cp "$BRIDGE_DIR/config/config.example.json" "$TEMP_DIR/"
 cp "$SCRIPT_DIR/install.sh" "$TEMP_DIR/"
 cp "$BRIDGE_DIR/config/rpi-osc-bridge.service" "$TEMP_DIR/"
 cp "$BRIDGE_DIR/config/config-server.service" "$TEMP_DIR/"
+cp "$BRIDGE_DIR/VERSION" "$TEMP_DIR/"
 cp -r "$BRIDGE_DIR/web" "$TEMP_DIR/" 2>/dev/null || true
 
 # Build the self-extracting archive

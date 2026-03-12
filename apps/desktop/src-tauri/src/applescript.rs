@@ -27,6 +27,7 @@ pub fn run_applescript(script: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+#[cfg(target_os = "macos")]
 mod tests {
     use super::*;
 

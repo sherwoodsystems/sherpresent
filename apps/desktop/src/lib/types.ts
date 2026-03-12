@@ -107,7 +107,16 @@ export interface LoggingConfig {
 // APP CONFIG
 // =============================================================================
 
-export type AdapterType = 'powerpoint' | 'keynote' | 'libreoffice';
+export type AdapterType = 'powerpoint' | 'keynote' | 'libreoffice' | 'canva';
+
+/** Per-adapter network configuration */
+export type AdapterConfig =
+  | { type: 'libreoffice'; host: string; port: number }
+  | { type: 'canva'; url: string }
+  | { type: 'none' };
+
+/** Connection status for network-based adapters */
+export type ConnectionStatus = 'Disconnected' | 'Connecting' | 'Connected' | { Error: string };
 
 export interface AppConfig {
   osc: OscConfig;
@@ -116,6 +125,8 @@ export interface AppConfig {
   logging: LoggingConfig;
   /** Channel synchronization settings */
   channel: ChannelConfig;
+  /** Per-adapter network configuration */
+  adapterConfig: AdapterConfig;
 }
 
 export interface PresentationState {
@@ -158,5 +169,6 @@ export const defaultConfig: AppConfig = {
     broadcastMode: true,
     broadcastPort: DEFAULT_BROADCAST_PORT,
     networkInterface: null // Auto (all interfaces)
-  }
+  },
+  adapterConfig: { type: 'none' }
 };

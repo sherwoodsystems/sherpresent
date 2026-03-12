@@ -30,7 +30,15 @@ Lightweight keyboard-to-OSC bridge for Raspberry Pi. Converts arrow key presses 
 
 ## Quick Start
 
-### Option A: Self-Extracting Installer (Recommended)
+### Option A: One-Command Install (Recommended)
+
+```bash
+curl -sSL https://<host>/install-remote.sh | sudo bash
+```
+
+This downloads the latest release from GitHub and runs the installer. Same command works for updates.
+
+### Option B: Self-Extracting Installer
 
 **Step 1: Install makeself on your dev machine (one-time)**
 
@@ -43,44 +51,31 @@ brew install makeself
 
 # Arch Linux (from AUR)
 yay -S makeself
-# or manually: git clone https://aur.archlinux.org/makeself.git && cd makeself && makepkg -si
 ```
 
 **Step 2: Build and deploy**
 
 ```bash
 # On your dev machine: build the installer
-cd rpi-osc-bridge
-./build-installer.sh
-# Creates: rpi-osc-bridge-installer.run
+cd apps/bridge
+./scripts/build-installer.sh
+# Creates: scripts/rpi-osc-bridge-v2.2.0.run
 
-# Deploy to Pi (two commands!)
-scp rpi-osc-bridge-installer.run pi@<PI_IP>:/tmp/
-ssh pi@<PI_IP> 'sudo bash /tmp/rpi-osc-bridge-installer.run'
+# Deploy to Pi
+scp scripts/rpi-osc-bridge-v2.2.0.run pi@<PI_IP>:/tmp/
+ssh pi@<PI_IP> 'sudo bash /tmp/rpi-osc-bridge-v2.2.0.run'
 
 # Start the bridge service
 ssh pi@<PI_IP> 'sudo systemctl start rpi-osc-bridge && sudo systemctl enable rpi-osc-bridge'
 ```
 
-The installer automatically cleans up any previous installation before installing.
-
-### Option B: Manual SCP
-
-```bash
-# Copy files to Pi
-scp -r rpi-osc-bridge/ pi@<PI_IP>:/tmp/
-
-# SSH in and install
-ssh pi@<PI_IP>
-sudo mv /tmp/rpi-osc-bridge /opt/
-cd /opt/rpi-osc-bridge
-sudo bash install.sh
-```
+Re-running the installer is also how you update — it cleans up the previous installation while preserving your config.
 
 The installer will:
-- Install Python dependencies (`evdev`, `python-osc`)
+- Create a Python virtual environment at `/opt/rpi-osc-bridge/venv/`
+- Install Python dependencies (`evdev`, `python-osc`) into the venv
 - Copy files to `/opt/rpi-osc-bridge`
-- Create config file at `/etc/rpi-osc-bridge/config.json`
+- Create config file at `/etc/rpi-osc-bridge/config.json` (preserved across updates)
 - Install and start systemd services (bridge + web UI)
 
 ### 3. Configuration
@@ -181,7 +176,7 @@ sudo systemctl stop rpi-osc-bridge
 
 # Run manually
 cd /opt/rpi-osc-bridge
-sudo python3 bridge.py
+sudo /opt/rpi-osc-bridge/venv/bin/python bridge.py
 ```
 
 Press Ctrl+C to stop.
@@ -192,7 +187,7 @@ Press Ctrl+C to stop.
 
 Check connected USB devices:
 ```bash
-sudo python3 -c "import evdev; print([d.name for d in [evdev.InputDevice(p) for p in evdev.list_devices()]])"
+sudo /opt/rpi-osc-bridge/venv/bin/python -c "import evdev; print([d.name for d in [evdev.InputDevice(p) for p in evdev.list_devices()]])"
 ```
 
 If your keyboard isn't detected, try specifying the device path manually in config:

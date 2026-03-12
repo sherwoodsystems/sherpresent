@@ -1,3 +1,4 @@
+pub mod canva;
 pub mod config;
 pub mod network;
 pub mod presentation;

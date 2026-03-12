@@ -4,6 +4,8 @@ import {
   type AppConfig,
   type LiveStatus,
   type AdapterType,
+  type AdapterConfig,
+  type ConnectionStatus,
   type OscConfig,
   type ChannelConfig,
   type DiscoveredPeer,
@@ -16,6 +18,7 @@ class AppStore {
   pollingActive = $state(false);
   discoveryRunning = $state(false);
   configLoaded = $state(false);
+  connectionStatus = $state<ConnectionStatus>('Disconnected');
   
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
   private unlistenStatus: UnlistenFn | null = null;
@@ -170,6 +173,40 @@ class AppStore {
 
   async setInstanceName(name: string | null): Promise<void> {
     await invoke('set_instance_name', { name });
+  }
+
+  updateAdapterConfig(adapterConfig: AdapterConfig) {
+    this.config = { ...this.config, adapterConfig };
+    this.scheduleConfigSave();
+  }
+
+  async openCanvaRemote(url: string) {
+    try {
+      await invoke('open_canva_remote', { url });
+      this.connectionStatus = 'Connected';
+    } catch (e) {
+      console.error('Failed to open Canva remote:', e);
+      this.connectionStatus = { Error: String(e) };
+    }
+  }
+
+  async closeCanvaRemote() {
+    try {
+      await invoke('close_canva_remote');
+      this.connectionStatus = 'Disconnected';
+    } catch (e) {
+      console.error('Failed to close Canva remote:', e);
+    }
+  }
+
+  async refreshConnectionStatus() {
+    if (this.config.adapter === 'canva') {
+      try {
+        this.connectionStatus = await invoke<ConnectionStatus>('get_canva_connection_status');
+      } catch {
+        this.connectionStatus = 'Disconnected';
+      }
+    }
   }
 }
 

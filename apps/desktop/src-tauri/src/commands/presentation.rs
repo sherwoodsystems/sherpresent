@@ -1,6 +1,8 @@
 use crate::adapters::{
     get_adapter, get_available_adapters, LiveStatus, PresentationState, SlideInfo,
 };
+use crate::config::AdapterConfig;
+use crate::state::AppState;
 
 #[tauri::command]
 pub fn get_adapters() -> Vec<(String, String)> {
@@ -10,30 +12,39 @@ pub fn get_adapters() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Helper to get the adapter config from AppState
+fn get_adapter_config(state: &AppState) -> AdapterConfig {
+    state.adapter_config.lock().unwrap().clone()
+}
+
 #[tauri::command]
-pub fn get_open_presentations(adapter: String) -> Result<Vec<String>, String> {
+pub fn get_open_presentations(adapter: String, state: tauri::State<AppState>) -> Result<Vec<String>, String> {
+    let config = get_adapter_config(&state);
     let adapter_impl =
-        get_adapter(&adapter).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
+        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
     adapter_impl.get_open_presentations()
 }
 
 #[tauri::command]
-pub fn get_presentation_state(adapter: String, name: String) -> Result<PresentationState, String> {
+pub fn get_presentation_state(adapter: String, name: String, state: tauri::State<AppState>) -> Result<PresentationState, String> {
+    let config = get_adapter_config(&state);
     let adapter_impl =
-        get_adapter(&adapter).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
+        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
     adapter_impl.get_presentation_state(&name)
 }
 
 #[tauri::command]
-pub fn get_slide_info(adapter: String, name: String) -> Result<SlideInfo, String> {
+pub fn get_slide_info(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    let config = get_adapter_config(&state);
     let adapter_impl =
-        get_adapter(&adapter).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
+        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
     adapter_impl.get_slide_info(&name)
 }
 
 #[tauri::command]
-pub fn get_live_status(adapter: String, name: String) -> LiveStatus {
-    match get_adapter(&adapter) {
+pub fn get_live_status(adapter: String, name: String, state: tauri::State<AppState>) -> LiveStatus {
+    let config = get_adapter_config(&state);
+    match get_adapter(&adapter, &config) {
         Some(adapter_impl) => adapter_impl.get_live_status(&name),
         None => LiveStatus::default(),
     }
@@ -45,7 +56,7 @@ pub fn get_notes_zoom() -> Result<Option<i32>, String> {
     #[cfg(target_os = "macos")]
     {
         use crate::adapters::PresentationAdapter;
-        let adapter = adapters::powerpoint::PowerPointAdapter;
+        let adapter = crate::adapters::powerpoint::PowerPointAdapter;
         adapter.get_notes_zoom()
     }
     #[cfg(not(target_os = "macos"))]
@@ -55,15 +66,17 @@ pub fn get_notes_zoom() -> Result<Option<i32>, String> {
 }
 
 #[tauri::command]
-pub fn next_slide(adapter: String, name: String) -> Result<SlideInfo, String> {
+pub fn next_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    let config = get_adapter_config(&state);
     let adapter_impl =
-        get_adapter(&adapter).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
+        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
     adapter_impl.next_slide(&name)
 }
 
 #[tauri::command]
-pub fn prev_slide(adapter: String, name: String) -> Result<SlideInfo, String> {
+pub fn prev_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    let config = get_adapter_config(&state);
     let adapter_impl =
-        get_adapter(&adapter).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
+        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
     adapter_impl.prev_slide(&name)
 }

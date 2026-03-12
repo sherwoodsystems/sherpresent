@@ -32,6 +32,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
 use crate::adapters::{get_adapter, powerpoint::PowerPointAdapter, PresentationAdapter};
+use crate::config::AdapterConfig;
 
 // =============================================================================
 // CACHED STATE
@@ -109,38 +110,21 @@ fn current_time_ms() -> u64 {
 /// - `Mutex` ensures only one thread can access the data at a time
 pub struct StateManager {
     /// The cached state, wrapped for thread-safe access.
-    ///
-    /// ## Why Arc<Mutex<...>>?
-    ///
-    /// - `Arc` lets us clone the StateManager and share the same state
-    /// - `Mutex` prevents data races when multiple tasks access state
-    ///
-    /// In async Rust, `std::sync::Mutex` is fine for short critical sections
-    /// (just reading/writing a struct). For long-held locks, use `tokio::sync::Mutex`.
     state: Arc<Mutex<CachedState>>,
 
-    /// Which adapter to use ("powerpoint" or "keynote")
+    /// Which adapter to use ("powerpoint", "keynote", "libreoffice", "canva")
     adapter_name: String,
 
     /// The name of the presentation file to control
     presentation_name: String,
 
+    /// Per-adapter network configuration
+    adapter_config: AdapterConfig,
+
     /// Channel sender to notify when state changes.
-    ///
-    /// ## How Channels Work
-    ///
-    /// `mpsc` = "multi-producer, single-consumer"
-    /// - Multiple tasks can send messages (via cloned Senders)
-    /// - One task receives all messages (via the Receiver)
-    ///
-    /// We send `CachedState` through this channel whenever state changes,
-    /// so the OSC server can send feedback to clients.
     state_change_tx: mpsc::Sender<CachedState>,
 
     /// Handle to the polling task (so we can cancel it on shutdown).
-    ///
-    /// `Option` because polling might not be started yet.
-    /// `Mutex` because we need to mutate this from the stop_polling method.
     polling_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 
     /// Flag to prevent concurrent refresh operations.
@@ -149,21 +133,17 @@ pub struct StateManager {
 
 impl StateManager {
     /// Create a new StateManager.
-    ///
-    /// ## Parameters
-    ///
-    /// - `adapter_name` - "powerpoint" or "keynote"
-    /// - `presentation_name` - Name of the presentation file
-    /// - `state_change_tx` - Channel to send state updates through
     pub fn new(
         adapter_name: String,
         presentation_name: String,
+        adapter_config: AdapterConfig,
         state_change_tx: mpsc::Sender<CachedState>,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(CachedState::now())),
             adapter_name,
             presentation_name,
+            adapter_config,
             state_change_tx,
             polling_handle: Mutex::new(None),
             refresh_in_progress: Arc::new(Mutex::new(false)),
@@ -367,6 +347,7 @@ impl StateManager {
     {
         let adapter_name = self.adapter_name.clone();
         let presentation_name = self.presentation_name.clone();
+        let adapter_config = self.adapter_config.clone();
         let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
@@ -376,10 +357,11 @@ impl StateManager {
             // Clone for use after the spawn_blocking closure consumes originals
             let adapter_name_for_refresh = adapter_name.clone();
             let presentation_name_for_refresh = presentation_name.clone();
+            let adapter_config_for_refresh = adapter_config.clone();
 
             // Run the blocking AppleScript on a blocking thread
             let result = tokio::task::spawn_blocking(move || {
-                if let Some(adapter) = get_adapter(&adapter_name) {
+                if let Some(adapter) = get_adapter(&adapter_name, &adapter_config) {
                     command(adapter.as_ref(), presentation_name)
                 } else {
                     Err("Adapter not found".to_string())
@@ -395,6 +377,7 @@ impl StateManager {
             Self::do_refresh_internal(
                 adapter_name_for_refresh,
                 presentation_name_for_refresh,
+                adapter_config_for_refresh,
                 refresh_flag,
                 state,
                 tx,
@@ -415,6 +398,7 @@ impl StateManager {
         let tx = self.state_change_tx.clone();
         let adapter_name = self.adapter_name.clone();
         let presentation_name = self.presentation_name.clone();
+        let adapter_config = self.adapter_config.clone();
 
         tokio::task::spawn(async move {
             // Run the blocking AppleScript
@@ -426,7 +410,7 @@ impl StateManager {
 
             // Refresh after zoom completes
             tokio::time::sleep(Duration::from_millis(50)).await;
-            Self::do_refresh_internal(adapter_name, presentation_name, refresh_flag, state, tx)
+            Self::do_refresh_internal(adapter_name, presentation_name, adapter_config, refresh_flag, state, tx)
                 .await;
         });
     }
@@ -451,12 +435,13 @@ impl StateManager {
 
         let adapter_name = self.adapter_name.clone();
         let presentation_name = self.presentation_name.clone();
+        let adapter_config = self.adapter_config.clone();
         let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
 
         tokio::task::spawn(async move {
-            Self::do_refresh_internal(adapter_name, presentation_name, refresh_flag, state, tx)
+            Self::do_refresh_internal(adapter_name, presentation_name, adapter_config, refresh_flag, state, tx)
                 .await;
         });
     }
@@ -465,6 +450,7 @@ impl StateManager {
     async fn do_refresh_internal(
         adapter_name: String,
         presentation_name: String,
+        adapter_config: AdapterConfig,
         refresh_flag: Arc<Mutex<bool>>,
         state: Arc<Mutex<CachedState>>,
         tx: mpsc::Sender<CachedState>,
@@ -480,7 +466,7 @@ impl StateManager {
 
         // Fetch state from presentation software (blocking)
         let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(&adapter_name, &presentation_name)
+            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config)
         })
         .await
         .unwrap_or_else(|_| CachedState::now());
@@ -518,9 +504,10 @@ impl StateManager {
     pub async fn force_refresh(&self) -> CachedState {
         let adapter_name = self.adapter_name.clone();
         let presentation_name = self.presentation_name.clone();
+        let adapter_config = self.adapter_config.clone();
 
         let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(&adapter_name, &presentation_name)
+            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config)
         })
         .await
         .unwrap_or_else(|_| CachedState::now());
@@ -537,10 +524,10 @@ impl StateManager {
     /// Fetch complete state from the presentation software.
     ///
     /// This is the actual AppleScript work - it's blocking and slow.
-    fn fetch_all_state(adapter_name: &str, presentation_name: &str) -> CachedState {
+    fn fetch_all_state(adapter_name: &str, presentation_name: &str, adapter_config: &AdapterConfig) -> CachedState {
         let mut new_state = CachedState::now();
 
-        let Some(adapter) = get_adapter(adapter_name) else {
+        let Some(adapter) = get_adapter(adapter_name, adapter_config) else {
             return new_state;
         };
 
@@ -592,6 +579,7 @@ impl StateManager {
 
         let adapter_name = self.adapter_name.clone();
         let presentation_name = self.presentation_name.clone();
+        let adapter_config = self.adapter_config.clone();
         let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
@@ -606,6 +594,7 @@ impl StateManager {
                 Self::do_refresh_internal(
                     adapter_name.clone(),
                     presentation_name.clone(),
+                    adapter_config.clone(),
                     refresh_flag.clone(),
                     state.clone(),
                     tx.clone(),

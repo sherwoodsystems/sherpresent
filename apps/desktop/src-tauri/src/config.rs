@@ -5,6 +5,28 @@ use tauri::Manager;
 use uuid::Uuid;
 
 // =============================================================================
+// ADAPTER CONFIG
+// =============================================================================
+
+/// Per-adapter network configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AdapterConfig {
+    #[serde(rename = "libreoffice")]
+    LibreOffice { host: String, port: u16 },
+    #[serde(rename = "canva")]
+    Canva { url: String },
+    #[serde(rename = "none")]
+    None,
+}
+
+impl Default for AdapterConfig {
+    fn default() -> Self {
+        AdapterConfig::None
+    }
+}
+
+// =============================================================================
 // FEEDBACK DESTINATION
 // =============================================================================
 
@@ -173,6 +195,9 @@ pub struct AppConfig {
     /// Channel synchronization settings
     #[serde(default)]
     pub channel: ChannelConfig,
+    /// Per-adapter network configuration
+    #[serde(rename = "adapterConfig", default)]
+    pub adapter_config: AdapterConfig,
 }
 
 impl Default for AppConfig {
@@ -189,6 +214,7 @@ impl Default for AppConfig {
             presentation_name: String::new(),
             logging: LoggingConfig::default(),
             channel: ChannelConfig::default(),
+            adapter_config: AdapterConfig::default(),
         }
     }
 }
@@ -231,4 +257,113 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), Str
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     fs::write(&path, content).map_err(|e| format!("Failed to write config file: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adapter_config_default_is_none() {
+        let config = AdapterConfig::default();
+        assert!(matches!(config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_adapter_config_libreoffice_serialization() {
+        let config = AdapterConfig::LibreOffice {
+            host: "10.0.0.5".to_string(),
+            port: 2002,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"libreoffice\""));
+        assert!(json.contains("\"host\":\"10.0.0.5\""));
+        assert!(json.contains("\"port\":2002"));
+    }
+
+    #[test]
+    fn test_adapter_config_libreoffice_deserialization() {
+        let json = r#"{"type":"libreoffice","host":"192.168.1.50","port":1599}"#;
+        let config: AdapterConfig = serde_json::from_str(json).unwrap();
+        match config {
+            AdapterConfig::LibreOffice { host, port } => {
+                assert_eq!(host, "192.168.1.50");
+                assert_eq!(port, 1599);
+            }
+            _ => panic!("Expected LibreOffice variant"),
+        }
+    }
+
+    #[test]
+    fn test_adapter_config_canva_serialization() {
+        let config = AdapterConfig::Canva {
+            url: "https://www.canva.com/design/remote?id2=abc123".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"canva\""));
+        assert!(json.contains("\"url\":\"https://www.canva.com/design/remote?id2=abc123\""));
+    }
+
+    #[test]
+    fn test_adapter_config_canva_deserialization() {
+        let json = r#"{"type":"canva","url":"https://example.com/remote?id2=test"}"#;
+        let config: AdapterConfig = serde_json::from_str(json).unwrap();
+        match config {
+            AdapterConfig::Canva { url } => {
+                assert_eq!(url, "https://example.com/remote?id2=test");
+            }
+            _ => panic!("Expected Canva variant"),
+        }
+    }
+
+    #[test]
+    fn test_adapter_config_none_serialization() {
+        let config = AdapterConfig::None;
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"none\""));
+    }
+
+    #[test]
+    fn test_adapter_config_none_deserialization() {
+        let json = r#"{"type":"none"}"#;
+        let config: AdapterConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_app_config_default_has_adapter_config_none() {
+        let config = AppConfig::default();
+        assert!(matches!(config.adapter_config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_app_config_roundtrip_with_adapter_config() {
+        let mut config = AppConfig::default();
+        config.adapter_config = AdapterConfig::LibreOffice {
+            host: "10.0.0.1".to_string(),
+            port: 1599,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        match restored.adapter_config {
+            AdapterConfig::LibreOffice { host, port } => {
+                assert_eq!(host, "10.0.0.1");
+                assert_eq!(port, 1599);
+            }
+            _ => panic!("Expected LibreOffice variant after roundtrip"),
+        }
+    }
+
+    #[test]
+    fn test_app_config_missing_adapter_config_defaults_to_none() {
+        // Simulate a config JSON from before adapter_config was added
+        let json = r#"{
+            "osc": {"receivePort": 9000, "feedbackPort": 9001, "feedbackHost": "127.0.0.1", "host": "0.0.0.0", "feedbackDestinations": []},
+            "adapter": "libreoffice",
+            "presentationName": "",
+            "logging": {"enabled": true, "verbose": false}
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config.adapter_config, AdapterConfig::None));
+    }
 }

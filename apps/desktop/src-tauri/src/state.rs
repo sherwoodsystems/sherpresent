@@ -1,3 +1,5 @@
+use crate::adapters::canva::CanvaAdapter;
+use crate::config::AdapterConfig;
 use crate::discovery::{DiscoveredPeer, DiscoveryService};
 use crate::osc::OscServerHandle;
 use std::collections::HashMap;
@@ -35,6 +37,12 @@ pub struct AppState {
 
     /// Counter for assigning display IDs to command source peers
     pub next_peer_display_id: Arc<Mutex<u8>>,
+
+    /// Per-adapter network configuration
+    pub adapter_config: Arc<Mutex<AdapterConfig>>,
+
+    /// Canva adapter singleton (long-lived, holds webview reference)
+    pub canva_adapter: Arc<Mutex<Option<CanvaAdapter>>>,
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default
@@ -46,6 +54,8 @@ impl Default for AppState {
             discovery_service: Mutex::new(None),
             command_source_peers: Arc::new(Mutex::new(HashMap::new())),
             next_peer_display_id: Arc::new(Mutex::new(100)), // Start at 100 for command source peers
+            adapter_config: Arc::new(Mutex::new(AdapterConfig::default())),
+            canva_adapter: Arc::new(Mutex::new(None)),
         }
     }
 }

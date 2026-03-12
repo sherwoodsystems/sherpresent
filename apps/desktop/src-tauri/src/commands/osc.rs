@@ -42,6 +42,7 @@ pub async fn start_osc_server(
     let state_manager = Arc::new(StateManager::new(
         config.adapter.clone(),
         config.presentation_name.clone(),
+        config.adapter_config.clone(),
         state_change_tx,
     ));
 

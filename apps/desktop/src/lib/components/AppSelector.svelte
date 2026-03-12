@@ -41,6 +41,10 @@
     <p class="hint">
       Enable remote control: Slide Show &gt; Slide Show Settings &gt; Enable remote control
     </p>
+  {:else if config.adapter === 'canva'}
+    <p class="hint">
+      Start presenting in Canva, then share the remote control link.
+    </p>
   {/if}
 </div>
 

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   
   import AppSelector from '$lib/components/AppSelector.svelte';
+  import AdapterConfig from '$lib/components/AdapterConfig.svelte';
   import PresentationPicker from '$lib/components/PresentationPicker.svelte';
   import OscConfig from '$lib/components/OscConfig.svelte';
   import StatusDisplay from '$lib/components/StatusDisplay.svelte';
@@ -34,19 +35,32 @@
     </section>
 
     <section class="section">
-      <AppSelector 
-        config={appStore.config} 
-        onchange={(a) => appStore.updateAdapter(a)} 
+      <AppSelector
+        config={appStore.config}
+        onchange={(a) => appStore.updateAdapter(a)}
       />
     </section>
 
-    <section class="section">
-      <PresentationPicker
-        adapter={appStore.config.adapter}
-        selectedPresentation={appStore.config.presentationName}
-        onselect={(n) => appStore.selectPresentation(n)}
-      />
-    </section>
+    {#if appStore.config.adapter === 'libreoffice' || appStore.config.adapter === 'canva'}
+      <section class="section">
+        <AdapterConfig
+          adapter={appStore.config.adapter}
+          adapterConfig={appStore.config.adapterConfig}
+          connectionStatus={appStore.connectionStatus}
+          onchange={(c) => appStore.updateAdapterConfig(c)}
+        />
+      </section>
+    {/if}
+
+    {#if appStore.config.adapter !== 'canva'}
+      <section class="section">
+        <PresentationPicker
+          adapter={appStore.config.adapter}
+          selectedPresentation={appStore.config.presentationName}
+          onselect={(n) => appStore.selectPresentation(n)}
+        />
+      </section>
+    {/if}
 
     <section class="section">
       <OscConfig 

@@ -36,11 +36,10 @@ systemctl daemon-reload
 echo "Previous installation cleaned up (if any)"
 echo ""
 
-# Install Python dependencies
-echo "[1/6] Installing Python dependencies..."
+# Install system dependencies and create venv
+echo "[1/6] Installing dependencies..."
 apt-get update -qq
-apt-get install -y python3 python3-pip
-pip3 install --break-system-packages evdev python-osc || pip3 install evdev python-osc
+apt-get install -y python3 python3-venv
 
 # Create installation directory
 echo "[2/6] Creating installation directory..."
@@ -48,11 +47,16 @@ mkdir -p "$INSTALL_DIR"
 
 if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
     echo "Copying files from $SCRIPT_DIR to $INSTALL_DIR..."
+    cp "$SCRIPT_DIR/constants.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/config.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/devices.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/osc.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/bridge.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/config-server.py" "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR/config.example.json" "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR/rpi-osc-bridge.service" "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR/config-server.service" "$INSTALL_DIR/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/" 2>/dev/null || true
     cp -r "$SCRIPT_DIR/web" "$INSTALL_DIR/" 2>/dev/null || true
     chmod +x "$INSTALL_DIR/bridge.py"
     chmod +x "$INSTALL_DIR/config-server.py" 2>/dev/null || true
@@ -61,6 +65,11 @@ else
     chmod +x "$INSTALL_DIR/bridge.py"
     chmod +x "$INSTALL_DIR/config-server.py" 2>/dev/null || true
 fi
+
+# Create venv and install Python dependencies
+echo "Creating Python virtual environment..."
+python3 -m venv "$INSTALL_DIR/venv"
+"$INSTALL_DIR/venv/bin/pip" install evdev python-osc
 
 # Create config directory and file
 echo "[3/6] Setting up configuration..."
@@ -96,7 +105,8 @@ chmod 644 /var/log/rpi-osc-bridge.log
 mkdir -p /var/run/rpi-osc-bridge
 chmod 755 /var/run/rpi-osc-bridge
 
-echo "[6/6] Installation complete!"
+VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
+echo "[6/6] Installation complete! (v${VERSION})"
 echo ""
 echo "=========================================="
 echo "Next Steps:"
