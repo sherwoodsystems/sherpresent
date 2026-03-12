@@ -140,7 +140,7 @@ def save_global_config(broadcast_port: int, feedback_port: int, log_level: str,
                     check=True,
                     capture_output=True
                 )
-            except subprocess.CalledProcessError:
+            except (subprocess.CalledProcessError, FileNotFoundError):
                 return True, "Config saved but service restart failed"
 
             return True, "Configuration saved"
@@ -343,7 +343,7 @@ def confirm_registration(slot: str, usb_phys: str, channel: str,
                     check=True,
                     capture_output=True
                 )
-            except subprocess.CalledProcessError:
+            except (subprocess.CalledProcessError, FileNotFoundError):
                 return True, "Device registered but service restart failed"
 
             return True, "Device registered successfully"
@@ -373,7 +373,7 @@ def unregister_device(slot: str) -> tuple[bool, str]:
                     check=True,
                     capture_output=True
                 )
-            except subprocess.CalledProcessError:
+            except (subprocess.CalledProcessError, FileNotFoundError):
                 return True, "Device unregistered but service restart failed"
 
             return True, "Device unregistered successfully"
