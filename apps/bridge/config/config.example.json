@@ -1,0 +1,11 @@
+{
+  "version": 3,
+  "broadcast_port": 9002,
+  "feedback_port": 9002,
+  "log_level": "INFO",
+  "devices": {
+    "usb_1": null,
+    "usb_2": null,
+    "usb_3": null
+  }
+}

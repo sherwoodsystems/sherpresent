@@ -1,0 +1,32 @@
+# OS files
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+build/
+dist/
+target/
+*.run

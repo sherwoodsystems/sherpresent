@@ -1,0 +1,27 @@
+[Unit]
+Description=SherPresent OSC Bridge - Keyboard to OSC converter
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/rpi-osc-bridge
+ExecStart=/usr/bin/python3 /opt/rpi-osc-bridge/bridge.py
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Runtime directory for state files (automatically created in tmpfs)
+RuntimeDirectory=rpi-osc-bridge
+RuntimeDirectoryMode=0755
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

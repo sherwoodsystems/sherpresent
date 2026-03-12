@@ -1,0 +1,3 @@
+[submodule "apps/companion-module"]
+	path = apps/companion-module
+	url = https://github.com/bitfocus/companion-module-template-ts.git

@@ -1,0 +1,7 @@
+{
+  "osc_host": "192.168.1.100",
+  "osc_port": 9000,
+  "feedback_port": 9001,
+  "keyboard_device": "auto",
+  "log_level": "INFO"
+}

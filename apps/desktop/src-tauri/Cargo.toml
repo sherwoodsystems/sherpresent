@@ -1,0 +1,79 @@
+[package]
+name = "sher-present-settings"
+version = "0.2.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "sher_present_settings_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# OSC Server Dependencies
+# ========================
+# rosc: Open Sound Control protocol parsing/encoding
+#   - Handles the binary OSC message format
+#   - Pure Rust, no system dependencies
+rosc = "0.10"
+
+# tokio: Async runtime for networking and timers
+#   - "net" = UDP sockets for OSC communication
+#   - "time" = Interval timers for state polling
+#   - "sync" = mpsc channels for inter-task communication
+#   - "rt-multi-thread" = Multi-threaded runtime for spawn_blocking
+tokio = { version = "1", features = ["net", "time", "sync", "rt-multi-thread", "macros"] }
+
+# log: Logging facade for debugging
+#   - Used throughout the OSC module to trace execution
+log = "0.4"
+
+# uuid: Generate unique instance identifiers for channel membership
+uuid = { version = "1", features = ["v4"] }
+
+# mdns-sd: mDNS service discovery for automatic peer discovery
+#   - Allows sher-present instances to find each other on LAN
+#   - Uses system mDNS (Bonjour on macOS, Avahi on Linux)
+mdns-sd = "0.15"
+
+# hostname: Get the local machine's hostname for mDNS registration
+hostname = "0.4"
+
+# if-addrs: Get network interface addresses for subnet broadcast calculation
+if-addrs = "0.13"
+
+# env_logger: Simple logger that reads RUST_LOG env var
+#   - Set RUST_LOG=debug for verbose output
+#   - Set RUST_LOG=warn for quiet output
+env_logger = "0.11"
+
+# Windows-specific dependencies
+# =============================
+[target.'cfg(windows)'.dependencies]
+# windows: Microsoft's official Windows API crate
+#   - "Win32_System_Com" = COM interfaces (IDispatch, CoCreateInstance, etc.)
+#   - "Win32_System_Ole" = OLE automation (GetActiveObject, VARIANT, etc.)
+#   - "Win32_Foundation" = Basic Windows types (BSTR, PWSTR, etc.)
+#   - "Win32_System_Variant" = VARIANT type handling
+#   - "Win32_System_Com_StructuredStorage" = Required for VARIANT to BSTR conversion
+windows = { version = "0.62", features = [
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_Foundation",
+    "Win32_System_Variant",
+    "Win32_System_Com_StructuredStorage",
+] }
+

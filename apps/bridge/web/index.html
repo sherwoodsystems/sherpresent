@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SherPresent OSC Bridge</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #fff;
+            color: #000;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.5;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+
+        .status {
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .status.running {
+            background: #f0f0f0;
+        }
+
+        .status.stopped {
+            background: #e0e0e0;
+        }
+
+        .message {
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .message.success {
+            background: #f0f0f0;
+        }
+
+        .message.error {
+            background: #e0e0e0;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input:focus, select:focus {
+            outline: 2px solid #000;
+            outline-offset: 0;
+        }
+
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 3px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: 1px solid #000;
+            background: #fff;
+            color: #000;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        button:hover {
+            background: #000;
+            color: #fff;
+        }
+
+        button:active {
+            background: #333;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button:disabled:hover {
+            background: #fff;
+            color: #000;
+        }
+
+        .btn-primary {
+            background: #000;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #333;
+        }
+
+        .log-container {
+            border: 1px solid #ccc;
+            padding: 10px;
+            background: #f9f9f9;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-line {
+            margin-bottom: 3px;
+        }
+
+        .devices-list {
+            border: 1px solid #ccc;
+            padding: 10px;
+            background: #f9f9f9;
+        }
+
+        .device-item {
+            padding: 8px;
+            border-bottom: 1px solid #ccc;
+            font-size: 13px;
+        }
+
+        .device-item:last-child {
+            border-bottom: none;
+        }
+
+        .device-name {
+            font-weight: 500;
+        }
+
+        .device-path {
+            font-family: monospace;
+            font-size: 11px;
+            color: #666;
+        }
+
+        .device-port {
+            font-family: monospace;
+            font-size: 11px;
+            color: #000;
+            font-weight: 600;
+        }
+
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #ccc;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .version-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            background: #333;
+            color: #fff;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 10px;
+            vertical-align: middle;
+        }
+
+        /* Device Management Styles */
+        .device-slots {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .device-slot {
+            border: 1px solid #ccc;
+            padding: 15px;
+            background: #f9f9f9;
+        }
+
+        .slot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .slot-label {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .slot-status {
+            font-size: 11px;
+            padding: 2px 8px;
+            border: 1px solid #ccc;
+        }
+
+        .slot-status.registered {
+            background: #e8e8e8;
+        }
+
+        .slot-status.not-registered {
+            background: #f5f5f5;
+            color: #666;
+        }
+
+        .slot-info {
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+
+        .slot-info div {
+            margin-bottom: 3px;
+        }
+
+        .slot-info .info-label {
+            color: #666;
+        }
+
+        .slot-info .info-value {
+            font-family: monospace;
+        }
+
+        .channel-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #e8e8e8;
+            border: 1px solid #ccc;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .slot-actions {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .slot-actions button {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        /* Test feedback arrows */
+        .test-indicator {
+            display: inline-block;
+            font-size: 16px;
+            margin-left: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .test-indicator.show {
+            opacity: 1;
+        }
+
+        .test-indicator.next {
+            color: #2a2;
+        }
+
+        .test-indicator.prev {
+            color: #c44;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 25px;
+            max-width: 400px;
+            width: 90%;
+            border: 2px solid #000;
+        }
+
+        .modal-header {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .modal-body {
+            margin-bottom: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .detection-status {
+            padding: 15px;
+            border: 1px solid #ccc;
+            background: #f5f5f5;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        .detection-status.waiting {
+            background: #fff;
+        }
+
+        .detection-status.detected {
+            background: #e8e8e8;
+        }
+
+        .countdown {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .detected-device {
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        /* Collapsible sections */
+        .collapsible-section {
+            margin-top: 30px;
+        }
+
+        .collapsible-section summary {
+            cursor: pointer;
+            font-size: 14px;
+            color: #666;
+            padding: 8px 0;
+        }
+
+        .collapsible-section summary:hover {
+            color: #000;
+        }
+
+        .collapsible-section[open] .log-container,
+        .collapsible-section[open] .devices-list,
+        .collapsible-section[open] .settings-content {
+            margin-top: 10px;
+        }
+
+        /* Settings section */
+        .settings-content {
+            border: 1px solid #ccc;
+            padding: 15px;
+            background: #f9f9f9;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .device-slots {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>SherPresent OSC Bridge</h1>
+
+    <div id="status" class="status">
+        Loading status...
+    </div>
+
+    <div id="message" class="message"></div>
+
+    <h2>Device Management</h2>
+    <p style="margin-bottom: 15px; font-size: 13px; color: #666;">
+        Register your keyboard devices and assign each to a broadcast channel.
+    </p>
+
+    <div class="device-slots" id="deviceSlots">
+        <!-- Device slots will be rendered by JavaScript -->
+    </div>
+
+    <!-- Registration Modal -->
+    <div class="modal" id="registrationModal">
+        <div class="modal-content">
+            <div class="modal-header">Register <span id="modalSlotName">Device</span></div>
+            <div class="modal-body">
+                <div id="detectionStep">
+                    <div class="detection-status waiting" id="detectionStatus">
+                        <div>Press any button on the remote...</div>
+                        <div class="countdown" id="countdown">30</div>
+                    </div>
+                </div>
+                <div id="configStep" style="display: none;">
+                    <div class="detection-status detected">
+                        <div>Device detected:</div>
+                        <div class="detected-device" id="detectedDeviceName"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="regLabel">Device Label</label>
+                        <input type="text" id="regLabel" placeholder="Side A">
+                    </div>
+                    <div class="form-group">
+                        <label for="regChannel">Broadcast Channel</label>
+                        <select id="regChannel">
+                            <!-- Options populated by JavaScript -->
+                        </select>
+                        <p class="help-text">Commands will be sent to all listeners on this channel</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" id="btnCancelReg">Cancel</button>
+                <button type="button" id="btnConfirmReg" class="btn-primary" disabled>Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <details class="collapsible-section">
+        <summary>Show Connected Devices</summary>
+        <div class="devices-list" id="devicesList">
+            <div>Loading devices...</div>
+        </div>
+    </details>
+
+    <details class="collapsible-section">
+        <summary>Settings</summary>
+        <div class="settings-content">
+            <div class="form-group">
+                <label for="broadcastPort">Broadcast Port</label>
+                <input type="number" id="broadcastPort" value="9002" min="1024" max="65535">
+                <p class="help-text">UDP port for broadcasting commands (default: 9002)</p>
+            </div>
+            <div class="form-group">
+                <label for="feedbackPort">Feedback Port</label>
+                <input type="number" id="feedbackPort" value="9002" min="1024" max="65535">
+                <p class="help-text">UDP port for receiving feedback (default: 9002)</p>
+            </div>
+            <div class="form-group">
+                <label for="logLevel">Log Level</label>
+                <select id="logLevel">
+                    <option value="DEBUG">DEBUG</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="ERROR">ERROR</option>
+                </select>
+            </div>
+            <div class="button-group">
+                <button type="button" id="btnSaveSettings" class="btn-primary">Save Settings</button>
+            </div>
+        </div>
+    </details>
+
+    <details class="collapsible-section">
+        <summary>Show Logs</summary>
+        <div class="log-container" id="logContainer">
+            <div>Loading logs...</div>
+        </div>
+    </details>
+
+    <div class="footer">
+        SherPresent OSC Bridge <span class="version-badge">v2.1.0</span> - Configuration saved automatically restarts service
+    </div>
+
+    <script>
+        const VERSION = '2.1.0';
+        const API_BASE = '';
+        const DEVICE_SLOTS = ['usb_1', 'usb_2', 'usb_3'];
+        const SLOT_NAMES = {
+            usb_1: 'USB 1',
+            usb_2: 'USB 2',
+            usb_3: 'USB 3'
+        };
+
+        // Global config state
+        let globalConfig = {
+            broadcast_port: 9002,
+            feedback_port: 9002,
+            log_level: 'INFO',
+            valid_channels: []
+        };
+
+        // Registration state
+        let registration = {
+            active: false,
+            slot: null,
+            pollInterval: null,
+            countdownInterval: null,
+            detectedPhys: null
+        };
+
+        // Load service status
+        async function loadStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+
+                const statusEl = document.getElementById('status');
+                if (data.running) {
+                    statusEl.className = 'status running';
+                    statusEl.textContent = 'Service Status: Running';
+                } else {
+                    statusEl.className = 'status stopped';
+                    statusEl.textContent = 'Service Status: Stopped';
+                }
+            } catch (err) {
+                const statusEl = document.getElementById('status');
+                statusEl.className = 'status stopped';
+                statusEl.textContent = 'Service Status: Unknown';
+            }
+        }
+
+        // Load global config
+        async function loadGlobalConfig() {
+            try {
+                const response = await fetch(`${API_BASE}/config/global`);
+                const data = await response.json();
+
+                globalConfig.broadcast_port = data.broadcast_port || 9002;
+                globalConfig.feedback_port = data.feedback_port || 9002;
+                globalConfig.log_level = data.log_level || 'INFO';
+                globalConfig.valid_channels = data.valid_channels || ['main', 'backup'];
+
+                // Update UI
+                document.getElementById('broadcastPort').value = globalConfig.broadcast_port;
+                document.getElementById('feedbackPort').value = globalConfig.feedback_port;
+                document.getElementById('logLevel').value = globalConfig.log_level;
+
+                // Populate channel dropdown in registration modal
+                const channelSelect = document.getElementById('regChannel');
+                channelSelect.innerHTML = globalConfig.valid_channels.map(ch =>
+                    `<option value="${ch}">${ch}</option>`
+                ).join('');
+
+            } catch (err) {
+                console.error('Failed to load global config:', err);
+            }
+        }
+
+        // Save global config
+        async function saveGlobalConfig() {
+            const broadcast_port = parseInt(document.getElementById('broadcastPort').value) || 9002;
+            const feedback_port = parseInt(document.getElementById('feedbackPort').value) || 9002;
+            const log_level = document.getElementById('logLevel').value;
+
+            try {
+                document.getElementById('btnSaveSettings').disabled = true;
+                document.getElementById('btnSaveSettings').textContent = 'Saving...';
+
+                const response = await fetch(`${API_BASE}/config/global`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ broadcast_port, feedback_port, log_level })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('Settings saved', 'success');
+                    loadStatus();  // Refresh status after service restart
+                } else {
+                    showMessage(`Error: ${result.message}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            } finally {
+                document.getElementById('btnSaveSettings').disabled = false;
+                document.getElementById('btnSaveSettings').textContent = 'Save Settings';
+            }
+        }
+
+        // Render device slots
+        function renderDeviceSlots(devices) {
+            const container = document.getElementById('deviceSlots');
+            container.innerHTML = DEVICE_SLOTS.map(slot => {
+                const device = devices[slot];
+                const isRegistered = device !== null && device !== undefined;
+
+                return `
+                    <div class="device-slot" data-slot="${slot}">
+                        <div class="slot-header">
+                            <span class="slot-label">${isRegistered ? escapeHtml(device.label) : SLOT_NAMES[slot]}<span class="test-indicator" id="indicator-${slot}"></span></span>
+                            <span class="slot-status ${isRegistered ? 'registered' : 'not-registered'}">
+                                ${isRegistered ? 'Registered' : 'Empty'}
+                            </span>
+                        </div>
+                        ${isRegistered ? `
+                            <div class="slot-info">
+                                <div><span class="info-label">Channel:</span> <span class="channel-badge">${escapeHtml(device.channel)}</span></div>
+                            </div>
+                            <div class="slot-actions">
+                                <button onclick="testDevice('${slot}', 'prev')">&larr; Prev</button>
+                                <button onclick="testDevice('${slot}', 'next')">Next &rarr;</button>
+                                <button onclick="unregisterDevice('${slot}')">Remove</button>
+                            </div>
+                        ` : `
+                            <div class="slot-actions">
+                                <button class="btn-primary" onclick="startRegistration('${slot}')">Register Device</button>
+                            </div>
+                        `}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Start device registration
+        async function startRegistration(slot) {
+            try {
+                const response = await fetch(`${API_BASE}/registration/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slot })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to start registration');
+                }
+
+                registration.active = true;
+                registration.slot = slot;
+                registration.detectedPhys = null;
+
+                // Show modal
+                document.getElementById('modalSlotName').textContent = SLOT_NAMES[slot];
+                document.getElementById('registrationModal').classList.add('active');
+                document.getElementById('detectionStep').style.display = 'block';
+                document.getElementById('configStep').style.display = 'none';
+                document.getElementById('btnConfirmReg').disabled = true;
+
+                // Set default label
+                document.getElementById('regLabel').value = SLOT_NAMES[slot];
+
+                // Start countdown and polling
+                startDetectionPolling();
+
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            }
+        }
+
+        // Poll for device detection
+        function startDetectionPolling() {
+            let countdown = 30;
+            document.getElementById('countdown').textContent = countdown;
+
+            // Countdown timer
+            registration.countdownInterval = setInterval(() => {
+                countdown--;
+                document.getElementById('countdown').textContent = countdown;
+
+                if (countdown <= 0) {
+                    cancelRegistration();
+                    showMessage('Registration timed out', 'error');
+                }
+            }, 1000);
+
+            // Poll for detection
+            registration.pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/registration/status`);
+                    const status = await response.json();
+
+                    if (status.detected_phys) {
+                        // Device detected!
+                        clearInterval(registration.pollInterval);
+                        clearInterval(registration.countdownInterval);
+
+                        registration.detectedPhys = status.detected_phys;
+
+                        document.getElementById('detectionStep').style.display = 'none';
+                        document.getElementById('configStep').style.display = 'block';
+                        document.getElementById('detectedDeviceName').textContent = status.detected_name || status.detected_phys;
+                        document.getElementById('btnConfirmReg').disabled = false;
+                    }
+                } catch (err) {
+                    console.error('Polling error:', err);
+                }
+            }, 500);
+        }
+
+        // Confirm registration
+        async function confirmRegistration() {
+            const label = document.getElementById('regLabel').value || SLOT_NAMES[registration.slot];
+            const channel = document.getElementById('regChannel').value || 'main';
+
+            try {
+                document.getElementById('btnConfirmReg').disabled = true;
+                document.getElementById('btnConfirmReg').textContent = 'Saving...';
+
+                const response = await fetch(`${API_BASE}/registration/confirm`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        slot: registration.slot,
+                        usb_phys: registration.detectedPhys,
+                        channel: channel,
+                        label: label
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    closeRegistrationModal();
+                    showMessage('Device registered successfully', 'success');
+                    loadRegisteredDevices();
+                    loadStatus();
+                } else {
+                    showMessage(`Error: ${result.message}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            } finally {
+                document.getElementById('btnConfirmReg').disabled = false;
+                document.getElementById('btnConfirmReg').textContent = 'Confirm';
+            }
+        }
+
+        // Cancel registration
+        async function cancelRegistration() {
+            if (registration.pollInterval) clearInterval(registration.pollInterval);
+            if (registration.countdownInterval) clearInterval(registration.countdownInterval);
+
+            try {
+                await fetch(`${API_BASE}/registration/cancel`, { method: 'POST' });
+            } catch (err) {
+                console.error('Cancel error:', err);
+            }
+
+            closeRegistrationModal();
+        }
+
+        // Close modal
+        function closeRegistrationModal() {
+            registration.active = false;
+            registration.slot = null;
+            registration.detectedPhys = null;
+            document.getElementById('registrationModal').classList.remove('active');
+        }
+
+        // Unregister device
+        async function unregisterDevice(slot) {
+            if (!confirm(`Remove ${SLOT_NAMES[slot]}?`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/devices/${slot}/unregister`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('Device removed', 'success');
+                    loadRegisteredDevices();
+                } else {
+                    showMessage(`Error: ${result.message}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            }
+        }
+
+        // Test device (broadcast on its channel)
+        async function testDevice(slot, cmd) {
+            try {
+                const response = await fetch(`${API_BASE}/devices/${slot}/test/${cmd}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showTestIndicator(slot, cmd);
+                } else {
+                    showMessage(`Error: ${result.message}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            }
+        }
+
+        // Show test indicator arrow
+        function showTestIndicator(slot, cmd) {
+            const indicator = document.getElementById(`indicator-${slot}`);
+            if (!indicator) return;
+
+            indicator.textContent = cmd === 'next' ? '→' : '←';
+            indicator.className = `test-indicator ${cmd} show`;
+
+            setTimeout(() => {
+                indicator.classList.remove('show');
+            }, 800);
+        }
+
+        // Track last command to detect new events
+        let lastCommandTime = null;
+        let registeredDeviceLabels = {};
+
+        // Poll for live device events
+        async function pollLiveEvents() {
+            try {
+                const response = await fetch(`${API_BASE}/feedback`);
+                const data = await response.json();
+
+                if (data.last_command_time && data.last_command_time !== lastCommandTime) {
+                    lastCommandTime = data.last_command_time;
+
+                    // Parse command like "/clicker/main/next"
+                    const match = data.last_command?.match(/\/clicker\/(\w+)\/(next|prev)/);
+                    if (match) {
+                        const channel = match[1];
+                        const cmd = match[2];
+
+                        // Find slot by channel
+                        const slot = Object.keys(registeredDeviceChannels).find(
+                            s => registeredDeviceChannels[s] === channel
+                        );
+                        if (slot) {
+                            showTestIndicator(slot, cmd);
+                        }
+                    }
+                }
+            } catch (err) {
+                // Silent fail - not critical
+            }
+        }
+
+        // Cache registered device channels
+        let registeredDeviceChannels = {};
+
+        // Update channel cache when loading registered devices
+        async function loadRegisteredDevices() {
+            try {
+                const response = await fetch(`${API_BASE}/devices/registered`);
+                const data = await response.json();
+
+                // Update global config from response
+                if (data.valid_channels) {
+                    globalConfig.valid_channels = data.valid_channels;
+                }
+
+                // Cache channels for live event matching
+                registeredDeviceChannels = {};
+                registeredDeviceLabels = {};
+                for (const [slot, device] of Object.entries(data.devices || {})) {
+                    if (device) {
+                        registeredDeviceChannels[slot] = device.channel;
+                        registeredDeviceLabels[slot] = device.label;
+                    }
+                }
+
+                renderDeviceSlots(data.devices || {});
+            } catch (err) {
+                console.error('Failed to load registered devices:', err);
+            }
+        }
+
+        // Load recent logs
+        async function loadLogs() {
+            try {
+                const response = await fetch(`${API_BASE}/logs`);
+                const data = await response.json();
+
+                const logContainer = document.getElementById('logContainer');
+                if (data.logs && data.logs.length > 0) {
+                    logContainer.innerHTML = data.logs.map(line =>
+                        `<div class="log-line">${escapeHtml(line)}</div>`
+                    ).join('');
+                } else {
+                    logContainer.innerHTML = '<div>No logs available</div>';
+                }
+            } catch (err) {
+                console.error('Failed to load logs:', err);
+                document.getElementById('logContainer').innerHTML = '<div>Failed to load logs</div>';
+            }
+        }
+
+        // Load connected devices
+        async function loadDevices() {
+            try {
+                const response = await fetch(`${API_BASE}/devices`);
+                const data = await response.json();
+
+                const devicesList = document.getElementById('devicesList');
+                if (data.devices && data.devices.length > 0) {
+                    devicesList.innerHTML = data.devices.map(device => `
+                        <div class="device-item">
+                            <div class="device-name">${escapeHtml(device.name)}${device.is_perfect_cue ? ' [Perfect Cue]' : ''}</div>
+                            <div class="device-path">${escapeHtml(device.path)}</div>
+                            <div class="device-port">USB: ${escapeHtml(device.usb_phys || device.usb_port || 'unknown')}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    devicesList.innerHTML = '<div>No keyboard devices detected</div>';
+                }
+            } catch (err) {
+                console.error('Failed to load devices:', err);
+                document.getElementById('devicesList').innerHTML = '<div>Failed to load devices</div>';
+            }
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        // Show message
+        function showMessage(text, type) {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.style.display = 'block';
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageEl.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('btnCancelReg').addEventListener('click', cancelRegistration);
+        document.getElementById('btnConfirmReg').addEventListener('click', confirmRegistration);
+        document.getElementById('btnSaveSettings').addEventListener('click', saveGlobalConfig);
+
+        // Load initial data
+        loadStatus();
+        loadGlobalConfig();
+        loadRegisteredDevices();
+        loadLogs();
+        loadDevices();
+
+        // Refresh data periodically
+        setInterval(loadStatus, 10000);
+        setInterval(loadLogs, 5000);
+        setInterval(loadDevices, 30000);
+        setInterval(loadRegisteredDevices, 10000);
+        setInterval(pollLiveEvents, 500);  // Poll for live button presses
+    </script>
+</body>
+</html>

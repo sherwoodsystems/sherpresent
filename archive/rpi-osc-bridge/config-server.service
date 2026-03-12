@@ -1,0 +1,21 @@
+[Unit]
+Description=RPi OSC Bridge - Configuration Web Server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/rpi-osc-bridge
+ExecStart=/usr/bin/python3 /opt/rpi-osc-bridge/config-server.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

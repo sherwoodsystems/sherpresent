@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SherPresent OSC Bridge</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #fff;
+            color: #000;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.5;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+
+        .status {
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .status.running {
+            background: #f0f0f0;
+        }
+
+        .status.stopped {
+            background: #e0e0e0;
+        }
+
+        .message {
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .message.success {
+            background: #f0f0f0;
+        }
+
+        .message.error {
+            background: #e0e0e0;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input:focus, select:focus {
+            outline: 2px solid #000;
+            outline-offset: 0;
+        }
+
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 3px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: 1px solid #000;
+            background: #fff;
+            color: #000;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        button:hover {
+            background: #000;
+            color: #fff;
+        }
+
+        button:active {
+            background: #333;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button:disabled:hover {
+            background: #fff;
+            color: #000;
+        }
+
+        .btn-primary {
+            background: #000;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #333;
+        }
+
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .test-buttons button {
+            flex: 1;
+        }
+
+        .feedback-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            border: 1px solid #ccc;
+            padding: 15px;
+            background: #f9f9f9;
+        }
+
+        .feedback-item {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .feedback-label {
+            font-weight: 500;
+        }
+
+        .feedback-value {
+            font-family: monospace;
+        }
+
+        .log-container {
+            border: 1px solid #ccc;
+            padding: 10px;
+            background: #f9f9f9;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-line {
+            margin-bottom: 3px;
+        }
+
+        .devices-list {
+            border: 1px solid #ccc;
+            padding: 10px;
+            background: #f9f9f9;
+        }
+
+        .device-item {
+            padding: 8px;
+            border-bottom: 1px solid #ccc;
+            font-size: 13px;
+        }
+
+        .device-item:last-child {
+            border-bottom: none;
+        }
+
+        .device-name {
+            font-weight: 500;
+        }
+
+        .device-path {
+            font-family: monospace;
+            font-size: 11px;
+            color: #666;
+        }
+
+        .device-port {
+            font-family: monospace;
+            font-size: 11px;
+            color: #000;
+            font-weight: 600;
+        }
+
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #ccc;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .feedback-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>SherPresent OSC Bridge</h1>
+
+    <div id="status" class="status">
+        Loading status...
+    </div>
+
+    <h2>Configuration</h2>
+
+    <div id="message" class="message"></div>
+
+    <form id="configForm">
+        <div class="form-group">
+            <label for="osc_host">OSC Host</label>
+            <input type="text" id="osc_host" name="osc_host" placeholder="192.168.1.100" required>
+            <div class="help-text">IP address of presenter PC running sher-present</div>
+        </div>
+
+        <div class="form-group">
+            <label for="osc_port">OSC Port</label>
+            <input type="number" id="osc_port" name="osc_port" min="1" max="65535" required>
+            <div class="help-text">Port for sending OSC commands (default: 9000)</div>
+        </div>
+
+        <div class="form-group">
+            <label for="feedback_port">Feedback Port</label>
+            <input type="number" id="feedback_port" name="feedback_port" min="1" max="65535" required>
+            <div class="help-text">Port for receiving OSC feedback (default: 9001)</div>
+        </div>
+
+        <div class="form-group">
+            <label for="log_level">Log Level</label>
+            <select id="log_level" name="log_level">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+            </select>
+        </div>
+
+        <div class="button-group">
+            <button type="submit" class="btn-primary">Save Configuration</button>
+        </div>
+    </form>
+
+    <h2>Test Commands</h2>
+    <div class="test-buttons">
+        <button type="button" id="btnPrev">Previous Slide</button>
+        <button type="button" id="btnNext">Next Slide</button>
+    </div>
+
+    <h2>Presentation Status</h2>
+    <div class="feedback-grid" id="feedbackGrid">
+        <div class="feedback-item">
+            <span class="feedback-label">Slide:</span>
+            <span class="feedback-value" id="feedbackSlide">-</span>
+        </div>
+        <div class="feedback-item">
+            <span class="feedback-label">Presenting:</span>
+            <span class="feedback-value" id="feedbackPresenting">-</span>
+        </div>
+        <div class="feedback-item">
+            <span class="feedback-label">Open:</span>
+            <span class="feedback-value" id="feedbackOpen">-</span>
+        </div>
+        <div class="feedback-item">
+            <span class="feedback-label">Zoom:</span>
+            <span class="feedback-value" id="feedbackZoom">-</span>
+        </div>
+        <div class="feedback-item">
+            <span class="feedback-label">Last Command:</span>
+            <span class="feedback-value" id="feedbackCommand">-</span>
+        </div>
+        <div class="feedback-item">
+            <span class="feedback-label">Last Update:</span>
+            <span class="feedback-value" id="feedbackUpdate">-</span>
+        </div>
+    </div>
+
+    <h2>Connected Devices</h2>
+    <div class="devices-list" id="devicesList">
+        <div>Loading devices...</div>
+    </div>
+
+    <h2>Recent Logs</h2>
+    <div class="log-container" id="logContainer">
+        <div>Loading logs...</div>
+    </div>
+
+    <div class="footer">
+        SherPresent OSC Bridge - Configuration saved automatically restarts service
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        // Load service status
+        async function loadStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+
+                const statusEl = document.getElementById('status');
+                if (data.running) {
+                    statusEl.className = 'status running';
+                    statusEl.textContent = 'Service Status: Running';
+                } else {
+                    statusEl.className = 'status stopped';
+                    statusEl.textContent = 'Service Status: Stopped';
+                }
+            } catch (err) {
+                const statusEl = document.getElementById('status');
+                statusEl.className = 'status stopped';
+                statusEl.textContent = 'Service Status: Unknown';
+            }
+        }
+
+        // Load current configuration
+        async function loadConfig() {
+            try {
+                const response = await fetch(`${API_BASE}/config`);
+                const config = await response.json();
+
+                document.getElementById('osc_host').value = config.osc_host || '192.168.1.100';
+                document.getElementById('osc_port').value = config.osc_port || 9000;
+                document.getElementById('feedback_port').value = config.feedback_port || 9001;
+                document.getElementById('log_level').value = config.log_level || 'INFO';
+            } catch (err) {
+                console.error('Failed to load config:', err);
+            }
+        }
+
+        // Load OSC feedback state
+        async function loadFeedback() {
+            try {
+                const response = await fetch(`${API_BASE}/feedback`);
+                const data = await response.json();
+
+                const slideText = data.total_slides > 0
+                    ? `${data.current_slide} / ${data.total_slides}`
+                    : '-';
+                document.getElementById('feedbackSlide').textContent = slideText;
+                document.getElementById('feedbackPresenting').textContent = data.presenting ? 'Yes' : 'No';
+                document.getElementById('feedbackOpen').textContent = data.open ? 'Yes' : 'No';
+                document.getElementById('feedbackZoom').textContent = data.zoom_level || '-';
+                document.getElementById('feedbackCommand').textContent = data.last_command || '-';
+
+                if (data.last_updated) {
+                    const date = new Date(data.last_updated);
+                    const timeStr = date.toLocaleTimeString();
+                    document.getElementById('feedbackUpdate').textContent = timeStr;
+                } else {
+                    document.getElementById('feedbackUpdate').textContent = '-';
+                }
+            } catch (err) {
+                console.error('Failed to load feedback:', err);
+            }
+        }
+
+        // Load recent logs
+        async function loadLogs() {
+            try {
+                const response = await fetch(`${API_BASE}/logs`);
+                const data = await response.json();
+
+                const logContainer = document.getElementById('logContainer');
+                if (data.logs && data.logs.length > 0) {
+                    logContainer.innerHTML = data.logs.map(line =>
+                        `<div class="log-line">${escapeHtml(line)}</div>`
+                    ).join('');
+                } else {
+                    logContainer.innerHTML = '<div>No logs available</div>';
+                }
+            } catch (err) {
+                console.error('Failed to load logs:', err);
+                document.getElementById('logContainer').innerHTML = '<div>Failed to load logs</div>';
+            }
+        }
+
+        // Load connected devices
+        async function loadDevices() {
+            try {
+                const response = await fetch(`${API_BASE}/devices`);
+                const data = await response.json();
+
+                const devicesList = document.getElementById('devicesList');
+                if (data.devices && data.devices.length > 0) {
+                    devicesList.innerHTML = data.devices.map(device => `
+                        <div class="device-item">
+                            <div class="device-name">${escapeHtml(device.name)}</div>
+                            <div class="device-path">${escapeHtml(device.path)}</div>
+                            <div class="device-port">USB Port: ${escapeHtml(device.usb_port)}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    devicesList.innerHTML = '<div>No keyboard devices detected</div>';
+                }
+            } catch (err) {
+                console.error('Failed to load devices:', err);
+                document.getElementById('devicesList').innerHTML = '<div>Failed to load devices</div>';
+            }
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Show message
+        function showMessage(text, type) {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.style.display = 'block';
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageEl.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Handle form submission
+        document.getElementById('configForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.textContent = 'Saving...';
+            submitBtn.disabled = true;
+
+            try {
+                const formData = new FormData(e.target);
+                const config = {
+                    osc_host: formData.get('osc_host'),
+                    osc_port: parseInt(formData.get('osc_port')),
+                    feedback_port: parseInt(formData.get('feedback_port')),
+                    log_level: formData.get('log_level'),
+                    keyboard_device: 'auto'
+                };
+
+                const response = await fetch(`${API_BASE}/save`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showMessage('Configuration saved and service restarted', 'success');
+                    setTimeout(() => {
+                        loadStatus();
+                    }, 2000);
+                } else {
+                    showMessage(`Error: ${result.error || 'Failed to save configuration'}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            } finally {
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+            }
+        });
+
+        // Handle test buttons
+        document.getElementById('btnPrev').addEventListener('click', async () => {
+            const btn = document.getElementById('btnPrev');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/test/prev`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('Sent: Previous Slide', 'success');
+                } else {
+                    showMessage(`Error: ${result.message}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        document.getElementById('btnNext').addEventListener('click', async () => {
+            const btn = document.getElementById('btnNext');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/test/next`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('Sent: Next Slide', 'success');
+                } else {
+                    showMessage(`Error: ${result.message}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        // Load initial data
+        loadStatus();
+        loadConfig();
+        loadFeedback();
+        loadLogs();
+        loadDevices();
+
+        // Refresh data periodically
+        setInterval(loadStatus, 10000);     // Status every 10 seconds
+        setInterval(loadFeedback, 2000);    // Feedback every 2 seconds
+        setInterval(loadLogs, 5000);        // Logs every 5 seconds
+        setInterval(loadDevices, 30000);    // Devices every 30 seconds
+    </script>
+</body>
+</html>
