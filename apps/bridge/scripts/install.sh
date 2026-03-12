@@ -53,6 +53,7 @@ if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
     cp "$SCRIPT_DIR/osc.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/file_utils.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/bridge.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/satellite.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/config-server.py" "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR/config.example.json" "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR/rpi-osc-bridge.service" "$INSTALL_DIR/" 2>/dev/null || true

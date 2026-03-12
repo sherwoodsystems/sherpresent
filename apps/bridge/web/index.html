@@ -410,6 +410,61 @@
             background: #f9f9f9;
         }
 
+        /* Mode tabs */
+        .mode-tabs {
+            display: flex;
+            border-bottom: 2px solid #000;
+            margin-bottom: 0;
+        }
+
+        .mode-tab {
+            padding: 10px 24px;
+            border: 1px solid #ccc;
+            border-bottom: none;
+            background: #f5f5f5;
+            color: #666;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-right: 2px;
+            margin-bottom: -2px;
+        }
+
+        .mode-tab:hover {
+            background: #e8e8e8;
+            color: #000;
+        }
+
+        .mode-tab.active {
+            background: #fff;
+            color: #000;
+            border-color: #000;
+            border-bottom: 2px solid #fff;
+            font-weight: 600;
+        }
+
+        .mode-panel {
+            display: none;
+            border: 1px solid #000;
+            border-top: none;
+            padding: 20px;
+            background: #fff;
+            margin-bottom: 20px;
+        }
+
+        .mode-panel.active {
+            display: block;
+        }
+
+        .mode-panel h3 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         @media (max-width: 600px) {
             body {
                 padding: 10px;
@@ -434,24 +489,33 @@
 
     <div id="message" class="message"></div>
 
-    <!-- Mode selector -->
-    <div id="modeSection" style="margin-bottom: 20px;">
+    <!-- Mode tabs -->
+    <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="broadcast" onclick="onModeChange('broadcast')">Broadcast (OSC)</button>
+        <button class="mode-tab" data-mode="satellite" onclick="onModeChange('satellite')">Companion Satellite</button>
+    </div>
+
+    <!-- Broadcast panel -->
+    <div class="mode-panel active" id="panel-broadcast">
+        <h3>Broadcast Settings</h3>
         <div class="form-group">
-            <label>Bridge Mode</label>
-            <div style="display: flex; gap: 10px;">
-                <label style="display: inline-flex; align-items: center; gap: 5px; font-weight: normal; cursor: pointer;">
-                    <input type="radio" name="bridgeMode" value="broadcast" checked onchange="onModeChange(this.value)"> Broadcast (OSC)
-                </label>
-                <label style="display: inline-flex; align-items: center; gap: 5px; font-weight: normal; cursor: pointer;">
-                    <input type="radio" name="bridgeMode" value="satellite" onchange="onModeChange(this.value)"> Satellite (Companion)
-                </label>
-            </div>
+            <label for="broadcastPort">Broadcast Port</label>
+            <input type="number" id="broadcastPort" value="9002" min="1024" max="65535">
+            <p class="help-text">UDP port for broadcasting commands (default: 9002)</p>
+        </div>
+        <div class="form-group">
+            <label for="feedbackPort">Feedback Port</label>
+            <input type="number" id="feedbackPort" value="9002" min="1024" max="65535">
+            <p class="help-text">UDP port for receiving feedback (default: 9002)</p>
+        </div>
+        <div class="button-group">
+            <button type="button" id="btnSaveBroadcast" class="btn-primary" onclick="saveGlobalConfig()">Save &amp; Apply</button>
         </div>
     </div>
 
-    <!-- Satellite config (shown in satellite mode) -->
-    <div id="satelliteConfig" style="display: none; margin-bottom: 20px; border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
-        <h2 style="margin-top: 0;">Companion Satellite</h2>
+    <!-- Satellite panel -->
+    <div class="mode-panel" id="panel-satellite">
+        <h3>Connection</h3>
         <div id="satelliteStatus" class="status" style="margin-bottom: 15px;">
             Not connected
         </div>
@@ -464,6 +528,9 @@
             <label for="satellitePort">Satellite Port</label>
             <input type="number" id="satellitePort" value="16622" min="1" max="65535">
             <p class="help-text">TCP port for Satellite API (default: 16622)</p>
+        </div>
+        <div class="button-group">
+            <button type="button" id="btnSaveSatellite" class="btn-primary" onclick="saveGlobalConfig()">Save &amp; Connect</button>
         </div>
     </div>
 
@@ -520,18 +587,8 @@
     </details>
 
     <details class="collapsible-section">
-        <summary>Settings</summary>
+        <summary>Advanced Settings</summary>
         <div class="settings-content">
-            <div class="form-group">
-                <label for="broadcastPort">Broadcast Port</label>
-                <input type="number" id="broadcastPort" value="9002" min="1024" max="65535">
-                <p class="help-text">UDP port for broadcasting commands (default: 9002)</p>
-            </div>
-            <div class="form-group">
-                <label for="feedbackPort">Feedback Port</label>
-                <input type="number" id="feedbackPort" value="9002" min="1024" max="65535">
-                <p class="help-text">UDP port for receiving feedback (default: 9002)</p>
-            </div>
             <div class="form-group">
                 <label for="logLevel">Log Level</label>
                 <select id="logLevel">
@@ -542,7 +599,7 @@
                 </select>
             </div>
             <div class="button-group">
-                <button type="button" id="btnSaveSettings" class="btn-primary">Save Settings</button>
+                <button type="button" id="btnSaveSettings" class="btn-primary" onclick="saveGlobalConfig()">Save Settings</button>
             </div>
         </div>
     </details>
@@ -628,10 +685,6 @@
                 document.getElementById('feedbackPort').value = globalConfig.feedback_port;
                 document.getElementById('logLevel').value = globalConfig.log_level;
 
-                // Mode radio
-                const modeRadio = document.querySelector(`input[name="bridgeMode"][value="${globalConfig.mode}"]`);
-                if (modeRadio) modeRadio.checked = true;
-
                 // Satellite fields
                 document.getElementById('satelliteHost').value = globalConfig.satellite.host || '';
                 document.getElementById('satellitePort').value = globalConfig.satellite.port || 16622;
@@ -660,7 +713,16 @@
         function applyModeUI(mode) {
             const isSatellite = mode === 'satellite';
 
-            document.getElementById('satelliteConfig').style.display = isSatellite ? 'block' : 'none';
+            // Update tabs
+            document.querySelectorAll('.mode-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.mode === mode);
+            });
+            document.querySelectorAll('.mode-panel').forEach(panel => {
+                panel.classList.toggle('active', panel.id === `panel-${mode}`);
+            });
+
+            globalConfig.mode = mode;
+
             document.getElementById('deviceDesc').textContent = isSatellite
                 ? 'Register your keyboard devices. All devices share the satellite connection.'
                 : 'Register your keyboard devices and assign each to a broadcast channel.';
@@ -707,17 +769,18 @@
 
         // Save global config
         async function saveGlobalConfig() {
-            const mode = document.querySelector('input[name="bridgeMode"]:checked')?.value || 'broadcast';
+            const mode = globalConfig.mode;
             const broadcast_port = parseInt(document.getElementById('broadcastPort').value) || 9002;
             const feedback_port = parseInt(document.getElementById('feedbackPort').value) || 9002;
             const log_level = document.getElementById('logLevel').value;
             const satellite_host = document.getElementById('satelliteHost').value.trim() || null;
             const satellite_port = parseInt(document.getElementById('satellitePort').value) || 16622;
 
-            try {
-                document.getElementById('btnSaveSettings').disabled = true;
-                document.getElementById('btnSaveSettings').textContent = 'Saving...';
+            // Disable all save buttons
+            const saveButtons = document.querySelectorAll('#btnSaveBroadcast, #btnSaveSatellite, #btnSaveSettings');
+            saveButtons.forEach(btn => { btn.disabled = true; btn.textContent = 'Saving...'; });
 
+            try {
                 const response = await fetch(`${API_BASE}/config/global`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -731,13 +794,17 @@
 
                 if (result.success) {
                     showMessage('Settings saved', 'success');
-                    loadStatus();  // Refresh status after service restart
+                    loadStatus();
                 } else {
                     showMessage(`Error: ${result.message}`, 'error');
                 }
             } catch (err) {
                 showMessage(`Error: ${err.message}`, 'error');
             } finally {
+                document.getElementById('btnSaveBroadcast').disabled = false;
+                document.getElementById('btnSaveBroadcast').textContent = 'Save & Apply';
+                document.getElementById('btnSaveSatellite').disabled = false;
+                document.getElementById('btnSaveSatellite').textContent = 'Save & Connect';
                 document.getElementById('btnSaveSettings').disabled = false;
                 document.getElementById('btnSaveSettings').textContent = 'Save Settings';
             }
@@ -1102,7 +1169,6 @@
         // Event listeners
         document.getElementById('btnCancelReg').addEventListener('click', cancelRegistration);
         document.getElementById('btnConfirmReg').addEventListener('click', confirmRegistration);
-        document.getElementById('btnSaveSettings').addEventListener('click', saveGlobalConfig);
 
         // Load initial data
         loadStatus();

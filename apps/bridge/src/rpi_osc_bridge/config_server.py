@@ -215,6 +215,8 @@ def get_recent_logs(lines: int = 50) -> list:
         if result.returncode == 0:
             log_lines = result.stdout.strip().split('\n')
             return [line for line in log_lines if line.strip()]
+    except FileNotFoundError:
+        return ["(journalctl not available in this environment)"]
     except Exception as e:
         print(f"Error reading logs: {e}", file=sys.stderr)
 

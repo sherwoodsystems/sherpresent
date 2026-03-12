@@ -1,0 +1,24 @@
+services:
+  bridge-config:
+    build:
+      context: ../../..
+      dockerfile: apps/bridge/docker/Dockerfile
+    ports:
+      - "8080:80"
+      - "9002:9002/udp"
+    volumes:
+      - bridge-config:/etc/rpi-osc-bridge
+      - bridge-runtime:/var/run/rpi-osc-bridge
+
+  bridge-test:
+    build:
+      context: ../../..
+      dockerfile: apps/bridge/docker/Dockerfile
+    command: python3 -m pytest tests/ -v
+    working_dir: /opt/rpi-osc-bridge
+    profiles: ["test"]
+    depends_on: []
+
+volumes:
+  bridge-config:
+  bridge-runtime:
