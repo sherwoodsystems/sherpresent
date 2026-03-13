@@ -22,6 +22,7 @@ class AppStore {
   
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
   private unlistenStatus: UnlistenFn | null = null;
+  private unlistenCanvaLog: UnlistenFn | null = null;
 
   async init() {
     try {
@@ -49,10 +50,17 @@ class AppStore {
     this.unlistenStatus = await listen<LiveStatus>('presentation-status', (event) => {
       this.liveStatus = event.payload;
     });
+
+    // Listen for Canva webview logs forwarded from Rust
+    this.unlistenCanvaLog = await listen<{ category: string; message: string }>('canva-webview-log', (event) => {
+      const { category, message } = event.payload;
+      console.log(`[CANVA:${category}]`, message);
+    });
   }
 
   destroy() {
     this.unlistenStatus?.();
+    this.unlistenCanvaLog?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
@@ -173,6 +181,28 @@ class AppStore {
 
   async setInstanceName(name: string | null): Promise<void> {
     await invoke('set_instance_name', { name });
+  }
+
+  async nextSlide() {
+    try {
+      await invoke('next_slide', {
+        adapter: this.config.adapter,
+        name: this.config.presentationName
+      });
+    } catch (e) {
+      console.error('Failed to go to next slide:', e);
+    }
+  }
+
+  async prevSlide() {
+    try {
+      await invoke('prev_slide', {
+        adapter: this.config.adapter,
+        name: this.config.presentationName
+      });
+    } catch (e) {
+      console.error('Failed to go to previous slide:', e);
+    }
   }
 
   updateAdapterConfig(adapterConfig: AdapterConfig) {

@@ -34,11 +34,13 @@ const INTERCEPT_SCRIPT: &str = r#"
           var bytes = new Uint8Array(buf);
           var hex = Array.from(bytes).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
           tauriLog('WS_RECV_BIN', { url: url, size: bytes.length, hex: hex });
+          tryExtractCanvaState(bytes);
         });
       } else if (data instanceof ArrayBuffer) {
         var bytes = new Uint8Array(data);
         var hex = Array.from(bytes).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
         tauriLog('WS_RECV_BIN', { url: url, size: bytes.length, hex: hex });
+        tryExtractCanvaState(bytes);
       }
     });
 
@@ -137,6 +139,43 @@ const INTERCEPT_SCRIPT: &str = r#"
     };
   });
 
+  // --- Extract slide state from WS binary frames ---
+  function tryExtractCanvaState(bytes) {
+    var jsonStart = -1;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] === 0x7b) { jsonStart = i; break; }
+    }
+    if (jsonStart < 0) return;
+
+    var jsonStr;
+    try { jsonStr = new TextDecoder().decode(bytes.slice(jsonStart)); } catch(e) { return; }
+    try {
+      var obj = JSON.parse(jsonStr);
+
+      // State snapshot: {"A?":"C","Bk":{"B":{"Bk": currentPage, "Bl": totalPages}}}
+      if (obj['A?'] === 'C' && obj.Bk && obj.Bk.B) {
+        var currentPage = obj.Bk.B.Bk;
+        var totalPages = obj.Bk.B.Bl;
+        tauriLog('STATE_UPDATE', { type: 'snapshot', currentPage: currentPage, totalPages: totalPages });
+        var ipc = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
+          || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
+        if (ipc) {
+          ipc('update_canva_state', { currentPage: currentPage, totalPages: totalPages }).catch(function(e) {});
+        }
+      }
+
+      // Slide update: {"A?":"A","Bk": pageNumber}
+      if (obj['A?'] === 'A' && typeof obj.Bk === 'number') {
+        tauriLog('STATE_UPDATE', { type: 'slide_change', currentPage: obj.Bk });
+        var ipc2 = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
+          || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
+        if (ipc2) {
+          ipc2('update_canva_state', { currentPage: obj.Bk, totalPages: -1 }).catch(function(e) {});
+        }
+      }
+    } catch(e) {}
+  }
+
   // --- Navigation helper (called from Rust via eval) ---
   window.__canvaNavigate = function(sessionId, pageIndex) {
     var body = { A: sessionId, C: 0, D: crypto.randomUUID() };
@@ -234,6 +273,20 @@ impl CanvaAdapter {
     /// Check if the webview window exists
     fn has_webview(&self) -> bool {
         self.app_handle.get_webview_window("canva").is_some()
+    }
+
+    /// Update state from webview WS binary frame parsing
+    pub fn update_state(&self, current_page: i32, total_pages: i32) {
+        let mut state = self.state.lock().unwrap();
+        state.current_page = current_page - 1; // Convert 1-indexed to 0-indexed internal
+        if total_pages > 0 {
+            state.total_pages = total_pages;
+        }
+        log::info!(
+            "Canva: State updated - page {}/{}",
+            current_page,
+            state.total_pages
+        );
     }
 
     /// Handle a log message from the webview intercept script

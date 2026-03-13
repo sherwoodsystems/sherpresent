@@ -17,6 +17,15 @@
   </header>
 
   {#if appStore.configLoaded}
+    <section class="section status-section">
+      <StatusDisplay
+        status={appStore.liveStatus}
+        adapter={appStore.config.adapter}
+        onprev={() => appStore.prevSlide()}
+        onnext={() => appStore.nextSlide()}
+      />
+    </section>
+
     <section class="section">
       <ChannelConfig 
         config={appStore.config.channel} 
@@ -62,13 +71,6 @@
     <section class="section">
       <PeerDiscovery />
     </section>
-
-    <section class="section">
-      <StatusDisplay 
-        status={appStore.liveStatus} 
-        adapter={appStore.config.adapter} 
-      />
-    </section>
   {:else}
     <p class="loading">Loading...</p>
   {/if}
@@ -107,6 +109,10 @@
     border-radius: 12px;
     padding: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
+  .status-section {
+    grid-column: 1 / -1;
   }
 
   .loading {
