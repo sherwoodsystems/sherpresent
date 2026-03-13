@@ -56,7 +56,7 @@ class MultiDeviceConfig:
             self.bridge_id = str(uuid.uuid4())
             dirty = True
         if not self.bridge_name:
-            self.bridge_name = socket.gethostname()
+            self.bridge_name = f"Bridge {self.bridge_id[:6]}"
             dirty = True
         if dirty:
             self.save()
