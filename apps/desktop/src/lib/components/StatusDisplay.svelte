@@ -56,6 +56,17 @@
         </button>
       </div>
     </div>
+
+    {#if adapter === 'canva'}
+      <div class="presenter-notes">
+        <span class="notes-label">Notes</span>
+        {#if status.presenter_notes}
+          <p class="notes-text">{status.presenter_notes}</p>
+        {:else}
+          <p class="notes-empty">No notes for this slide</p>
+        {/if}
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -150,6 +161,38 @@
     color: #34c759;
   }
 
+  .presenter-notes {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eee;
+  }
+
+  .notes-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .notes-text {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #333;
+    white-space: pre-wrap;
+    line-height: 1.4;
+  }
+
+  .notes-empty {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #888;
+    font-style: italic;
+  }
+
   @media (prefers-color-scheme: dark) {
     .section-title {
       color: #eee;
@@ -181,6 +224,22 @@
     .nav-btn:hover:not(:disabled) {
       background: #4a4a4a;
       border-color: #666;
+    }
+
+    .presenter-notes {
+      border-top-color: #444;
+    }
+
+    .notes-label {
+      color: #aaa;
+    }
+
+    .notes-text {
+      color: #eee;
+    }
+
+    .notes-empty {
+      color: #777;
     }
   }
 </style>

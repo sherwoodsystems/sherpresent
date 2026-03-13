@@ -40,6 +40,7 @@ pub struct LiveStatus {
     pub current_slide: i32,
     pub total_slides: i32,
     pub zoom_level: Option<i32>,
+    pub presenter_notes: Option<String>,
 }
 
 
@@ -89,6 +90,7 @@ pub trait PresentationAdapter: Send + Sync {
                 current_slide: 0,
                 total_slides: 0,
                 zoom_level: None,
+                presenter_notes: None,
             };
         }
 
@@ -105,6 +107,7 @@ pub trait PresentationAdapter: Send + Sync {
             current_slide: slide_info.current,
             total_slides: slide_info.total,
             zoom_level,
+            presenter_notes: None,
         }
     }
 }

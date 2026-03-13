@@ -147,6 +147,7 @@ export interface LiveStatus {
   current_slide: number;
   total_slides: number;
   zoom_level: number | null;
+  presenter_notes?: string | null;
 }
 
 export const defaultConfig: AppConfig = {

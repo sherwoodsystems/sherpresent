@@ -1,4 +1,4 @@
-use crate::adapters::{get_adapter, LiveStatus};
+use crate::adapters::{get_adapter, LiveStatus, PresentationAdapter};
 use crate::state::AppState;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -32,9 +32,18 @@ pub fn start_status_polling(
             }
 
             // Get current status
-            let status = match get_adapter(&adapter, &adapter_config) {
-                Some(adapter_impl) => adapter_impl.get_live_status(&presentation_name),
-                None => LiveStatus::default(),
+            let status = if adapter == "canva" {
+                let app_state = app_clone.state::<AppState>();
+                let canva = app_state.canva_adapter.lock().unwrap();
+                match canva.as_ref() {
+                    Some(a) => a.get_live_status(&presentation_name),
+                    None => LiveStatus::default(),
+                }
+            } else {
+                match get_adapter(&adapter, &adapter_config) {
+                    Some(adapter_impl) => adapter_impl.get_live_status(&presentation_name),
+                    None => LiveStatus::default(),
+                }
             };
 
             // Emit to frontend

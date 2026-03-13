@@ -52,6 +52,7 @@ pub fn run() {
             commands::canva::close_canva_remote,
             commands::canva::log_from_webview,
             commands::canva::get_canva_connection_status,
+            commands::canva::update_canva_state,
             // Channel Discovery
             commands::discovery::get_discovered_peers,
             commands::discovery::start_discovery,

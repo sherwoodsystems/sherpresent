@@ -4,7 +4,7 @@
 //! that monkey-patches WebSocket/fetch/XHR to track presentation state and
 //! provides a `window.__canvaNavigate()` function for slide navigation.
 
-use super::{ConnectionStatus, PresentationAdapter, PresentationState, SlideInfo};
+use super::{ConnectionStatus, LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 use std::sync::{Arc, Mutex};
 use tauri::{webview::WebviewWindowBuilder, Emitter, Manager, Url};
 
@@ -160,7 +160,7 @@ const INTERCEPT_SCRIPT: &str = r#"
         var ipc = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
           || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
         if (ipc) {
-          ipc('update_canva_state', { currentPage: currentPage, totalPages: totalPages }).catch(function(e) {});
+          ipc('update_canva_state', { currentPage: currentPage, totalPages: totalPages, notes: null }).catch(function(e) {});
         }
       }
 
@@ -170,7 +170,28 @@ const INTERCEPT_SCRIPT: &str = r#"
         var ipc2 = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
           || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
         if (ipc2) {
-          ipc2('update_canva_state', { currentPage: obj.Bk, totalPages: -1 }).catch(function(e) {});
+          ipc2('update_canva_state', { currentPage: obj.Bk, totalPages: -1, notes: null }).catch(function(e) {});
+        }
+      }
+
+      // State update after navigation: {"A?":"B","Bk":{"A?":"A","Bk": page, "Bl": total, "Bp": [notes]}}
+      if (obj['A?'] === 'B' && obj.Bk && typeof obj.Bk === 'object' && typeof obj.Bk.Bk === 'number') {
+        var page = obj.Bk.Bk;
+        var total = (typeof obj.Bk.Bl === 'number') ? obj.Bk.Bl : -1;
+        var notes = null;
+        if (obj.Bk.Bp && obj.Bk.Bp.length > 0) {
+          for (var k = 0; k < obj.Bk.Bp.length; k++) {
+            if (obj.Bk.Bp[k].A === page) {
+              notes = obj.Bk.Bp[k].B || '';
+              break;
+            }
+          }
+        }
+        tauriLog('STATE_UPDATE', { type: 'nav_update', currentPage: page, totalPages: total, hasNotes: notes !== null });
+        var ipc3 = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
+          || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
+        if (ipc3) {
+          ipc3('update_canva_state', { currentPage: page, totalPages: total, notes: notes }).catch(function(e) {});
         }
       }
     } catch(e) {}
@@ -207,6 +228,8 @@ struct CanvaState {
     current_page: i32,
     /// Total pages (0 = unknown)
     total_pages: i32,
+    /// Presenter notes for the current slide
+    presenter_notes: Option<String>,
 }
 
 /// Canva adapter — singleton that holds webview reference and session state
@@ -276,11 +299,16 @@ impl CanvaAdapter {
     }
 
     /// Update state from webview WS binary frame parsing
-    pub fn update_state(&self, current_page: i32, total_pages: i32) {
+    pub fn update_state(&self, current_page: i32, total_pages: i32, notes: Option<String>) {
         let mut state = self.state.lock().unwrap();
-        state.current_page = current_page - 1; // Convert 1-indexed to 0-indexed internal
+        state.current_page = current_page; // Already 0-indexed from Canva WS protocol
         if total_pages > 0 {
             state.total_pages = total_pages;
+        }
+        // Only update notes when we actually have content — avoids flicker from
+        // the empty-then-populated message pattern Canva sends after navigation
+        if notes.is_some() {
+            state.presenter_notes = notes;
         }
         log::info!(
             "Canva: State updated - page {}/{}",
@@ -385,6 +413,33 @@ impl PresentationAdapter for CanvaAdapter {
             current: prev_page + 1,
             total: self.state.lock().unwrap().total_pages,
         })
+    }
+
+    fn get_live_status(&self, _name: &str) -> LiveStatus {
+        let state = self.state.lock().unwrap();
+        let has_session = self.session_id.lock().unwrap().is_some();
+        let has_webview = self.has_webview();
+        let is_open = has_webview && has_session;
+
+        if !is_open {
+            return LiveStatus {
+                is_open: false,
+                is_presenting: false,
+                current_slide: 0,
+                total_slides: 0,
+                zoom_level: None,
+                presenter_notes: None,
+            };
+        }
+
+        LiveStatus {
+            is_open: true,
+            is_presenting: true,
+            current_slide: state.current_page + 1,
+            total_slides: state.total_pages,
+            zoom_level: None,
+            presenter_notes: state.presenter_notes.clone(),
+        }
     }
 
     fn connection_status(&self) -> ConnectionStatus {

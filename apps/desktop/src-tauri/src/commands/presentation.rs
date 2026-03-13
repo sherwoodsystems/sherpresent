@@ -1,5 +1,6 @@
 use crate::adapters::{
-    get_adapter, get_available_adapters, LiveStatus, PresentationState, SlideInfo,
+    get_adapter, get_available_adapters, LiveStatus, PresentationAdapter, PresentationState,
+    SlideInfo,
 };
 use crate::config::AdapterConfig;
 use crate::state::AppState;
@@ -19,6 +20,12 @@ fn get_adapter_config(state: &AppState) -> AdapterConfig {
 
 #[tauri::command]
 pub fn get_open_presentations(adapter: String, state: tauri::State<AppState>) -> Result<Vec<String>, String> {
+    if adapter == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        return canva.as_ref()
+            .ok_or("Canva adapter not initialized".to_string())?
+            .get_open_presentations();
+    }
     let config = get_adapter_config(&state);
     let adapter_impl =
         get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
@@ -27,6 +34,12 @@ pub fn get_open_presentations(adapter: String, state: tauri::State<AppState>) ->
 
 #[tauri::command]
 pub fn get_presentation_state(adapter: String, name: String, state: tauri::State<AppState>) -> Result<PresentationState, String> {
+    if adapter == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        return canva.as_ref()
+            .ok_or("Canva adapter not initialized".to_string())?
+            .get_presentation_state(&name);
+    }
     let config = get_adapter_config(&state);
     let adapter_impl =
         get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
@@ -35,6 +48,12 @@ pub fn get_presentation_state(adapter: String, name: String, state: tauri::State
 
 #[tauri::command]
 pub fn get_slide_info(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    if adapter == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        return canva.as_ref()
+            .ok_or("Canva adapter not initialized".to_string())?
+            .get_slide_info(&name);
+    }
     let config = get_adapter_config(&state);
     let adapter_impl =
         get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
@@ -43,6 +62,13 @@ pub fn get_slide_info(adapter: String, name: String, state: tauri::State<AppStat
 
 #[tauri::command]
 pub fn get_live_status(adapter: String, name: String, state: tauri::State<AppState>) -> LiveStatus {
+    if adapter == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        return match canva.as_ref() {
+            Some(a) => a.get_live_status(&name),
+            None => LiveStatus::default(),
+        };
+    }
     let config = get_adapter_config(&state);
     match get_adapter(&adapter, &config) {
         Some(adapter_impl) => adapter_impl.get_live_status(&name),
@@ -67,6 +93,12 @@ pub fn get_notes_zoom() -> Result<Option<i32>, String> {
 
 #[tauri::command]
 pub fn next_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    if adapter == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        return canva.as_ref()
+            .ok_or("Canva adapter not initialized".to_string())?
+            .next_slide(&name);
+    }
     let config = get_adapter_config(&state);
     let adapter_impl =
         get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
@@ -75,6 +107,12 @@ pub fn next_slide(adapter: String, name: String, state: tauri::State<AppState>) 
 
 #[tauri::command]
 pub fn prev_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    if adapter == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        return canva.as_ref()
+            .ok_or("Canva adapter not initialized".to_string())?
+            .prev_slide(&name);
+    }
     let config = get_adapter_config(&state);
     let adapter_impl =
         get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
