@@ -166,7 +166,7 @@ class MultiDeviceBridge:
         if not self.active_devices:
             logging.warning("No devices found")
 
-        # In broadcast mode, setup feedback listeners and mDNS
+        # In broadcast mode, setup feedback listeners
         if not is_satellite:
             try:
                 os.makedirs(os.path.dirname(FEEDBACK_STATE_FILE), exist_ok=True)
@@ -184,20 +184,23 @@ class MultiDeviceBridge:
             except Exception as e:
                 logging.warning(f"Could not start feedback listener: {e}")
 
-            for channel in active_channels:
-                try:
-                    announcer = MdnsAnnouncer(
-                        channel=channel,
-                        port=self.config.broadcast_port,
-                        bridge_id=self.config.bridge_id,
-                        bridge_name=self.config.bridge_name,
-                        config_port=DEFAULT_CONFIG_PORT,
-                    )
-                    announcer.start()
-                    self.mdns_announcers[channel] = announcer
-                    logging.info(f"mDNS announcer for channel '{channel}' started")
-                except Exception as e:
-                    logging.warning(f"Could not start mDNS announcer for {channel}: {e}")
+        # Always announce via mDNS so desktop can discover and manage this bridge
+        announce_channels = active_channels if active_channels else {"main"}
+
+        for channel in announce_channels:
+            try:
+                announcer = MdnsAnnouncer(
+                    channel=channel,
+                    port=self.config.broadcast_port,
+                    bridge_id=self.config.bridge_id,
+                    bridge_name=self.config.bridge_name,
+                    config_port=DEFAULT_CONFIG_PORT,
+                )
+                announcer.start()
+                self.mdns_announcers[channel] = announcer
+                logging.info(f"mDNS announcer for channel '{channel}' started")
+            except Exception as e:
+                logging.warning(f"Could not start mDNS announcer for {channel}: {e}")
 
         return True
 

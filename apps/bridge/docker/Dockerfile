@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libc6-dev \
+    gcc libc6-dev bash \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/rpi-osc-bridge
@@ -22,4 +22,4 @@ RUN mkdir -p /etc/rpi-osc-bridge /var/run/rpi-osc-bridge /var/log \
 
 EXPOSE 80 9002
 
-CMD ["sh", "entrypoint.sh"]
+CMD ["bash", "entrypoint.sh"]

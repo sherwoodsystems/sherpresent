@@ -76,14 +76,17 @@
 
 <style>
   .container {
-    max-width: 480px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
   }
 
   .header {
+    grid-column: 1 / -1;
     text-align: center;
-    margin-bottom: 1.5rem;
   }
 
   .header h1 {
@@ -103,11 +106,11 @@
     background: #fff;
     border-radius: 12px;
     padding: 1rem;
-    margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
 
   .loading {
+    grid-column: 1 / -1;
     text-align: center;
     color: #888;
     font-style: italic;

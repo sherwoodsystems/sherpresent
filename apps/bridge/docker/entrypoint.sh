@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Run bridge and config server together
 # Bridge runs in background, config server in foreground
 # If either exits, the other gets killed too
