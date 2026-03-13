@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  
   import AppSelector from '$lib/components/AppSelector.svelte';
   import AdapterConfig from '$lib/components/AdapterConfig.svelte';
   import PresentationPicker from '$lib/components/PresentationPicker.svelte';
@@ -8,16 +6,8 @@
   import StatusDisplay from '$lib/components/StatusDisplay.svelte';
   import ChannelConfig from '$lib/components/ChannelConfig.svelte';
   import PeerDiscovery from '$lib/components/PeerDiscovery.svelte';
-  
+
   import { appStore } from '$lib/state.svelte';
-
-  onMount(() => {
-    appStore.init();
-  });
-
-  onDestroy(() => {
-    appStore.destroy();
-  });
 </script>
 
 <main class="container">
@@ -85,14 +75,6 @@
 </main>
 
 <style>
-  :global(body) {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-      Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-    background: #fafafa;
-    color: #333;
-  }
-
   .container {
     max-width: 480px;
     margin: 0 auto;
@@ -132,12 +114,6 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    :global(body) {
-      background: #1a1a1a;
-      color: #eee;
-      color-scheme: dark;
-    }
-
     .header h1 {
       color: #eee;
     }

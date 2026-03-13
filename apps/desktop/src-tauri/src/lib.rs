@@ -1,5 +1,6 @@
 mod adapters;
 mod applescript;
+mod bridge;
 mod channel;
 mod config;
 mod discovery;
@@ -56,6 +57,21 @@ pub fn run() {
             commands::discovery::start_discovery,
             commands::discovery::stop_discovery,
             commands::discovery::set_instance_name,
+            // Bridge Remote Config
+            commands::bridge::bridge_get_status,
+            commands::bridge::bridge_get_config,
+            commands::bridge::bridge_save_config,
+            commands::bridge::bridge_get_feedback,
+            commands::bridge::bridge_get_devices,
+            commands::bridge::bridge_get_registered_devices,
+            commands::bridge::bridge_start_registration,
+            commands::bridge::bridge_cancel_registration,
+            commands::bridge::bridge_confirm_registration,
+            commands::bridge::bridge_get_registration_status,
+            commands::bridge::bridge_unregister_device,
+            commands::bridge::bridge_test_device,
+            commands::bridge::bridge_get_logs,
+            commands::bridge::bridge_get_satellite_status,
         ])
         .setup(|app| {
             // Load config on startup (or create default)
@@ -165,6 +181,7 @@ pub fn run() {
                                     channel: peer.channel,
                                     version: "bridge".to_string(),
                                     is_self: false,
+                                    config_port: None,
                                 };
 
                                 {

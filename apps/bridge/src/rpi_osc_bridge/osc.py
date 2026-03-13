@@ -35,7 +35,7 @@ except ImportError:
 
 import uuid as _uuid
 
-from constants import DEFAULT_BROADCAST_PORT, MDNS_SERVICE_TYPE, BRIDGE_VERSION_STRING
+from constants import DEFAULT_BROADCAST_PORT, DEFAULT_CONFIG_PORT, MDNS_SERVICE_TYPE, BRIDGE_VERSION_STRING
 
 
 class BroadcastSender:
@@ -218,11 +218,13 @@ class MdnsAnnouncer:
     """
 
     def __init__(self, channel: str, port: int = DEFAULT_BROADCAST_PORT,
-                 bridge_id: str = "", bridge_name: str = ""):
+                 bridge_id: str = "", bridge_name: str = "",
+                 config_port: int = DEFAULT_CONFIG_PORT):
         self.channel = channel
         self.port = port
         self._instance_id = bridge_id or str(_uuid.uuid4())
         self._bridge_name = bridge_name or socket.gethostname()
+        self._config_port = config_port
         self._zeroconf = None
         self._service_info = None
 
@@ -247,6 +249,7 @@ class MdnsAnnouncer:
                     "channel": self.channel,
                     "instance": self._instance_id,
                     "name": self._bridge_name,
+                    "config_port": str(self._config_port),
                 },
                 server=f"{hostname}.local.",
             )

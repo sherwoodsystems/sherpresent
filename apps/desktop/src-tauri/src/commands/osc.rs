@@ -122,6 +122,7 @@ pub async fn start_osc_server(
                 channel: peer.channel,
                 version: "bridge".to_string(), // Mark as bridge device
                 is_self: false,
+                config_port: None,
             };
 
             // Update the peer map

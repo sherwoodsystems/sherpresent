@@ -21,7 +21,7 @@ except ImportError:
     print("ERROR: evdev not installed. Run: sudo pip3 install evdev")
     sys.exit(1)
 
-from constants import FEEDBACK_STATE_FILE, REGISTRATION_FILE, NEXT_KEYS, PREV_KEYS, IGNORED_KEYS
+from constants import FEEDBACK_STATE_FILE, REGISTRATION_FILE, NEXT_KEYS, PREV_KEYS, IGNORED_KEYS, DEFAULT_CONFIG_PORT
 from config import MultiDeviceConfig, DeviceTarget
 from devices import find_keyboards_with_ports, get_usb_port_info
 from osc import BroadcastSender, FeedbackListener, MdnsAnnouncer
@@ -190,7 +190,8 @@ class MultiDeviceBridge:
                         channel=channel,
                         port=self.config.broadcast_port,
                         bridge_id=self.config.bridge_id,
-                        bridge_name=self.config.bridge_name
+                        bridge_name=self.config.bridge_name,
+                        config_port=DEFAULT_CONFIG_PORT,
                     )
                     announcer.start()
                     self.mdns_announcers[channel] = announcer

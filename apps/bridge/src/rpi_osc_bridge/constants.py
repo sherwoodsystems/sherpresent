@@ -27,6 +27,7 @@ VALID_CHANNELS = [
 ]
 
 DEFAULT_BROADCAST_PORT = 9002
+DEFAULT_CONFIG_PORT = 80
 
 CONFIG_FILE = "/etc/rpi-osc-bridge/config.json"
 REGISTRATION_FILE = "/var/run/rpi-osc-bridge/registration.json"

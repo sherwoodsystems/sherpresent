@@ -55,6 +55,9 @@ hostname = "0.4"
 # if-addrs: Get network interface addresses for subnet broadcast calculation
 if-addrs = "0.13"
 
+# reqwest: HTTP client for communicating with bridge REST APIs
+reqwest = { version = "0.12", features = ["json"] }
+
 # env_logger: Simple logger that reads RUST_LOG env var
 #   - Set RUST_LOG=debug for verbose output
 #   - Set RUST_LOG=warn for quiet output

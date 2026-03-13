@@ -92,6 +92,8 @@ export interface DiscoveredPeer {
   version: string;
   /** Whether this is our own instance */
   isSelf: boolean;
+  /** Config API port (bridges only) */
+  configPort: number | null;
 }
 
 // =============================================================================
@@ -172,3 +174,101 @@ export const defaultConfig: AppConfig = {
   },
   adapterConfig: { type: 'none' }
 };
+
+// =============================================================================
+// BRIDGE REMOTE CONFIG TYPES
+// =============================================================================
+
+export interface BridgeStatus {
+  running: boolean;
+}
+
+export interface BridgeSatelliteConfig {
+  host: string | null;
+  port: number | null;
+}
+
+export interface BridgeGlobalConfig {
+  mode: string;
+  broadcast_port: number;
+  feedback_port: number;
+  log_level: string;
+  bridge_id?: string | null;
+  bridge_name?: string | null;
+  satellite: BridgeSatelliteConfig;
+  valid_channels: string[];
+  valid_modes: string[];
+  error?: string | null;
+}
+
+export interface BridgeDeviceSlot {
+  label: string;
+  usb_phys: string;
+  channel: string;
+}
+
+export interface BridgeRegisteredDevices {
+  devices: Record<string, BridgeDeviceSlot | null>;
+  mode?: string | null;
+  log_level?: string | null;
+  feedback_port?: number | null;
+  broadcast_port?: number | null;
+  bridge_id?: string | null;
+  bridge_name?: string | null;
+  valid_channels?: string[] | null;
+  valid_modes?: string[] | null;
+  error?: string | null;
+}
+
+export interface BridgeRegistrationStatus {
+  active: boolean;
+  target_slot: string | null;
+  detected_phys: string | null;
+  detected_name: string | null;
+}
+
+export interface BridgeSatelliteStatus {
+  connected: boolean;
+  host: string | null;
+  port: number | null;
+  companion_version: string | null;
+  api_version: string | null;
+}
+
+export interface BridgeFeedback {
+  presenting: boolean;
+  open: boolean;
+  current_slide: number;
+  total_slides: number;
+  zoom_level: number;
+  last_updated: string | null;
+  last_command: string | null;
+  last_command_time: string | null;
+}
+
+export interface BridgeApiResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface BridgeLogs {
+  logs: string[];
+}
+
+export interface SaveGlobalConfigRequest {
+  mode?: string;
+  broadcast_port: number;
+  feedback_port: number;
+  log_level: string;
+  bridge_name?: string;
+  satellite?: BridgeSatelliteConfig;
+}
+
+export interface BridgeConnectedDevices {
+  devices: Array<{
+    name: string;
+    path: string;
+    usb_phys?: string | null;
+    is_perfect_cue?: boolean | null;
+  }>;
+}

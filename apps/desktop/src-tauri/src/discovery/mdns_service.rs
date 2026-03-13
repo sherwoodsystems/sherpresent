@@ -112,6 +112,9 @@ pub struct DiscoveredPeer {
     /// Whether this is our own instance
     #[serde(rename = "isSelf")]
     pub is_self: bool,
+    /// Config API port (bridges only)
+    #[serde(rename = "configPort")]
+    pub config_port: Option<u16>,
 }
 
 // =============================================================================
@@ -388,6 +391,9 @@ impl DiscoveryService {
                 let display_name = properties
                     .get_property_val_str("name")
                     .map(|s| s.to_string());
+                let config_port = properties
+                    .get_property_val_str("config_port")
+                    .and_then(|s| s.parse::<u16>().ok());
 
                 // Skip ourselves - we add ourselves separately in get_peers
                 if instance_id == our_instance_id {
@@ -425,6 +431,7 @@ impl DiscoveryService {
                     port,
                     version,
                     is_self: false,
+                    config_port,
                 };
 
                 log::info!(
@@ -518,6 +525,7 @@ impl DiscoveryService {
             port: self.osc_port,
             version: PROTOCOL_VERSION.to_string(),
             is_self: true,
+            config_port: None,
         };
         peer_list.push(our_peer);
 
