@@ -6,7 +6,7 @@
 
 use super::{ConnectionStatus, PresentationAdapter, PresentationState, SlideInfo};
 use std::sync::{Arc, Mutex};
-use tauri::{webview::WebviewWindowBuilder, Manager, Url};
+use tauri::{webview::WebviewWindowBuilder, Emitter, Manager, Url};
 
 const INTERCEPT_SCRIPT: &str = r#"
 (function() {
@@ -238,7 +238,16 @@ impl CanvaAdapter {
 
     /// Handle a log message from the webview intercept script
     pub fn handle_webview_log(&self, category: &str, message: &str) {
-        log::debug!("[CANVA:{}] {}", category, message);
+        // Always log at info level so it's visible without RUST_LOG=debug
+        log::info!("[CANVA:{}] {}", category, message);
+
+        // Emit to the main window so the frontend can see webview activity
+        if let Some(main_window) = self.app_handle.get_webview_window("main") {
+            let _ = main_window.emit("canva-webview-log", serde_json::json!({
+                "category": category,
+                "message": message,
+            }));
+        }
     }
 
     /// Navigate to a specific page by evaluating JS in the webview

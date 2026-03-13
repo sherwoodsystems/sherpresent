@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "canva-remote",
+  "description": "Capability for the Canva remote control webview window",
+  "windows": ["canva"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}

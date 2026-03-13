@@ -223,7 +223,7 @@ class MdnsAnnouncer:
         self.channel = channel
         self.port = port
         self._instance_id = bridge_id or str(_uuid.uuid4())
-        self._bridge_name = bridge_name or socket.gethostname()
+        self._bridge_name = bridge_name or f"Bridge {self._instance_id[:6]}"
         self._config_port = config_port
         self._zeroconf = None
         self._service_info = None

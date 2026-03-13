@@ -23,11 +23,10 @@ pub fn close_canva_remote(state: tauri::State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn log_from_webview(state: tauri::State<AppState>, category: String, message: String) {
+    log::info!("[CANVA-WEBVIEW:{}] {}", category, message);
     let canva = state.canva_adapter.lock().unwrap();
     if let Some(adapter) = canva.as_ref() {
         adapter.handle_webview_log(&category, &message);
-    } else {
-        log::debug!("[CANVA:{}] {}", category, message);
     }
 }
 
