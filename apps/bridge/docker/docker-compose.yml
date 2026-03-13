@@ -1,11 +1,9 @@
 services:
-  bridge-config:
+  bridge:
     build:
       context: ../../..
       dockerfile: apps/bridge/docker/Dockerfile
-    ports:
-      - "8080:80"
-      - "9002:9002/udp"
+    network_mode: "host"
     volumes:
       - bridge-config:/etc/rpi-osc-bridge
       - bridge-runtime:/var/run/rpi-osc-bridge
@@ -17,7 +15,6 @@ services:
     command: python3 -m pytest tests/ -v
     working_dir: /opt/rpi-osc-bridge
     profiles: ["test"]
-    depends_on: []
 
 volumes:
   bridge-config:
