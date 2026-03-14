@@ -40,9 +40,43 @@ pub fn update_canva_state(
 ) {
     let canva = state.canva_adapter.lock().unwrap();
     if let Some(adapter) = canva.as_ref() {
-        adapter.update_state(current_page, total_pages, notes);
+        adapter.update_state(current_page, total_pages, notes.clone());
         let live_status = adapter.get_live_status("Canva Presentation");
         let _ = app.emit("presentation-status", &live_status);
+
+        // Accumulate into notes cache (convert 0-indexed to 1-indexed)
+        if let Some(ref n) = notes {
+            let slide_num = current_page + 1;
+            if slide_num > 0 && !n.is_empty() {
+                let mut cache = state.notes_cache.lock().unwrap();
+                cache.insert(slide_num, n.clone());
+                let snapshot = cache.clone();
+                drop(cache);
+                let _ = app.emit("notes-cache-updated", &snapshot);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn update_canva_batch_notes(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    notes_batch: Vec<(i32, String)>,
+) {
+    let mut cache = state.notes_cache.lock().unwrap();
+    let mut changed = false;
+    for (page, text) in notes_batch {
+        let slide_num = page + 1; // 0-indexed → 1-indexed
+        if slide_num > 0 && !text.is_empty() {
+            cache.insert(slide_num, text);
+            changed = true;
+        }
+    }
+    if changed {
+        let snapshot = cache.clone();
+        drop(cache);
+        let _ = app.emit("notes-cache-updated", &snapshot);
     }
 }
 

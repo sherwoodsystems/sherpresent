@@ -155,7 +155,7 @@ const INTERCEPT_SCRIPT: &str = r#"
     try {
       var obj = JSON.parse(jsonStr);
 
-      // State snapshot: {"A?":"C","Bk":{"B":{"Bk": currentPage, "Bl": totalPages}}}
+      // State snapshot: {"A?":"C","Bk":{"B":{"Bk": currentPage, "Bl": totalPages, "Bp": [notes]}}}
       if (obj['A?'] === 'C' && obj.Bk && obj.Bk.B) {
         var currentPage = obj.Bk.B.Bk;
         var totalPages = obj.Bk.B.Bl;
@@ -164,6 +164,16 @@ const INTERCEPT_SCRIPT: &str = r#"
           || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
         if (ipc) {
           ipc('update_canva_state', { currentPage: currentPage, totalPages: totalPages, notes: null }).catch(function(e) {});
+        }
+        // Send batch notes from snapshot Bp array
+        if (obj.Bk.B.Bp && obj.Bk.B.Bp.length > 0) {
+          var batchC = [];
+          for (var n = 0; n < obj.Bk.B.Bp.length; n++) {
+            batchC.push([obj.Bk.B.Bp[n].A, obj.Bk.B.Bp[n].B || '']);
+          }
+          if (ipc && batchC.length > 0) {
+            ipc('update_canva_batch_notes', { notesBatch: batchC }).catch(function(e) {});
+          }
         }
         lastSnapshotTime = Date.now();
       }
@@ -195,6 +205,16 @@ const INTERCEPT_SCRIPT: &str = r#"
               notes = obj.Bk.Bp[k].B || '';
               break;
             }
+          }
+          // Send ALL Bp entries as batch notes
+          var batch = [];
+          for (var m = 0; m < obj.Bk.Bp.length; m++) {
+            batch.push([obj.Bk.Bp[m].A, obj.Bk.Bp[m].B || '']);
+          }
+          var ipcBatch = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
+            || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
+          if (ipcBatch && batch.length > 0) {
+            ipcBatch('update_canva_batch_notes', { notesBatch: batch }).catch(function(e) {});
           }
         }
         tauriLog('STATE_UPDATE', { type: 'nav_update', currentPage: page, totalPages: total, hasNotes: notes !== null });

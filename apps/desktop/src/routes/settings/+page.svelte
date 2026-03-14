@@ -1,7 +1,6 @@
 <script lang="ts">
   import ChannelConfig from '$lib/components/ChannelConfig.svelte';
   import OscConfig from '$lib/components/OscConfig.svelte';
-  import NetworkOverview from '$lib/components/NetworkOverview.svelte';
   import { appStore } from '$lib/state.svelte';
 </script>
 
@@ -26,9 +25,6 @@
       />
     </section>
 
-    <section class="section">
-      <NetworkOverview />
-    </section>
   {:else}
     <p class="loading">Loading...</p>
   {/if}

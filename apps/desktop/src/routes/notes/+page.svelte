@@ -6,6 +6,13 @@
 
   const totalSlides = $derived(appStore.liveStatus?.total_slides ?? 0);
   const currentSlide = $derived(appStore.liveStatus?.current_slide ?? 0);
+  const scanProgress = $derived(appStore.notesScanProgress);
+  const isScanning = $derived(scanProgress !== null && scanProgress.status === 'scanning');
+
+  // Canva and LibreOffice can't bulk-fetch notes — they need scan
+  const needsScan = $derived(
+    appStore.config.adapter === 'canva' || appStore.config.adapter === 'libreoffice'
+  );
 
   const slides = $derived.by(() => {
     const result: Array<{ number: number; notes: string | null }> = [];
@@ -51,8 +58,32 @@
           <p class="subtitle">No presentation active</p>
         {/if}
       </div>
-      <button class="refresh-btn" onclick={() => appStore.fetchAllNotes()}>Refresh</button>
+      <div class="header-actions">
+        {#if isScanning}
+          <button class="cancel-btn" onclick={() => appStore.stopNotesScan()}>Cancel</button>
+        {:else if needsScan}
+          <button class="scan-btn" onclick={() => appStore.startNotesScan()}>Scan All Slides</button>
+        {:else}
+          <button class="refresh-btn" onclick={() => appStore.fetchAllNotes()}>Refresh</button>
+        {/if}
+      </div>
     </div>
+    {#if scanProgress}
+      <div class="scan-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: {scanProgress.total > 0 ? (scanProgress.current / scanProgress.total * 100) : 0}%"></div>
+        </div>
+        <span class="progress-text">
+          {#if scanProgress.status === 'scanning'}
+            Scanning slide {scanProgress.current} of {scanProgress.total}...
+          {:else if scanProgress.status === 'complete'}
+            Scan complete
+          {:else if scanProgress.status === 'cancelled'}
+            Scan cancelled
+          {/if}
+        </span>
+      </div>
+    {/if}
   </header>
 
   {#if totalSlides === 0}
@@ -120,6 +151,68 @@
   .refresh-btn:hover {
     background: #f5f5f5;
     border-color: #ccc;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .scan-btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    border: 1px solid #1a73e8;
+    border-radius: 6px;
+    background: #1a73e8;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .scan-btn:hover {
+    background: #1557b0;
+    border-color: #1557b0;
+  }
+
+  .cancel-btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    border: 1px solid #d93025;
+    border-radius: 6px;
+    background: #d93025;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .cancel-btn:hover {
+    background: #b3261e;
+    border-color: #b3261e;
+  }
+
+  .scan-progress {
+    margin-top: 0.75rem;
+  }
+
+  .progress-bar {
+    height: 4px;
+    background: #e8e8e8;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: #1a73e8;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  .progress-text {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: #888;
   }
 
   .empty {
@@ -228,6 +321,18 @@
 
     .empty-notes {
       color: #666;
+    }
+
+    .progress-bar {
+      background: #444;
+    }
+
+    .progress-fill {
+      background: #6ab7ff;
+    }
+
+    .progress-text {
+      color: #777;
     }
   }
 </style>

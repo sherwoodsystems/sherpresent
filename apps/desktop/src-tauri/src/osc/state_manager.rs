@@ -279,6 +279,35 @@ impl StateManager {
         self.spawn_adapter_command(|adapter, name| adapter.prev_slide(&name));
     }
 
+    /// Jump to a specific slide (optimistic update).
+    pub fn goto_slide(&self, slide: i32) {
+        let should_execute = {
+            let mut state = self.state.lock().unwrap();
+
+            if !state.is_presenting {
+                return;
+            }
+
+            // Clamp to valid range
+            if slide < 1 || slide > state.total_slides {
+                return;
+            }
+
+            // Optimistic update
+            state.current_slide = slide;
+            state.last_updated_ms = current_time_ms();
+
+            true
+        };
+
+        if !should_execute {
+            return;
+        }
+
+        self.notify_state_change(self.get_state());
+        self.spawn_adapter_command(move |adapter, name| adapter.goto_slide(&name, slide));
+    }
+
     /// Increase notes zoom level (optimistic update).
     pub fn zoom_in(&self) {
         let new_zoom = {

@@ -63,6 +63,8 @@ pub enum OscCommand {
     Status,
     /// Force refresh state from presentation software
     Refresh,
+    /// Jump to a specific slide number
+    Goto { slide: i32 },
 
     // =========================================================================
     // CHANNEL COMMANDS - for peer-to-peer sync
@@ -153,6 +155,10 @@ impl OscCommand {
             "/clicker/zoomOut" => Self::ZoomOut,
             "/clicker/status" => Self::Status,
             "/clicker/refresh" => Self::Refresh,
+            "/clicker/goto" => {
+                let slide = Self::get_int_arg(args, 0).unwrap_or(1);
+                Self::Goto { slide }
+            }
 
             // Channel commands with arguments
             "/clicker/channel/announce" => {
@@ -427,6 +433,17 @@ mod tests {
             OscCommand::from_message("/clicker/refresh", &[]),
             OscCommand::Refresh
         );
+    }
+
+    #[test]
+    fn test_goto_command() {
+        // Goto with integer argument
+        let cmd = OscCommand::from_message("/clicker/goto", &[OscType::Int(5)]);
+        assert_eq!(cmd, OscCommand::Goto { slide: 5 });
+
+        // Goto with no argument defaults to slide 1
+        let cmd = OscCommand::from_message("/clicker/goto", &[]);
+        assert_eq!(cmd, OscCommand::Goto { slide: 1 });
     }
 
     #[test]

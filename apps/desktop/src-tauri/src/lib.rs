@@ -44,6 +44,8 @@ pub fn run() {
             commands::presentation::fetch_all_notes,
             commands::presentation::get_all_notes,
             commands::presentation::clear_notes_cache,
+            commands::presentation::start_notes_scan,
+            commands::presentation::stop_notes_scan,
             // Polling
             commands::polling::start_status_polling,
             commands::polling::stop_status_polling,
@@ -57,6 +59,7 @@ pub fn run() {
             commands::canva::log_from_webview,
             commands::canva::get_canva_connection_status,
             commands::canva::update_canva_state,
+            commands::canva::update_canva_batch_notes,
             // Channel Discovery
             commands::discovery::get_discovered_peers,
             commands::discovery::start_discovery,

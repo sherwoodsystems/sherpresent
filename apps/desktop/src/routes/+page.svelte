@@ -3,6 +3,7 @@
   import AdapterConfig from '$lib/components/AdapterConfig.svelte';
   import PresentationPicker from '$lib/components/PresentationPicker.svelte';
   import StatusDisplay from '$lib/components/StatusDisplay.svelte';
+  import NetworkOverview from '$lib/components/NetworkOverview.svelte';
 
   import { appStore } from '$lib/state.svelte';
 </script>
@@ -51,6 +52,10 @@
         />
       </section>
     {/if}
+
+    <section class="section">
+      <NetworkOverview />
+    </section>
 
   {:else}
     <p class="loading">Loading...</p>

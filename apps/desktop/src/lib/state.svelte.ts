@@ -21,11 +21,13 @@ class AppStore {
   configLoaded = $state(false);
   connectionStatus = $state<ConnectionStatus>('Disconnected');
   notesCache = $state<NotesCache>({});
+  notesScanProgress = $state<{ current: number; total: number; status: string } | null>(null);
 
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
   private unlistenStatus: UnlistenFn | null = null;
   private unlistenCanvaLog: UnlistenFn | null = null;
   private unlistenNotes: UnlistenFn | null = null;
+  private unlistenScanProgress: UnlistenFn | null = null;
 
   async init() {
     try {
@@ -59,6 +61,14 @@ class AppStore {
       this.notesCache = event.payload;
     });
 
+    // Listen for notes scan progress
+    this.unlistenScanProgress = await listen<{ current: number; total: number; status: string }>('notes-scan-progress', (event) => {
+      this.notesScanProgress = event.payload;
+      if (event.payload.status === 'complete' || event.payload.status === 'cancelled') {
+        setTimeout(() => { this.notesScanProgress = null; }, 2000);
+      }
+    });
+
     // Listen for Canva webview logs forwarded from Rust
     this.unlistenCanvaLog = await listen<{ category: string; message: string }>('canva-webview-log', (event) => {
       const { category, message } = event.payload;
@@ -70,6 +80,7 @@ class AppStore {
     this.unlistenStatus?.();
     this.unlistenCanvaLog?.();
     this.unlistenNotes?.();
+    this.unlistenScanProgress?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
@@ -254,6 +265,26 @@ class AppStore {
   updateAdapterConfig(adapterConfig: AdapterConfig) {
     this.config = { ...this.config, adapterConfig };
     this.scheduleConfigSave();
+  }
+
+  async startNotesScan() {
+    if (!this.config.presentationName) return;
+    try {
+      await invoke('start_notes_scan', {
+        adapter: this.config.adapter,
+        name: this.config.presentationName
+      });
+    } catch (e) {
+      console.error('Failed to start notes scan:', e);
+    }
+  }
+
+  async stopNotesScan() {
+    try {
+      await invoke('stop_notes_scan');
+    } catch (e) {
+      console.error('Failed to stop notes scan:', e);
+    }
   }
 
   async openCanvaRemote(url: string) {

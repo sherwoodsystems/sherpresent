@@ -641,8 +641,7 @@ impl OscServer {
                     }
                     OscCommand::Refresh => state_manager.refresh_state(),
                     OscCommand::ChannelCmdGoto { slide, .. } => {
-                        // TODO: Implement goto_slide in StateManager
-                        log::debug!("Goto slide {} requested (not yet implemented)", slide);
+                        state_manager.goto_slide(slide);
                     }
                     _ => {}
                 }
@@ -691,6 +690,10 @@ impl OscServer {
                 // Query only - send full state to all destinations
                 let state = state_manager.get_state();
                 Self::send_feedback_to_all(&state, feedback_socket, feedback_addrs).await;
+            }
+
+            OscCommand::Goto { slide } => {
+                state_manager.goto_slide(slide);
             }
 
             OscCommand::Refresh => {
