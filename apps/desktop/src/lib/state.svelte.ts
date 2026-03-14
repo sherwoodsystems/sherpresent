@@ -20,10 +20,12 @@ class AppStore {
   discoveryRunning = $state(false);
   configLoaded = $state(false);
   connectionStatus = $state<ConnectionStatus>('Disconnected');
-  
+  notesCache = $state<NotesCache>({});
+
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
   private unlistenStatus: UnlistenFn | null = null;
   private unlistenCanvaLog: UnlistenFn | null = null;
+  private unlistenNotes: UnlistenFn | null = null;
 
   async init() {
     try {
@@ -52,6 +54,11 @@ class AppStore {
       this.liveStatus = event.payload;
     });
 
+    // Listen for notes cache updates (progressive fill from polling)
+    this.unlistenNotes = await listen<NotesCache>('notes-cache-updated', (event) => {
+      this.notesCache = event.payload;
+    });
+
     // Listen for Canva webview logs forwarded from Rust
     this.unlistenCanvaLog = await listen<{ category: string; message: string }>('canva-webview-log', (event) => {
       const { category, message } = event.payload;
@@ -62,6 +69,7 @@ class AppStore {
   destroy() {
     this.unlistenStatus?.();
     this.unlistenCanvaLog?.();
+    this.unlistenNotes?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
@@ -87,6 +95,7 @@ class AppStore {
     }
     this.config = { ...this.config, adapter, presentationName: '' };
     this.liveStatus = null;
+    await this.clearNotesCache();
     this.scheduleConfigSave();
   }
 
@@ -95,11 +104,13 @@ class AppStore {
       await this.stopPolling();
     }
 
+    await this.clearNotesCache();
     this.config = { ...this.config, presentationName: name };
     this.scheduleConfigSave();
 
     if (name) {
       await this.startPolling();
+      await this.fetchAllNotes();
     }
   }
 
@@ -215,6 +226,28 @@ class AppStore {
       });
     } catch (e) {
       console.error('Failed to go to slide:', e);
+    }
+  }
+
+  async fetchAllNotes() {
+    if (!this.config.presentationName) return;
+    try {
+      const result = await invoke<NotesCache>('fetch_all_notes', {
+        adapter: this.config.adapter,
+        name: this.config.presentationName
+      });
+      this.notesCache = result;
+    } catch (e) {
+      console.error('Failed to fetch all notes:', e);
+    }
+  }
+
+  async clearNotesCache() {
+    try {
+      await invoke('clear_notes_cache');
+      this.notesCache = {};
+    } catch (e) {
+      console.error('Failed to clear notes cache:', e);
     }
   }
 
