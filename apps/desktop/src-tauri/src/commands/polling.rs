@@ -46,6 +46,18 @@ pub fn start_status_polling(
                 }
             };
 
+            // Accumulate presenter notes into cache
+            if let Some(ref notes) = status.presenter_notes {
+                if status.current_slide > 0 {
+                    let app_state = app_clone.state::<AppState>();
+                    let mut cache = app_state.notes_cache.lock().unwrap();
+                    cache.insert(status.current_slide, notes.clone());
+                    let cache_snapshot = cache.clone();
+                    drop(cache);
+                    let _ = app_clone.emit("notes-cache-updated", &cache_snapshot);
+                }
+            }
+
             // Emit to frontend
             let _ = app_clone.emit("presentation-status", &status);
 

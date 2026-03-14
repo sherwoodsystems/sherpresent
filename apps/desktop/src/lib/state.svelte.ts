@@ -5,6 +5,7 @@ import {
   type LiveStatus,
   type AdapterType,
   type AdapterConfig,
+  type NotesCache,
   type ConnectionStatus,
   type OscConfig,
   type ChannelConfig,
@@ -202,6 +203,18 @@ class AppStore {
       });
     } catch (e) {
       console.error('Failed to go to previous slide:', e);
+    }
+  }
+
+  async gotoSlide(slide: number) {
+    try {
+      await invoke('goto_slide', {
+        adapter: this.config.adapter,
+        name: this.config.presentationName,
+        slide
+      });
+    } catch (e) {
+      console.error('Failed to go to slide:', e);
     }
   }
 

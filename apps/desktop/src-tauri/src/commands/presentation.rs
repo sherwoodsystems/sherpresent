@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::adapters::{
     get_adapter, get_available_adapters, LiveStatus, PresentationAdapter, PresentationState,
     SlideInfo,
@@ -117,4 +118,48 @@ pub fn prev_slide(adapter: String, name: String, state: tauri::State<AppState>) 
     let adapter_impl =
         get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
     adapter_impl.prev_slide(&name)
+}
+
+#[tauri::command]
+pub fn goto_slide(adapter: String, name: String, slide: i32, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    if adapter == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        return canva.as_ref()
+            .ok_or("Canva adapter not initialized".to_string())?
+            .goto_slide(&name, slide);
+    }
+    let config = get_adapter_config(&state);
+    let adapter_impl =
+        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
+    adapter_impl.goto_slide(&name, slide)
+}
+
+#[tauri::command]
+pub fn fetch_all_notes(adapter: String, name: String, state: tauri::State<AppState>) -> Result<HashMap<i32, String>, String> {
+    let bulk_notes = if adapter == "canva" {
+        // Canva doesn't support bulk fetch — return whatever is cached
+        HashMap::new()
+    } else {
+        let config = get_adapter_config(&state);
+        let adapter_impl =
+            get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
+        adapter_impl.get_all_presenter_notes(&name)?
+    };
+
+    let mut cache = state.notes_cache.lock().unwrap();
+    // Merge bulk results into cache (bulk results take precedence)
+    for (k, v) in bulk_notes {
+        cache.insert(k, v);
+    }
+    Ok(cache.clone())
+}
+
+#[tauri::command]
+pub fn get_all_notes(state: tauri::State<AppState>) -> HashMap<i32, String> {
+    state.notes_cache.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn clear_notes_cache(state: tauri::State<AppState>) {
+    state.notes_cache.lock().unwrap().clear();
 }

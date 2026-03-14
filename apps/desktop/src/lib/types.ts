@@ -141,6 +141,8 @@ export interface SlideInfo {
   total: number;
 }
 
+export type NotesCache = Record<string, string>;
+
 export interface LiveStatus {
   is_open: boolean;
   is_presenting: boolean;

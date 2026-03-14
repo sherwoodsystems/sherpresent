@@ -154,7 +154,7 @@
   <div class="modal-content">
     <header class="modal-header">
       <div>
-        <h2>{bridgeName}</h2>
+        <h2>{editBridgeName || bridgeName}</h2>
         <span class="host-label">{host}:{configPort}</span>
       </div>
       <button class="close-btn" onclick={onclose} aria-label="Close">&times;</button>

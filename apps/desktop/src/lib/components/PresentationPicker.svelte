@@ -64,7 +64,7 @@
     <p class="error">{error}</p>
   {/if}
   {#if !loading && presentations.length === 0 && !error}
-    <p class="hint">No presentations open in {adapter === 'powerpoint' ? 'PowerPoint' : 'Keynote'}</p>
+    <p class="hint">No presentations open in {adapter === 'powerpoint' ? 'PowerPoint' : adapter === 'libreoffice' ? 'LibreOffice Impress' : 'Keynote'}</p>
   {/if}
 </div>
 

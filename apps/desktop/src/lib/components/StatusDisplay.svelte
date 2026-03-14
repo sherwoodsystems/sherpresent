@@ -6,9 +6,12 @@
     adapter: string;
     onprev?: () => void;
     onnext?: () => void;
+    ongoto?: (slide: number) => void;
   }
 
-  let { status, adapter, onprev, onnext }: Props = $props();
+  let { status, adapter, onprev, onnext, ongoto }: Props = $props();
+
+  let gotoValue = $state('');
 
   const supportsZoom = $derived(adapter === 'powerpoint');
 </script>
@@ -55,16 +58,29 @@
           Next →
         </button>
       </div>
+
+      <div class="goto-controls">
+        <input
+          type="number"
+          class="goto-input"
+          min="1"
+          max={status.total_slides}
+          bind:value={gotoValue}
+          placeholder="#"
+          onkeydown={(e) => { if (e.key === 'Enter' && gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
+        />
+        <button
+          class="nav-btn"
+          onclick={() => { if (gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
+          disabled={!gotoValue}
+        >Go</button>
+      </div>
     </div>
 
-    {#if adapter === 'canva'}
+    {#if status.presenter_notes}
       <div class="presenter-notes">
         <span class="notes-label">Notes</span>
-        {#if status.presenter_notes}
-          <p class="notes-text">{status.presenter_notes}</p>
-        {:else}
-          <p class="notes-empty">No notes for this slide</p>
-        {/if}
+        <p class="notes-text">{status.presenter_notes}</p>
       </div>
     {/if}
   {/if}
@@ -113,6 +129,29 @@
   .nav-buttons {
     display: flex;
     gap: 0.5rem;
+  }
+
+  .goto-controls {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .goto-input {
+    width: 3rem;
+    padding: 0.5rem 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: #f5f5f5;
+    color: #333;
+    font-size: 0.875rem;
+    text-align: center;
+    -moz-appearance: textfield;
+  }
+
+  .goto-input::-webkit-inner-spin-button,
+  .goto-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 
   .nav-btn {
@@ -186,13 +225,6 @@
     line-height: 1.4;
   }
 
-  .notes-empty {
-    margin: 0;
-    font-size: 0.875rem;
-    color: #888;
-    font-style: italic;
-  }
-
   @media (prefers-color-scheme: dark) {
     .section-title {
       color: #eee;
@@ -226,6 +258,12 @@
       border-color: #666;
     }
 
+    .goto-input {
+      background: #3a3a3a;
+      border-color: #555;
+      color: #eee;
+    }
+
     .presenter-notes {
       border-top-color: #444;
     }
@@ -238,8 +276,5 @@
       color: #eee;
     }
 
-    .notes-empty {
-      color: #777;
-    }
   }
 </style>

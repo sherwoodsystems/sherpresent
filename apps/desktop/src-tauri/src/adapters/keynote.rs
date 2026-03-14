@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use super::{PresentationAdapter, PresentationState, SlideInfo};
 use crate::applescript::run_applescript;
 
@@ -153,4 +154,58 @@ impl PresentationAdapter for KeynoteAdapter {
     }
 
     // Keynote doesn't support notes zoom control
+
+    fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
+        let script = format!(
+            r#"tell application "Keynote"
+                tell document "{}"
+                    set noteText to presenter notes of current slide
+                    return noteText
+                end tell
+            end tell"#,
+            name
+        );
+
+        match run_applescript(&script) {
+            Ok(result) if result.trim().is_empty() => Ok(None),
+            Ok(result) => Ok(Some(result)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn get_all_presenter_notes(&self, name: &str) -> Result<HashMap<i32, String>, String> {
+        let script = format!(
+            r#"tell application "Keynote"
+                tell document "{}"
+                    set output to ""
+                    repeat with i from 1 to (count slides)
+                        set noteText to presenter notes of slide i
+                        set output to output & (i as text) & "|||" & noteText & linefeed
+                    end repeat
+                    return output
+                end tell
+            end tell"#,
+            name
+        );
+
+        let result = run_applescript(&script)?;
+        let mut notes = HashMap::new();
+
+        for line in result.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some((num_str, text)) = line.split_once("|||") {
+                if let Ok(slide_num) = num_str.trim().parse::<i32>() {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        notes.insert(slide_num, text.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(notes)
+    }
 }

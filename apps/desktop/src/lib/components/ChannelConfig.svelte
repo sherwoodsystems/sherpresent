@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import type { ChannelConfig, DiscoveredPeer, NetworkInterface } from '../types';
+  import type { ChannelConfig, NetworkInterface } from '../types';
   import { VALID_CHANNELS, DEFAULT_BROADCAST_PORT } from '../types';
   import Select from './Select.svelte';
 
@@ -12,33 +11,14 @@
   }
 
   let { config, onchange }: Props = $props();
-  let discoveredPeers = $state<DiscoveredPeer[]>([]);
   let networkInterfaces = $state<NetworkInterface[]>([]);
-  let unlistenPeers: UnlistenFn | null = null;
 
   onMount(async () => {
-    // Listen for peer discovery events
-    unlistenPeers = await listen<DiscoveredPeer[]>('channel-peers-updated', (event) => {
-      discoveredPeers = event.payload;
-    });
-
-    // Initial fetch of discovered peers
-    try {
-      discoveredPeers = await invoke<DiscoveredPeer[]>('get_discovered_peers');
-    } catch (e) {
-      console.error('Failed to get discovered peers:', e);
-    }
-
-    // Fetch available network interfaces
     try {
       networkInterfaces = await invoke<NetworkInterface[]>('get_available_interfaces');
     } catch (e) {
       console.error('Failed to get network interfaces:', e);
     }
-  });
-
-  onDestroy(() => {
-    unlistenPeers?.();
   });
 
   function updateChannelName(channelName: string) {
@@ -52,19 +32,10 @@
   }
 
   function updateNetworkInterface(value: string) {
-    // "auto" means null (all interfaces)
     const networkInterface = value === 'auto' ? null : value;
     onchange({ ...config, networkInterface });
   }
 
-  // Filter peers to those in our channel
-  let channelPeers = $derived(
-    config.channelName
-      ? discoveredPeers.filter(p => p.channel === config.channelName && p.instanceId !== config.instanceId)
-      : []
-  );
-
-  // Filter to non-loopback interfaces for the dropdown
   let availableInterfaces = $derived(
     networkInterfaces.filter(iface => !iface.isLoopback)
   );
@@ -124,43 +95,6 @@
     </div>
   {/if}
 
-  {#if config.channelName}
-    <div class="peers-section">
-      <h4 class="peers-title">
-        Discovered Peers
-        {#if channelPeers.length > 0}
-          <span class="peer-count">({channelPeers.length})</span>
-        {/if}
-      </h4>
-
-      {#if channelPeers.length === 0}
-        <p class="no-peers">No peers found in channel "{config.channelName}"</p>
-      {:else}
-        <ul class="peer-list">
-          {#each channelPeers as peer (peer.instanceId)}
-            <li class="peer-item">
-              <div class="peer-info">
-                <span class="peer-status"></span>
-                <span class="peer-name">
-                  {#if peer.displayName}
-                    {peer.displayName}
-                  {:else}
-                    {peer.host}
-                  {/if}
-                </span>
-                {#if peer.version === 'bridge'}
-                  <span class="peer-badge bridge">Bridge</span>
-                {:else if peer.version}
-                  <span class="peer-badge instance">v{peer.version}</span>
-                {/if}
-              </div>
-              <span class="peer-address">{peer.host}:{peer.port}</span>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -240,101 +174,6 @@
     color: #888;
   }
 
-  .peers-section {
-    margin-top: 0.5rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid #eee;
-  }
-
-  .peers-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #666;
-    margin: 0 0 0.5rem 0;
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .peer-count {
-    font-weight: 400;
-    color: #888;
-  }
-
-  .no-peers {
-    font-size: 0.75rem;
-    color: #888;
-    font-style: italic;
-    margin: 0;
-    padding: 0.5rem;
-    background: #f9f9f9;
-    border-radius: 6px;
-    text-align: center;
-  }
-
-  .peer-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .peer-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem;
-    background: #e8f4fd;
-    border-radius: 6px;
-    border: 1px solid #b3d9f7;
-  }
-
-  .peer-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .peer-status {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #34c759;
-    box-shadow: 0 0 4px rgba(52, 199, 89, 0.5);
-  }
-
-  .peer-name {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #1a56c4;
-  }
-
-  .peer-badge {
-    font-size: 0.625rem;
-    font-weight: 600;
-    padding: 0.125rem 0.375rem;
-    border-radius: 4px;
-    text-transform: uppercase;
-  }
-
-  .peer-badge.bridge {
-    background: #ff9500;
-    color: white;
-  }
-
-  .peer-badge.instance {
-    background: #007aff;
-    color: white;
-  }
-
-  .peer-address {
-    font-size: 0.75rem;
-    font-family: monospace;
-    color: #1a73e8;
-  }
-
   @media (prefers-color-scheme: dark) {
     .section-title {
       color: #eee;
@@ -379,47 +218,5 @@
       color: #777;
     }
 
-    .peers-section {
-      border-top-color: #444;
-    }
-
-    .peers-title {
-      color: #aaa;
-    }
-
-    .peer-count {
-      color: #777;
-    }
-
-    .no-peers {
-      background: #333;
-      color: #777;
-    }
-
-    .peer-item {
-      background: #1a3a5c;
-      border-color: #2a5a8c;
-    }
-
-    .peer-status {
-      background: #30d158;
-      box-shadow: 0 0 4px rgba(48, 209, 88, 0.5);
-    }
-
-    .peer-name {
-      color: #8fcfff;
-    }
-
-    .peer-badge.bridge {
-      background: #ff9f0a;
-    }
-
-    .peer-badge.instance {
-      background: #0a84ff;
-    }
-
-    .peer-address {
-      color: #6ab7ff;
-    }
   }
 </style>

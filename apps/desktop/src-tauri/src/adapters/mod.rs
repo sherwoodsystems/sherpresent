@@ -5,6 +5,7 @@ pub mod powerpoint;
 #[cfg(target_os = "windows")]
 pub mod powerpoint_windows;
 
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AdapterConfig;
@@ -61,6 +62,11 @@ pub trait PresentationAdapter: Send + Sync {
     /// Navigate to previous slide
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String>;
 
+    /// Navigate to a specific slide number (1-indexed)
+    fn goto_slide(&self, _name: &str, _slide: i32) -> Result<SlideInfo, String> {
+        Err("Go-to-slide not supported for this adapter".to_string())
+    }
+
     /// Get notes zoom level (if supported)
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
         Ok(None)
@@ -69,6 +75,19 @@ pub trait PresentationAdapter: Send + Sync {
     /// Set notes zoom level (if supported)
     fn set_notes_zoom(&self, _level: i32) -> Result<(), String> {
         Err("Notes zoom not supported for this adapter".to_string())
+    }
+
+    /// Get presenter notes for the current slide (if supported)
+    fn get_presenter_notes(&self, _name: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    /// Get presenter notes for all slides (if supported)
+    /// Returns a map of slide number (1-indexed) → notes text.
+    /// Adapters that don't support bulk fetch return an empty map;
+    /// notes accumulate progressively via polling instead.
+    fn get_all_presenter_notes(&self, _name: &str) -> Result<HashMap<i32, String>, String> {
+        Ok(HashMap::new())
     }
 
     /// Get connection status (for network-based adapters)
@@ -100,6 +119,7 @@ pub trait PresentationAdapter: Send + Sync {
         });
 
         let zoom_level = self.get_notes_zoom().ok().flatten();
+        let presenter_notes = self.get_presenter_notes(name).ok().flatten();
 
         LiveStatus {
             is_open: state.is_open,
@@ -107,7 +127,7 @@ pub trait PresentationAdapter: Send + Sync {
             current_slide: slide_info.current,
             total_slides: slide_info.total,
             zoom_level,
-            presenter_notes: None,
+            presenter_notes,
         }
     }
 }

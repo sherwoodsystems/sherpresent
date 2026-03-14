@@ -139,6 +139,9 @@ const INTERCEPT_SCRIPT: &str = r#"
     };
   });
 
+  // --- Debounce: ignore spurious Type A messages after snapshot ---
+  var lastSnapshotTime = 0;
+
   // --- Extract slide state from WS binary frames ---
   function tryExtractCanvaState(bytes) {
     var jsonStart = -1;
@@ -162,10 +165,17 @@ const INTERCEPT_SCRIPT: &str = r#"
         if (ipc) {
           ipc('update_canva_state', { currentPage: currentPage, totalPages: totalPages, notes: null }).catch(function(e) {});
         }
+        lastSnapshotTime = Date.now();
       }
 
       // Slide update: {"A?":"A","Bk": pageNumber}
+      // Guard: ignore spurious Type A messages that arrive shortly after a snapshot
+      // (Canva sends a handshake ack with Bk:1 that is NOT a page number)
       if (obj['A?'] === 'A' && typeof obj.Bk === 'number') {
+        if (Date.now() - lastSnapshotTime < 3000) {
+          tauriLog('STATE_UPDATE', { type: 'slide_change_ignored_post_snapshot', value: obj.Bk });
+          return;
+        }
         tauriLog('STATE_UPDATE', { type: 'slide_change', currentPage: obj.Bk });
         var ipc2 = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
           || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
@@ -389,6 +399,15 @@ impl PresentationAdapter for CanvaAdapter {
 
         Ok(SlideInfo {
             current: next_page + 1,
+            total: self.state.lock().unwrap().total_pages,
+        })
+    }
+
+    fn goto_slide(&self, _name: &str, slide: i32) -> Result<SlideInfo, String> {
+        let page = slide - 1; // Convert 1-indexed to 0-indexed
+        self.navigate_to_page(page)?;
+        Ok(SlideInfo {
+            current: slide,
             total: self.state.lock().unwrap().total_pages,
         })
     }

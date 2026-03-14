@@ -43,6 +43,10 @@ pub struct AppState {
 
     /// Canva adapter singleton (long-lived, holds webview reference)
     pub canva_adapter: Arc<Mutex<Option<CanvaAdapter>>>,
+
+    /// Cache of presenter notes keyed by slide number (1-indexed)
+    /// Session-scoped: cleared on adapter/presentation change
+    pub notes_cache: Arc<Mutex<HashMap<i32, String>>>,
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default
@@ -56,6 +60,7 @@ impl Default for AppState {
             next_peer_display_id: Arc::new(Mutex::new(100)), // Start at 100 for command source peers
             adapter_config: Arc::new(Mutex::new(AdapterConfig::default())),
             canva_adapter: Arc::new(Mutex::new(None)),
+            notes_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

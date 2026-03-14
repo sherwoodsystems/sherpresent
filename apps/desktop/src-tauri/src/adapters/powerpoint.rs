@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use super::{PresentationAdapter, PresentationState, SlideInfo};
 use crate::applescript::run_applescript;
 
@@ -156,6 +157,68 @@ impl PresentationAdapter for PowerPointAdapter {
             .map_err(|_| "Failed to parse total slides")?;
 
         Ok(SlideInfo { current, total })
+    }
+
+    fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
+        let script = format!(
+            r#"tell application "Microsoft PowerPoint"
+                set pres to presentation "{}"
+                set idx to slide index of slide of view of slide show window of pres
+                try
+                    set noteText to content of text range of text frame of shape 2 of notes page of slide idx of pres
+                    return noteText
+                on error
+                    return ""
+                end try
+            end tell"#,
+            name
+        );
+
+        match run_applescript(&script) {
+            Ok(result) if result.trim().is_empty() => Ok(None),
+            Ok(result) => Ok(Some(result)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn get_all_presenter_notes(&self, name: &str) -> Result<HashMap<i32, String>, String> {
+        let script = format!(
+            r#"tell application "Microsoft PowerPoint"
+                set pres to presentation "{}"
+                set totalSlides to count slides of pres
+                set output to ""
+                repeat with i from 1 to totalSlides
+                    try
+                        set noteText to content of text range of text frame of shape 2 of notes page of slide i of pres
+                        set output to output & (i as text) & "|||" & noteText & linefeed
+                    on error
+                        set output to output & (i as text) & "|||" & linefeed
+                    end try
+                end repeat
+                return output
+            end tell"#,
+            name
+        );
+
+        let result = run_applescript(&script)?;
+        let mut notes = HashMap::new();
+
+        for line in result.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some((num_str, text)) = line.split_once("|||") {
+                if let Ok(slide_num) = num_str.trim().parse::<i32>() {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        notes.insert(slide_num, text.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(notes)
     }
 
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {

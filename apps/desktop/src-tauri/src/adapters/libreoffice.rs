@@ -26,6 +26,7 @@ struct ImpressState {
     slideshow_running: bool,
     current_slide: i32, // 0-indexed from protocol
     total_slides: i32,
+    presenter_notes: Option<String>,
 }
 
 /// LibreOffice Impress adapter using the Impress Remote Protocol
@@ -236,8 +237,21 @@ impl LibreOfficeAdapter {
                     );
                 }
             }
-            "slide_notes" | "slide_preview" => {
-                // Ignore these for now
+            "slide_notes" => {
+                if lines.len() > 1 {
+                    let html_content = lines[1..].join("\n");
+                    let plain_text = strip_html_tags(&html_content);
+                    let trimmed = plain_text.trim().to_string();
+                    state.presenter_notes = if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    };
+                    log::debug!("LibreOffice: Got slide notes ({} chars)", state.presenter_notes.as_ref().map_or(0, |s| s.len()));
+                }
+            }
+            "slide_preview" => {
+                // Ignore slide previews
             }
             _ => {
                 log::debug!("LibreOffice: Unknown message type: {}", message_type);
@@ -374,6 +388,11 @@ impl PresentationAdapter for LibreOfficeAdapter {
         Ok(None)
     }
 
+    fn get_presenter_notes(&self, _name: &str) -> Result<Option<String>, String> {
+        let state = self.state.lock().unwrap();
+        Ok(state.presenter_notes.clone())
+    }
+
     fn connection_status(&self) -> super::ConnectionStatus {
         let conn = self.connection.lock().unwrap();
         if conn.is_some() {
@@ -387,6 +406,21 @@ impl PresentationAdapter for LibreOfficeAdapter {
             super::ConnectionStatus::Disconnected
         }
     }
+}
+
+/// Strip HTML tags from a string, returning plain text
+fn strip_html_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(ch),
+            _ => {}
+        }
+    }
+    result
 }
 
 /// Generate a random 4-digit PIN for pairing
@@ -573,6 +607,49 @@ mod tests {
         // Should default to 0 since we didn't have enough lines
         assert_eq!(state.total_slides, 0);
         assert_eq!(state.current_slide, 0);
+    }
+
+    #[test]
+    fn test_strip_html_tags() {
+        assert_eq!(strip_html_tags("<p>Hello</p>"), "Hello");
+        assert_eq!(strip_html_tags("<b>bold</b> and <i>italic</i>"), "bold and italic");
+        assert_eq!(strip_html_tags("no tags here"), "no tags here");
+        assert_eq!(strip_html_tags("<p></p>"), "");
+        assert_eq!(strip_html_tags("<div class=\"foo\">text</div>"), "text");
+    }
+
+    #[test]
+    fn test_handle_slide_notes() {
+        let adapter = LibreOfficeAdapter::default();
+        adapter.handle_message(&[
+            "slide_notes".to_string(),
+            "<p>These are my notes</p>".to_string(),
+        ]);
+        let state = adapter.state.lock().unwrap();
+        assert_eq!(state.presenter_notes, Some("These are my notes".to_string()));
+    }
+
+    #[test]
+    fn test_handle_slide_notes_empty_html() {
+        let adapter = LibreOfficeAdapter::default();
+        adapter.handle_message(&[
+            "slide_notes".to_string(),
+            "<p></p>".to_string(),
+        ]);
+        let state = adapter.state.lock().unwrap();
+        assert_eq!(state.presenter_notes, None);
+    }
+
+    #[test]
+    fn test_handle_slide_notes_multiline() {
+        let adapter = LibreOfficeAdapter::default();
+        adapter.handle_message(&[
+            "slide_notes".to_string(),
+            "<p>Line one</p>".to_string(),
+            "<p>Line two</p>".to_string(),
+        ]);
+        let state = adapter.state.lock().unwrap();
+        assert_eq!(state.presenter_notes, Some("Line one\nLine two".to_string()));
     }
 
     #[test]

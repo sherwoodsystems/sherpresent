@@ -38,7 +38,10 @@ Each adapter implements the `PresentationAdapter` trait:
 |----------|---------|--------|
 | macOS | `powerpoint.rs`, `keynote.rs` | AppleScript |
 | Windows | `powerpoint_windows.rs` | COM automation |
-| Linux | `libreoffice.rs` | TCP socket (port 2002) |
+| Linux | `libreoffice.rs` | TCP socket (port 1599) |
+| All | `canva.rs` | Webview + WebSocket |
+
+All adapters support retrieving presenter notes for the current slide via `get_presenter_notes()`. Notes are displayed in the StatusDisplay component whenever available.
 
 ## Bridge (`apps/bridge/`)
 

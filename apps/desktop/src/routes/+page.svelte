@@ -2,10 +2,7 @@
   import AppSelector from '$lib/components/AppSelector.svelte';
   import AdapterConfig from '$lib/components/AdapterConfig.svelte';
   import PresentationPicker from '$lib/components/PresentationPicker.svelte';
-  import OscConfig from '$lib/components/OscConfig.svelte';
   import StatusDisplay from '$lib/components/StatusDisplay.svelte';
-  import ChannelConfig from '$lib/components/ChannelConfig.svelte';
-  import PeerDiscovery from '$lib/components/PeerDiscovery.svelte';
 
   import { appStore } from '$lib/state.svelte';
 </script>
@@ -23,13 +20,7 @@
         adapter={appStore.config.adapter}
         onprev={() => appStore.prevSlide()}
         onnext={() => appStore.nextSlide()}
-      />
-    </section>
-
-    <section class="section">
-      <ChannelConfig 
-        config={appStore.config.channel} 
-        onchange={(c) => appStore.updateChannelConfig(c)} 
+        ongoto={(slide) => appStore.gotoSlide(slide)}
       />
     </section>
 
@@ -61,16 +52,6 @@
       </section>
     {/if}
 
-    <section class="section">
-      <OscConfig 
-        config={appStore.config.osc} 
-        onchange={(c) => appStore.updateOscConfig(c)} 
-      />
-    </section>
-
-    <section class="section">
-      <PeerDiscovery />
-    </section>
   {:else}
     <p class="loading">Loading...</p>
   {/if}

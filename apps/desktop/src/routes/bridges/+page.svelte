@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { page } from '$app/state';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import type { DiscoveredPeer } from '$lib/types';
   import { appStore } from '$lib/state.svelte';
@@ -16,13 +17,24 @@
   onMount(async () => {
     unlistenPeers = await listen<DiscoveredPeer[]>('peers-updated', (event) => {
       peers = event.payload;
+      checkBridgeParam();
     });
     peers = await appStore.getDiscoveredPeers();
+    checkBridgeParam();
   });
 
   onDestroy(() => {
     unlistenPeers?.();
   });
+
+  function checkBridgeParam() {
+    if (selectedBridge) return;
+    const bridgeParam = page.url.searchParams.get('bridge');
+    if (bridgeParam) {
+      const target = bridges.find(b => b.instanceId === bridgeParam);
+      if (target) selectedBridge = target;
+    }
+  }
 
   function openBridge(bridge: DiscoveredPeer) {
     selectedBridge = bridge;

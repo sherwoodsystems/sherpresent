@@ -40,6 +40,10 @@ pub fn run() {
             commands::presentation::get_notes_zoom,
             commands::presentation::next_slide,
             commands::presentation::prev_slide,
+            commands::presentation::goto_slide,
+            commands::presentation::fetch_all_notes,
+            commands::presentation::get_all_notes,
+            commands::presentation::clear_notes_cache,
             // Polling
             commands::polling::start_status_polling,
             commands::polling::stop_status_polling,

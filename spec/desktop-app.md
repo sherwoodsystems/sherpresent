@@ -11,7 +11,8 @@ Tauri v2 desktop application that receives OSC commands and controls local prese
 | Microsoft PowerPoint | macOS | AppleScript |
 | Microsoft PowerPoint | Windows | COM automation |
 | Keynote | macOS | AppleScript |
-| LibreOffice Impress | Linux | TCP socket (port 2002) |
+| LibreOffice Impress | All | TCP socket (port 1599) |
+| Canva | All | Webview + WebSocket |
 
 ## OSC Server Lifecycle
 
@@ -35,7 +36,7 @@ Tauri v2 desktop application that receives OSC commands and controls local prese
 
 - **Idle**: No presentation file open. `is_open=false`, `is_presenting=false`
 - **Open**: Presentation file open but slideshow not running. `is_open=true`, `is_presenting=false`
-- **Presenting**: Slideshow active. `is_open=true`, `is_presenting=true`, slide numbers valid
+- **Presenting**: Slideshow active. `is_open=true`, `is_presenting=true`, slide numbers valid, presenter notes available
 
 ## State Caching
 

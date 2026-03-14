@@ -450,6 +450,103 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         })
     }
 
+    fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
+        Self::init_com()?;
+
+        let app = Self::get_application()?;
+        let pres = Self::get_presentation_by_name(&app, name)?;
+
+        // Get current slide index from slideshow view
+        let window = Self::get_slideshow_window(&pres)?;
+        let view = Self::get_slideshow_view(&window)?;
+        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
+        let current_idx = Self::variant_to_i32(&pos_var)?;
+
+        // Navigate: Slides(idx) → NotesPage → Shapes → Placeholders → Item(2) → TextFrame → TextRange → Text
+        let slides = Self::get_slides(&pres)?;
+        let slide_var = Self::get_indexed_property(&slides, "Item", current_idx)?;
+        let slide = Self::variant_to_dispatch(&slide_var)?;
+
+        let notes_page_var = Self::get_property(&slide, "NotesPage")?;
+        let notes_page = Self::variant_to_dispatch(&notes_page_var)?;
+
+        let shapes_var = Self::get_property(&notes_page, "Shapes")?;
+        let shapes = Self::variant_to_dispatch(&shapes_var)?;
+
+        let placeholders_var = Self::get_property(&shapes, "Placeholders")?;
+        let placeholders = Self::variant_to_dispatch(&placeholders_var)?;
+
+        // Placeholder index 2 is the notes text placeholder
+        let placeholder_var = Self::get_indexed_property(&placeholders, "Item", 2)?;
+        let placeholder = Self::variant_to_dispatch(&placeholder_var)?;
+
+        let text_frame_var = Self::get_property(&placeholder, "TextFrame")?;
+        let text_frame = Self::variant_to_dispatch(&text_frame_var)?;
+
+        let text_range_var = Self::get_property(&text_frame, "TextRange")?;
+        let text_range = Self::variant_to_dispatch(&text_range_var)?;
+
+        let text_var = Self::get_property(&text_range, "Text")?;
+        let text = Self::variant_to_string(&text_var)?;
+
+        if text.trim().is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(text))
+        }
+    }
+
+    fn get_all_presenter_notes(&self, name: &str) -> Result<std::collections::HashMap<i32, String>, String> {
+        Self::init_com()?;
+
+        let app = Self::get_application()?;
+        let pres = Self::get_presentation_by_name(&app, name)?;
+        let slides = Self::get_slides(&pres)?;
+
+        let count_var = Self::get_property(&slides, "Count")?;
+        let count = Self::variant_to_i32(&count_var)?;
+
+        let mut notes = std::collections::HashMap::new();
+
+        for i in 1..=count {
+            let slide_var = match Self::get_indexed_property(&slides, "Item", i) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let slide = match Self::variant_to_dispatch(&slide_var) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            // Navigate: Slide → NotesPage → Shapes → Placeholders → Item(2) → TextFrame → TextRange → Text
+            let text = (|| -> Result<String, String> {
+                let notes_page_var = Self::get_property(&slide, "NotesPage")?;
+                let notes_page = Self::variant_to_dispatch(&notes_page_var)?;
+                let shapes_var = Self::get_property(&notes_page, "Shapes")?;
+                let shapes = Self::variant_to_dispatch(&shapes_var)?;
+                let placeholders_var = Self::get_property(&shapes, "Placeholders")?;
+                let placeholders = Self::variant_to_dispatch(&placeholders_var)?;
+                let placeholder_var = Self::get_indexed_property(&placeholders, "Item", 2)?;
+                let placeholder = Self::variant_to_dispatch(&placeholder_var)?;
+                let text_frame_var = Self::get_property(&placeholder, "TextFrame")?;
+                let text_frame = Self::variant_to_dispatch(&text_frame_var)?;
+                let text_range_var = Self::get_property(&text_frame, "TextRange")?;
+                let text_range = Self::variant_to_dispatch(&text_range_var)?;
+                let text_var = Self::get_property(&text_range, "Text")?;
+                Self::variant_to_string(&text_var)
+            })();
+
+            if let Ok(text) = text {
+                let text = text.trim().to_string();
+                if !text.is_empty() {
+                    notes.insert(i, text);
+                }
+            }
+        }
+
+        Ok(notes)
+    }
+
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
         // Notes zoom requires accessing the Presenter View window
         // This is more complex and may not be available in all slideshow modes
