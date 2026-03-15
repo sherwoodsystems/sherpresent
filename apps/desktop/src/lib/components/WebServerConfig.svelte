@@ -18,10 +18,6 @@
     if (appStore.webServerRunning) {
       await appStore.stopWebServer();
     } else {
-      // Ensure enabled before starting
-      if (!config.enabled) {
-        updateField('enabled', true);
-      }
       await appStore.startWebServer();
     }
   }

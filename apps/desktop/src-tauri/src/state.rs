@@ -59,7 +59,7 @@ pub struct AppState {
     pub notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
 
     /// Handle to the running web server (if any)
-    pub web_server_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub web_server_handle: Mutex<Option<crate::webserver::WebServerHandle>>,
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default

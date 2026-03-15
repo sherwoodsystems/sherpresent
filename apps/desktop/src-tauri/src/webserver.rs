@@ -13,24 +13,37 @@ use tokio_stream::StreamExt;
 use crate::adapters::LiveStatus;
 use crate::config::WebServerConfig;
 
-/// Shared state for the axum web server
-#[derive(Clone)]
-pub struct WebServerState {
-    pub notes_cache: Arc<Mutex<HashMap<i32, String>>>,
-    pub status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
-    pub notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
-    pub last_status: Arc<Mutex<LiveStatus>>,
-    pub ontime_host: String,
-    pub ontime_port: u16,
+/// Handle for a running web server, allowing graceful shutdown.
+pub struct WebServerHandle {
+    serve_handle: tokio::task::JoinHandle<()>,
+    updater_handle: tokio::task::JoinHandle<()>,
 }
 
-/// Start the web server on the given port. Returns a JoinHandle to abort later.
+impl WebServerHandle {
+    pub fn abort(self) {
+        self.serve_handle.abort();
+        self.updater_handle.abort();
+    }
+}
+
+/// Shared state for the axum web server
+#[derive(Clone)]
+struct WebServerState {
+    notes_cache: Arc<Mutex<HashMap<i32, String>>>,
+    status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
+    notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
+    last_status: Arc<Mutex<LiveStatus>>,
+    ontime_host: String,
+    ontime_port: u16,
+}
+
+/// Start the web server on the given port. Returns a handle to stop it later.
 pub async fn start(
     config: WebServerConfig,
     notes_cache: Arc<Mutex<HashMap<i32, String>>>,
     status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
     notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
-) -> Result<tokio::task::JoinHandle<()>, String> {
+) -> Result<WebServerHandle, String> {
     let state = WebServerState {
         notes_cache,
         status_broadcast,
@@ -40,10 +53,10 @@ pub async fn start(
         ontime_port: config.ontime_port,
     };
 
-    // Spawn a task to keep last_status updated
+    // Spawn a task to keep last_status updated for REST endpoint
     let status_rx = state.status_broadcast.subscribe();
     let last_status = state.last_status.clone();
-    tokio::spawn(async move {
+    let updater_handle = tokio::spawn(async move {
         let mut stream = BroadcastStream::new(status_rx);
         while let Some(Ok(status)) = stream.next().await {
             let mut last = last_status.lock().unwrap();
@@ -64,13 +77,16 @@ pub async fn start(
 
     log::info!("Web server listening on http://0.0.0.0:{}", config.port);
 
-    let handle = tokio::spawn(async move {
+    let serve_handle = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             log::error!("Web server error: {}", e);
         }
     });
 
-    Ok(handle)
+    Ok(WebServerHandle {
+        serve_handle,
+        updater_handle,
+    })
 }
 
 // =============================================================================
@@ -79,10 +95,8 @@ pub async fn start(
 
 #[derive(serde::Serialize)]
 struct StateResponse {
-    current_slide: i32,
-    total_slides: i32,
-    is_presenting: bool,
-    is_open: bool,
+    #[serde(flatten)]
+    status: LiveStatus,
     notes: HashMap<i32, String>,
 }
 
@@ -92,13 +106,7 @@ async fn state_handler(
     let status = state.last_status.lock().unwrap().clone();
     let notes = state.notes_cache.lock().unwrap().clone();
 
-    Json(StateResponse {
-        current_slide: status.current_slide,
-        total_slides: status.total_slides,
-        is_presenting: status.is_presenting,
-        is_open: status.is_open,
-        notes,
-    })
+    Json(StateResponse { status, notes })
 }
 
 async fn sse_handler(
@@ -151,12 +159,24 @@ async fn page_handler(
     AxumState(state): AxumState<WebServerState>,
 ) -> Html<String> {
     let ontime_url = if !state.ontime_host.is_empty() {
-        format!("http://{}:{}/timer", state.ontime_host, state.ontime_port)
+        format!(
+            "http://{}:{}/timer",
+            html_escape(&state.ontime_host),
+            state.ontime_port
+        )
     } else {
         String::new()
     };
 
     Html(build_page_html(&ontime_url))
+}
+
+/// Basic HTML attribute escaping to prevent injection via user-configured values
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn build_page_html(ontime_url: &str) -> String {
@@ -275,24 +295,6 @@ fn build_page_html(ontime_url: &str) -> String {
             width: 100%;
             height: 100%;
             border: none;
-        }}
-
-        .disconnected {{
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-            color: #666;
-        }}
-
-        .disconnected h2 {{
-            font-size: 2rem;
-            margin-bottom: 0.5rem;
-        }}
-
-        .disconnected p {{
-            font-size: 1.25rem;
         }}
     </style>
 </head>
