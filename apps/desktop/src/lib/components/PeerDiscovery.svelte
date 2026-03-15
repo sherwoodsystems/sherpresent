@@ -2,18 +2,14 @@
   import { usePeers } from '$lib/usePeers.svelte';
   import type { DiscoveredPeer } from '../types';
   import SelfPeerEditor from './SelfPeerEditor.svelte';
-  import { appStore } from '$lib/state.svelte';
 
   const peerState = usePeers();
 
   let selfPeer = $derived(peerState.peers.find(p => p.isSelf));
+  let otherPeers = $derived(peerState.peers.filter(p => !p.isSelf));
 
   function getPeerDisplayName(peer: DiscoveredPeer): string {
     return peer.displayName || peer.host;
-  }
-
-  async function refreshPeers() {
-    peerState.peers = await appStore.getDiscoveredPeers();
   }
 </script>
 
@@ -23,12 +19,14 @@
   {#if peerState.peers.length === 0}
     <p class="no-peers">Searching for peers...</p>
   {:else}
-    <ul class="peer-list">
-      {#each peerState.peers as peer (peer.instanceId)}
-        <li class="peer-item" class:is-self={peer.isSelf}>
-          {#if peer.isSelf && selfPeer}
-            <SelfPeerEditor peer={selfPeer} onSaved={refreshPeers} />
-          {:else}
+    {#if selfPeer}
+      <SelfPeerEditor peer={selfPeer} />
+    {/if}
+
+    {#if otherPeers.length > 0}
+      <ul class="peer-list">
+        {#each otherPeers as peer (peer.instanceId)}
+          <li class="peer-item">
             <div class="peer-info">
               <span class="peer-id">#{peer.displayId}</span>
               <span class="peer-name">
@@ -36,10 +34,10 @@
               </span>
             </div>
             <span class="peer-address">{peer.host}:{peer.port}</span>
-          {/if}
-        </li>
-      {/each}
-    </ul>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 </div>
 
@@ -88,12 +86,6 @@
     border-radius: 8px;
     border: 1px solid #e0e0e0;
     transition: all 0.15s ease;
-  }
-
-  .peer-item.is-self {
-    padding: 0;
-    background: transparent;
-    border: none;
   }
 
   .peer-info {
@@ -145,11 +137,6 @@
     .peer-item {
       background: #333;
       border-color: #444;
-    }
-
-    .peer-item.is-self {
-      background: transparent;
-      border-color: transparent;
     }
 
     .peer-id {

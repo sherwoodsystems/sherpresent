@@ -1,6 +1,7 @@
 <script lang="ts">
   import ChannelConfig from '$lib/components/ChannelConfig.svelte';
   import OscConfig from '$lib/components/OscConfig.svelte';
+  import WebServerConfig from '$lib/components/WebServerConfig.svelte';
   import { appStore } from '$lib/state.svelte';
 </script>
 
@@ -22,6 +23,13 @@
       <OscConfig
         config={appStore.config.osc}
         onchange={(c) => appStore.updateOscConfig(c)}
+      />
+    </section>
+
+    <section class="section">
+      <WebServerConfig
+        config={appStore.config.webServer}
+        onchange={(c) => appStore.updateWebServerConfig(c)}
       />
     </section>
 

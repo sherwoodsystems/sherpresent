@@ -45,10 +45,13 @@ class AppStore {
       
       // Check discovery state on init
       if (savedConfig.channel.enabled) {
-        // We can't easily check if discovery is running without an API, 
+        // We can't easily check if discovery is running without an API,
         // but we can try to start it if enabled
         await this.startDiscovery();
       }
+
+      // Check web server state on init
+      await this.refreshWebServerStatus();
     } catch (e) {
       console.error('Failed to load config:', e);
       this.configLoaded = true;

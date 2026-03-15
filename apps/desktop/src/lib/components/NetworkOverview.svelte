@@ -2,7 +2,6 @@
   import { goto } from '$app/navigation';
   import { usePeers } from '$lib/usePeers.svelte';
   import type { DiscoveredPeer } from '../types';
-  import { appStore } from '$lib/state.svelte';
   import SelfPeerEditor from './SelfPeerEditor.svelte';
   import PeerList from './PeerList.svelte';
 
@@ -16,17 +15,13 @@
       goto(`/bridges?bridge=${peer.instanceId}`);
     }
   }
-
-  async function refreshPeers() {
-    peerState.peers = await appStore.getDiscoveredPeers();
-  }
 </script>
 
 <div class="network-overview">
   <h3 class="section-title">Network Overview</h3>
 
   {#if selfPeer}
-    <SelfPeerEditor peer={selfPeer} onSaved={refreshPeers} />
+    <SelfPeerEditor peer={selfPeer} />
   {/if}
 
   <PeerList

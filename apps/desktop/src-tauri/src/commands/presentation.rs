@@ -160,11 +160,12 @@ pub fn start_notes_scan(
     }
 
     // Get total slides and current slide to restore later
-    let total = with_adapter(&adapter, &state, |a| a.get_slide_info(&name))??. total;
-    if total <= 0 {
+    let slide_info = with_adapter(&adapter, &state, |a| a.get_slide_info(&name))??;
+    if slide_info.total <= 0 {
         return Err("Cannot scan: total slides unknown".to_string());
     }
-    let original_slide = with_adapter(&adapter, &state, |a| a.get_slide_info(&name))??.current;
+    let total = slide_info.total;
+    let original_slide = slide_info.current;
 
     // Mark scan as active
     *state.notes_scan_active.lock().unwrap() = true;
