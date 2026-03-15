@@ -24,6 +24,7 @@ pub fn start_status_polling(
     let notes_broadcast = app.state::<AppState>().notes_broadcast.clone();
 
     std::thread::spawn(move || {
+        let mut last_broadcast_status: Option<LiveStatus> = None;
         loop {
             // Check if we should stop
             {
@@ -61,9 +62,14 @@ pub fn start_status_polling(
                 }
             }
 
-            // Emit to frontend and broadcast to web server SSE clients
+            // Emit to frontend
             let _ = app_clone.emit("presentation-status", &status);
-            let _ = status_broadcast.send(status.clone());
+
+            // Broadcast to web server SSE clients only when status changed
+            if last_broadcast_status.as_ref() != Some(&status) {
+                last_broadcast_status = Some(status.clone());
+                let _ = status_broadcast.send(status);
+            }
 
             // Sleep for 2 seconds
             std::thread::sleep(std::time::Duration::from_millis(2000));

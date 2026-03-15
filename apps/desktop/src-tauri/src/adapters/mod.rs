@@ -34,7 +34,7 @@ pub enum ConnectionStatus {
 }
 
 /// Combined status for live display
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LiveStatus {
     pub is_open: bool,
     pub is_presenting: bool,
