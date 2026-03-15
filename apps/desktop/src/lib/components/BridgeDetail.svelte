@@ -244,7 +244,7 @@
         <section class="detail-section">
           <h3>Devices</h3>
           {#if registeredDevices}
-            {#each Object.entries(registeredDevices.devices) as [slotName, device]}
+            {#each Object.entries(registeredDevices.devices).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })) as [slotName, device]}
               <BridgeDeviceSlot
                 {slotName}
                 {device}

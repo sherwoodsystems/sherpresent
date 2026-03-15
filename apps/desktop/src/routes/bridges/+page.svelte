@@ -1,31 +1,16 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import type { DiscoveredPeer } from '$lib/types';
-  import { appStore } from '$lib/state.svelte';
+  import { usePeers } from '$lib/usePeers.svelte';
   import BridgeDetail from '$lib/components/BridgeDetail.svelte';
 
-  let peers = $state<DiscoveredPeer[]>([]);
-  let unlistenPeers: UnlistenFn | null = null;
+  const peerState = usePeers(() => checkBridgeParam());
+
   let selectedBridge = $state<DiscoveredPeer | null>(null);
 
   let bridges = $derived(
-    peers.filter(p => p.version === 'bridge' && p.configPort)
+    peerState.peers.filter(p => p.version === 'bridge' && p.configPort)
   );
-
-  onMount(async () => {
-    unlistenPeers = await listen<DiscoveredPeer[]>('peers-updated', (event) => {
-      peers = event.payload;
-      checkBridgeParam();
-    });
-    peers = await appStore.getDiscoveredPeers();
-    checkBridgeParam();
-  });
-
-  onDestroy(() => {
-    unlistenPeers?.();
-  });
 
   function checkBridgeParam() {
     if (selectedBridge) return;

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use crate::adapters::{
+    canva::CanvaAdapter,
     get_adapter, get_available_adapters, LiveStatus, PresentationAdapter, PresentationState,
     SlideInfo,
 };
@@ -20,62 +22,62 @@ fn get_adapter_config(state: &AppState) -> AdapterConfig {
     state.adapter_config.lock().unwrap().clone()
 }
 
+/// Resolve the correct adapter (Canva singleton or get_adapter()) and call `f` on it.
+fn with_adapter<T>(
+    adapter_name: &str,
+    state: &AppState,
+    f: impl FnOnce(&dyn PresentationAdapter) -> T,
+) -> Result<T, String> {
+    if adapter_name == "canva" {
+        let canva = state.canva_adapter.lock().unwrap();
+        let a = canva.as_ref().ok_or("Canva adapter not initialized".to_string())?;
+        Ok(f(a))
+    } else {
+        let config = get_adapter_config(state);
+        let a = get_adapter(adapter_name, &config)
+            .ok_or_else(|| format!("Unknown adapter: {}", adapter_name))?;
+        Ok(f(a.as_ref()))
+    }
+}
+
+/// Like `with_adapter` but works with cloned `Arc<Mutex<...>>` values (for use in spawned threads).
+fn with_adapter_from_arcs<T>(
+    adapter_name: &str,
+    adapter_config: &Arc<Mutex<AdapterConfig>>,
+    canva_adapter: &Arc<Mutex<Option<CanvaAdapter>>>,
+    f: impl FnOnce(&dyn PresentationAdapter) -> T,
+) -> Result<T, String> {
+    if adapter_name == "canva" {
+        let canva = canva_adapter.lock().unwrap();
+        let a = canva.as_ref().ok_or("Canva adapter not initialized".to_string())?;
+        Ok(f(a))
+    } else {
+        let config = adapter_config.lock().unwrap().clone();
+        let a = get_adapter(adapter_name, &config)
+            .ok_or_else(|| format!("Unknown adapter: {}", adapter_name))?;
+        Ok(f(a.as_ref()))
+    }
+}
+
 #[tauri::command]
 pub fn get_open_presentations(adapter: String, state: tauri::State<AppState>) -> Result<Vec<String>, String> {
-    if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        return canva.as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?
-            .get_open_presentations();
-    }
-    let config = get_adapter_config(&state);
-    let adapter_impl =
-        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-    adapter_impl.get_open_presentations()
+    with_adapter(&adapter, &state, |a| a.get_open_presentations())?
 }
 
 #[tauri::command]
 pub fn get_presentation_state(adapter: String, name: String, state: tauri::State<AppState>) -> Result<PresentationState, String> {
-    if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        return canva.as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?
-            .get_presentation_state(&name);
-    }
-    let config = get_adapter_config(&state);
-    let adapter_impl =
-        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-    adapter_impl.get_presentation_state(&name)
+    with_adapter(&adapter, &state, |a| a.get_presentation_state(&name))?
 }
 
 #[tauri::command]
 pub fn get_slide_info(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
-    if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        return canva.as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?
-            .get_slide_info(&name);
-    }
-    let config = get_adapter_config(&state);
-    let adapter_impl =
-        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-    adapter_impl.get_slide_info(&name)
+    with_adapter(&adapter, &state, |a| a.get_slide_info(&name))?
 }
 
 #[tauri::command]
 pub fn get_live_status(adapter: String, name: String, state: tauri::State<AppState>) -> LiveStatus {
-    if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        return match canva.as_ref() {
-            Some(a) => a.get_live_status(&name),
-            None => LiveStatus::default(),
-        };
-    }
-    let config = get_adapter_config(&state);
-    match get_adapter(&adapter, &config) {
-        Some(adapter_impl) => adapter_impl.get_live_status(&name),
-        None => LiveStatus::default(),
-    }
+    with_adapter(&adapter, &state, |a| a.get_live_status(&name))
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -95,44 +97,17 @@ pub fn get_notes_zoom() -> Result<Option<i32>, String> {
 
 #[tauri::command]
 pub fn next_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
-    if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        return canva.as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?
-            .next_slide(&name);
-    }
-    let config = get_adapter_config(&state);
-    let adapter_impl =
-        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-    adapter_impl.next_slide(&name)
+    with_adapter(&adapter, &state, |a| a.next_slide(&name))?
 }
 
 #[tauri::command]
 pub fn prev_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
-    if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        return canva.as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?
-            .prev_slide(&name);
-    }
-    let config = get_adapter_config(&state);
-    let adapter_impl =
-        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-    adapter_impl.prev_slide(&name)
+    with_adapter(&adapter, &state, |a| a.prev_slide(&name))?
 }
 
 #[tauri::command]
 pub fn goto_slide(adapter: String, name: String, slide: i32, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
-    if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        return canva.as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?
-            .goto_slide(&name, slide);
-    }
-    let config = get_adapter_config(&state);
-    let adapter_impl =
-        get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-    adapter_impl.goto_slide(&name, slide)
+    with_adapter(&adapter, &state, |a| a.goto_slide(&name, slide))?
 }
 
 #[tauri::command]
@@ -141,10 +116,7 @@ pub fn fetch_all_notes(adapter: String, name: String, state: tauri::State<AppSta
         // Canva doesn't support bulk fetch — return whatever is cached
         HashMap::new()
     } else {
-        let config = get_adapter_config(&state);
-        let adapter_impl =
-            get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-        adapter_impl.get_all_presenter_notes(&name)?
+        with_adapter(&adapter, &state, |a| a.get_all_presenter_notes(&name))??
     };
 
     let mut cache = state.notes_cache.lock().unwrap();
@@ -187,30 +159,12 @@ pub fn start_notes_scan(
         }
     }
 
-    // Get total slides
-    let total = if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        let a = canva.as_ref().ok_or("Canva adapter not initialized")?;
-        a.get_slide_info(&name)?.total
-    } else {
-        let config = get_adapter_config(&state);
-        let a = get_adapter(&adapter, &config).ok_or_else(|| format!("Unknown adapter: {}", adapter))?;
-        a.get_slide_info(&name)?.total
-    };
-
+    // Get total slides and current slide to restore later
+    let total = with_adapter(&adapter, &state, |a| a.get_slide_info(&name))??. total;
     if total <= 0 {
         return Err("Cannot scan: total slides unknown".to_string());
     }
-
-    // Get current slide to restore later
-    let original_slide = if adapter == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
-        canva.as_ref().unwrap().get_slide_info(&name)?.current
-    } else {
-        let config = get_adapter_config(&state);
-        let a = get_adapter(&adapter, &config).unwrap();
-        a.get_slide_info(&name)?.current
-    };
+    let original_slide = with_adapter(&adapter, &state, |a| a.get_slide_info(&name))??.current;
 
     // Mark scan as active
     *state.notes_scan_active.lock().unwrap() = true;
@@ -243,20 +197,17 @@ pub fn start_notes_scan(
             emit_progress(i, total, "scanning");
 
             // Navigate to slide i
-            let goto_result = if adapter == "canva" {
-                let canva = canva_adapter.lock().unwrap();
-                canva.as_ref().map(|a| a.goto_slide(&name, i)).unwrap_or(Err("No adapter".to_string()))
-            } else {
-                let config = adapter_config.lock().unwrap().clone();
-                match get_adapter(&adapter, &config) {
-                    Some(a) => a.goto_slide(&name, i),
-                    None => Err("Adapter not found".to_string()),
-                }
-            };
+            let goto_result = with_adapter_from_arcs(
+                &adapter, &adapter_config, &canva_adapter,
+                |a| a.goto_slide(&name, i),
+            );
 
-            if goto_result.is_err() {
-                log::warn!("Notes scan: failed to goto slide {}: {:?}", i, goto_result);
-                continue;
+            match goto_result {
+                Ok(Ok(_)) => {}
+                other => {
+                    log::warn!("Notes scan: failed to goto slide {}: {:?}", i, other);
+                    continue;
+                }
             }
 
             if adapter == "canva" {
@@ -277,13 +228,13 @@ pub fn start_notes_scan(
             } else {
                 // For non-Canva: brief wait for adapter state to settle, then read notes
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                let config = adapter_config.lock().unwrap().clone();
-                if let Some(a) = get_adapter(&adapter, &config) {
-                    if let Ok(Some(notes_text)) = a.get_presenter_notes(&name) {
-                        if !notes_text.is_empty() {
-                            let mut cache = notes_cache.lock().unwrap();
-                            cache.insert(i, notes_text);
-                        }
+                if let Ok(Ok(Some(notes_text))) = with_adapter_from_arcs(
+                    &adapter, &adapter_config, &canva_adapter,
+                    |a| a.get_presenter_notes(&name),
+                ) {
+                    if !notes_text.is_empty() {
+                        let mut cache = notes_cache.lock().unwrap();
+                        cache.insert(i, notes_text);
                     }
                 }
             }
@@ -298,17 +249,10 @@ pub fn start_notes_scan(
         }
 
         // Restore original slide position
-        if adapter == "canva" {
-            let canva = canva_adapter.lock().unwrap();
-            if let Some(a) = canva.as_ref() {
-                let _ = a.goto_slide(&name, original_slide);
-            }
-        } else {
-            let config = adapter_config.lock().unwrap().clone();
-            if let Some(a) = get_adapter(&adapter, &config) {
-                let _ = a.goto_slide(&name, original_slide);
-            }
-        }
+        let _ = with_adapter_from_arcs(
+            &adapter, &adapter_config, &canva_adapter,
+            |a| a.goto_slide(&name, original_slide),
+        );
 
         // Mark scan as complete
         *scan_active.lock().unwrap() = false;

@@ -52,9 +52,6 @@ use windows::{
 
 use std::ptr;
 
-/// PowerPoint's fixed zoom levels for presenter view notes (same as macOS)
-const ZOOM_LEVELS: [i32; 5] = [100, 150, 200, 300, 400];
-
 /// Windows PowerPoint adapter using COM automation
 pub struct PowerPointWindowsAdapter;
 
@@ -564,24 +561,12 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
 }
 
 impl PowerPointWindowsAdapter {
-    /// Get the next zoom level up from current
     pub fn get_next_zoom_level(current: i32) -> i32 {
-        for &level in &ZOOM_LEVELS {
-            if level > current {
-                return level;
-            }
-        }
-        ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]
+        super::get_next_zoom_level(current)
     }
 
-    /// Get the next zoom level down from current
     pub fn get_prev_zoom_level(current: i32) -> i32 {
-        for &level in ZOOM_LEVELS.iter().rev() {
-            if level < current {
-                return level;
-            }
-        }
-        ZOOM_LEVELS[0]
+        super::get_prev_zoom_level(current)
     }
 }
 

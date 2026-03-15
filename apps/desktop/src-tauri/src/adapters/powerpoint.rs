@@ -1,9 +1,6 @@
 use std::collections::HashMap;
-use super::{PresentationAdapter, PresentationState, SlideInfo};
+use super::{PresentationAdapter, PresentationState, SlideInfo, parse_notes_response};
 use crate::applescript::run_applescript;
-
-/// PowerPoint's fixed zoom levels for presenter view notes
-const ZOOM_LEVELS: [i32; 5] = [100, 150, 200, 300, 400];
 
 pub struct PowerPointAdapter;
 
@@ -201,24 +198,7 @@ impl PresentationAdapter for PowerPointAdapter {
         );
 
         let result = run_applescript(&script)?;
-        let mut notes = HashMap::new();
-
-        for line in result.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some((num_str, text)) = line.split_once("|||") {
-                if let Ok(slide_num) = num_str.trim().parse::<i32>() {
-                    let text = text.trim();
-                    if !text.is_empty() {
-                        notes.insert(slide_num, text.to_string());
-                    }
-                }
-            }
-        }
-
-        Ok(notes)
+        Ok(parse_notes_response(&result))
     }
 
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
@@ -271,23 +251,11 @@ impl PresentationAdapter for PowerPointAdapter {
 }
 
 impl PowerPointAdapter {
-    /// Get the next zoom level up from current
     pub fn get_next_zoom_level(current: i32) -> i32 {
-        for &level in &ZOOM_LEVELS {
-            if level > current {
-                return level;
-            }
-        }
-        ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]
+        super::get_next_zoom_level(current)
     }
 
-    /// Get the next zoom level down from current
     pub fn get_prev_zoom_level(current: i32) -> i32 {
-        for &level in ZOOM_LEVELS.iter().rev() {
-            if level < current {
-                return level;
-            }
-        }
-        ZOOM_LEVELS[0]
+        super::get_prev_zoom_level(current)
     }
 }

@@ -132,6 +132,56 @@ pub trait PresentationAdapter: Send + Sync {
     }
 }
 
+// =============================================================================
+// SHARED ADAPTER UTILITIES
+// =============================================================================
+
+/// PowerPoint's fixed zoom levels for presenter view notes
+pub const ZOOM_LEVELS: [i32; 5] = [100, 150, 200, 300, 400];
+
+/// Get the next zoom level up from current
+pub fn get_next_zoom_level(current: i32) -> i32 {
+    for &level in &ZOOM_LEVELS {
+        if level > current {
+            return level;
+        }
+    }
+    ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]
+}
+
+/// Get the next zoom level down from current
+pub fn get_prev_zoom_level(current: i32) -> i32 {
+    for &level in ZOOM_LEVELS.iter().rev() {
+        if level < current {
+            return level;
+        }
+    }
+    ZOOM_LEVELS[0]
+}
+
+/// Parse the "N|||text" notes response format used by AppleScript/COM adapters.
+///
+/// Each line is expected to be `<slide_number>|||<notes_text>`.
+/// Empty notes are skipped.
+pub fn parse_notes_response(result: &str) -> HashMap<i32, String> {
+    let mut notes = HashMap::new();
+    for line in result.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((num_str, text)) = line.split_once("|||") {
+            if let Ok(slide_num) = num_str.trim().parse::<i32>() {
+                let text = text.trim();
+                if !text.is_empty() {
+                    notes.insert(slide_num, text.to_string());
+                }
+            }
+        }
+    }
+    notes
+}
+
 /// Get an adapter by name
 ///
 /// Platform-aware adapter selection:
@@ -283,6 +333,27 @@ mod tests {
         let adapters = get_available_adapters();
         assert!(!adapters.iter().any(|(id, _)| *id == "powerpoint"));
         assert!(!adapters.iter().any(|(id, _)| *id == "keynote"));
+    }
+
+    #[test]
+    fn test_parse_notes_response() {
+        let input = "1|||Hello world\n2|||\n3|||Some notes here\n";
+        let notes = parse_notes_response(input);
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[&1], "Hello world");
+        assert_eq!(notes[&3], "Some notes here");
+        assert!(!notes.contains_key(&2)); // empty notes skipped
+    }
+
+    #[test]
+    fn test_zoom_levels() {
+        assert_eq!(get_next_zoom_level(100), 150);
+        assert_eq!(get_next_zoom_level(150), 200);
+        assert_eq!(get_next_zoom_level(400), 400);
+
+        assert_eq!(get_prev_zoom_level(400), 300);
+        assert_eq!(get_prev_zoom_level(150), 100);
+        assert_eq!(get_prev_zoom_level(100), 100);
     }
 
     #[test]

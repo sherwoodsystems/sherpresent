@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use super::{PresentationAdapter, PresentationState, SlideInfo};
+use super::{PresentationAdapter, PresentationState, SlideInfo, parse_notes_response};
 use crate::applescript::run_applescript;
 
 /// Keynote adapter for macOS - constructed conditionally in get_adapter()
@@ -189,23 +189,6 @@ impl PresentationAdapter for KeynoteAdapter {
         );
 
         let result = run_applescript(&script)?;
-        let mut notes = HashMap::new();
-
-        for line in result.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some((num_str, text)) = line.split_once("|||") {
-                if let Ok(slide_num) = num_str.trim().parse::<i32>() {
-                    let text = text.trim();
-                    if !text.is_empty() {
-                        notes.insert(slide_num, text.to_string());
-                    }
-                }
-            }
-        }
-
-        Ok(notes)
+        Ok(parse_notes_response(&result))
     }
 }
