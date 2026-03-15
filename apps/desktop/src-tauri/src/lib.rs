@@ -4,9 +4,11 @@ mod bridge;
 mod channel;
 mod config;
 mod discovery;
+mod generated_constants;
 mod osc;
 mod state;
 mod commands;
+mod webserver;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -80,6 +82,11 @@ pub fn run() {
             commands::bridge::bridge_test_device,
             commands::bridge::bridge_get_logs,
             commands::bridge::bridge_get_satellite_status,
+            // Web Server
+            commands::webserver::start_web_server,
+            commands::webserver::stop_web_server,
+            commands::webserver::is_web_server_running,
+            commands::webserver::get_web_server_url,
         ])
         .setup(|app| {
             // Load config on startup (or create default)
@@ -267,6 +274,39 @@ pub fn run() {
                     }
                 }
             });
+
+            // Auto-start web server if enabled
+            if config.web_server.enabled {
+                let app_handle3 = app.handle().clone();
+                let web_server_config = config.web_server.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    log::info!("Auto-starting web server on port {}", web_server_config.port);
+
+                    let state = app_handle3.state::<AppState>();
+                    let notes_cache = state.notes_cache.clone();
+                    let status_broadcast = state.status_broadcast.clone();
+                    let notes_broadcast = state.notes_broadcast.clone();
+
+                    match webserver::start(
+                        web_server_config,
+                        notes_cache,
+                        status_broadcast,
+                        notes_broadcast,
+                    )
+                    .await
+                    {
+                        Ok(handle) => {
+                            let mut ws_handle = state.web_server_handle.lock().unwrap();
+                            *ws_handle = Some(handle);
+                            log::info!("Web server auto-started successfully");
+                        }
+                        Err(e) => {
+                            log::error!("Failed to auto-start web server: {}", e);
+                        }
+                    }
+                });
+            }
 
             Ok(())
         })

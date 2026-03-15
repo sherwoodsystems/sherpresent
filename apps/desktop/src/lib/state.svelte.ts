@@ -9,6 +9,7 @@ import {
   type ConnectionStatus,
   type OscConfig,
   type ChannelConfig,
+  type WebServerConfig,
   type DiscoveredPeer,
   defaultConfig
 } from '$lib/types';
@@ -20,6 +21,8 @@ class AppStore {
   discoveryRunning = $state(false);
   configLoaded = $state(false);
   connectionStatus = $state<ConnectionStatus>('Disconnected');
+  webServerRunning = $state(false);
+  webServerUrl = $state('');
   notesCache = $state<NotesCache>({});
   notesScanProgress = $state<{ current: number; total: number; status: string } | null>(null);
 
@@ -313,6 +316,42 @@ class AppStore {
       } catch {
         this.connectionStatus = 'Disconnected';
       }
+    }
+  }
+
+  updateWebServerConfig(webServer: WebServerConfig) {
+    this.config = { ...this.config, webServer };
+    this.scheduleConfigSave();
+  }
+
+  async startWebServer() {
+    try {
+      const url = await invoke<string>('start_web_server');
+      this.webServerRunning = true;
+      this.webServerUrl = url;
+    } catch (e) {
+      console.error('Failed to start web server:', e);
+    }
+  }
+
+  async stopWebServer() {
+    try {
+      await invoke('stop_web_server');
+      this.webServerRunning = false;
+      this.webServerUrl = '';
+    } catch (e) {
+      console.error('Failed to stop web server:', e);
+    }
+  }
+
+  async refreshWebServerStatus() {
+    try {
+      this.webServerRunning = await invoke<boolean>('is_web_server_running');
+      if (this.webServerRunning) {
+        this.webServerUrl = await invoke<string>('get_web_server_url');
+      }
+    } catch {
+      this.webServerRunning = false;
     }
   }
 }

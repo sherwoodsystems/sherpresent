@@ -102,17 +102,8 @@ impl Default for OscConfig {
 // CHANNEL CONFIG
 // =============================================================================
 
-/// Valid channel names for broadcast mode
-pub const VALID_CHANNELS: &[&str] = &[
-    "main", "backup",
-    "keynote1", "keynote2", "keynote3", "keynote4", "keynote5",
-    "keynote6", "keynote7", "keynote8", "keynote9",
-    "aux1", "aux2", "aux3", "aux4", "aux5",
-    "aux6", "aux7", "aux8", "aux9",
-];
-
-/// Default broadcast port for channel communication
-pub const DEFAULT_BROADCAST_PORT: u16 = 9002;
+// Re-export from generated constants (source of truth: spec/protocol-constants.json)
+pub use crate::generated_constants::{VALID_CHANNELS, DEFAULT_BROADCAST_PORT};
 
 /// Configuration for peer-to-peer channel synchronization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,6 +176,36 @@ impl Default for LoggingConfig {
     }
 }
 
+// =============================================================================
+// WEB SERVER CONFIG
+// =============================================================================
+
+/// Configuration for the LAN-accessible web server (notes + timer view)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebServerConfig {
+    /// Whether the web server is enabled
+    pub enabled: bool,
+    /// Port to serve on (default: 8080)
+    pub port: u16,
+    /// Ontime server host (IP or hostname)
+    #[serde(rename = "ontimeHost")]
+    pub ontime_host: String,
+    /// Ontime server port (default: 4001)
+    #[serde(rename = "ontimePort")]
+    pub ontime_port: u16,
+}
+
+impl Default for WebServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 8080,
+            ontime_host: String::new(),
+            ontime_port: 4001,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub osc: OscConfig,
@@ -198,6 +219,9 @@ pub struct AppConfig {
     /// Per-adapter network configuration
     #[serde(rename = "adapterConfig", default)]
     pub adapter_config: AdapterConfig,
+    /// LAN web server settings
+    #[serde(rename = "webServer", default)]
+    pub web_server: WebServerConfig,
 }
 
 impl Default for AppConfig {
@@ -215,6 +239,7 @@ impl Default for AppConfig {
             logging: LoggingConfig::default(),
             channel: ChannelConfig::default(),
             adapter_config: AdapterConfig::default(),
+            web_server: WebServerConfig::default(),
         }
     }
 }

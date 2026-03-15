@@ -1,4 +1,5 @@
 use crate::adapters::canva::CanvaAdapter;
+use crate::adapters::LiveStatus;
 use crate::config::AdapterConfig;
 use crate::discovery::{DiscoveredPeer, DiscoveryService};
 use crate::osc::OscServerHandle;
@@ -50,6 +51,15 @@ pub struct AppState {
 
     /// Whether a notes scan is currently in progress (for cancellation)
     pub notes_scan_active: Arc<Mutex<bool>>,
+
+    /// Broadcast channel for live status updates (consumed by web server SSE)
+    pub status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
+
+    /// Broadcast channel for notes cache updates (consumed by web server SSE)
+    pub notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
+
+    /// Handle to the running web server (if any)
+    pub web_server_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default
@@ -65,6 +75,9 @@ impl Default for AppState {
             canva_adapter: Arc::new(Mutex::new(None)),
             notes_cache: Arc::new(Mutex::new(HashMap::new())),
             notes_scan_active: Arc::new(Mutex::new(false)),
+            status_broadcast: tokio::sync::broadcast::channel(64).0,
+            notes_broadcast: tokio::sync::broadcast::channel(64).0,
+            web_server_handle: Mutex::new(None),
         }
     }
 }

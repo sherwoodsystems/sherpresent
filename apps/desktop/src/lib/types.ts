@@ -26,19 +26,9 @@ export interface OscConfig {
 // CHANNEL CONFIG
 // =============================================================================
 
-/** Valid channel names for broadcast mode */
-export const VALID_CHANNELS = [
-  'main', 'backup',
-  'keynote1', 'keynote2', 'keynote3', 'keynote4', 'keynote5',
-  'keynote6', 'keynote7', 'keynote8', 'keynote9',
-  'aux1', 'aux2', 'aux3', 'aux4', 'aux5',
-  'aux6', 'aux7', 'aux8', 'aux9'
-] as const;
-
-export type ChannelName = typeof VALID_CHANNELS[number];
-
-/** Default broadcast port for channel communication */
-export const DEFAULT_BROADCAST_PORT = 9002;
+// Import from generated constants (source of truth: spec/protocol-constants.json)
+import { VALID_CHANNELS, DEFAULT_BROADCAST_PORT, type ChannelName } from './generated-constants';
+export { VALID_CHANNELS, DEFAULT_BROADCAST_PORT, type ChannelName };
 
 export interface ChannelConfig {
   /** Whether channel sync is enabled */
@@ -120,6 +110,14 @@ export type AdapterConfig =
 /** Connection status for network-based adapters */
 export type ConnectionStatus = 'Disconnected' | 'Connecting' | 'Connected' | { Error: string };
 
+/** LAN web server configuration (notes + timer view for external browsers) */
+export interface WebServerConfig {
+  enabled: boolean;
+  port: number;
+  ontimeHost: string;
+  ontimePort: number;
+}
+
 export interface AppConfig {
   osc: OscConfig;
   adapter: AdapterType;
@@ -129,6 +127,8 @@ export interface AppConfig {
   channel: ChannelConfig;
   /** Per-adapter network configuration */
   adapterConfig: AdapterConfig;
+  /** LAN web server settings */
+  webServer: WebServerConfig;
 }
 
 export interface PresentationState {
@@ -175,7 +175,13 @@ export const defaultConfig: AppConfig = {
     broadcastPort: DEFAULT_BROADCAST_PORT,
     networkInterface: null // Auto (all interfaces)
   },
-  adapterConfig: { type: 'none' }
+  adapterConfig: { type: 'none' },
+  webServer: {
+    enabled: false,
+    port: 8080,
+    ontimeHost: '',
+    ontimePort: 4001
+  }
 };
 
 // =============================================================================

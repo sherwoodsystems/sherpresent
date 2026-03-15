@@ -20,6 +20,8 @@ pub fn start_status_polling(
     let app_clone = app.clone();
     let state_ref = app.state::<AppState>().polling_active.clone();
     let adapter_config = app.state::<AppState>().adapter_config.lock().unwrap().clone();
+    let status_broadcast = app.state::<AppState>().status_broadcast.clone();
+    let notes_broadcast = app.state::<AppState>().notes_broadcast.clone();
 
     std::thread::spawn(move || {
         loop {
@@ -55,11 +57,13 @@ pub fn start_status_polling(
                     let cache_snapshot = cache.clone();
                     drop(cache);
                     let _ = app_clone.emit("notes-cache-updated", &cache_snapshot);
+                    let _ = notes_broadcast.send(cache_snapshot);
                 }
             }
 
-            // Emit to frontend
+            // Emit to frontend and broadcast to web server SSE clients
             let _ = app_clone.emit("presentation-status", &status);
+            let _ = status_broadcast.send(status.clone());
 
             // Sleep for 2 seconds
             std::thread::sleep(std::time::Duration::from_millis(2000));

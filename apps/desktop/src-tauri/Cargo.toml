@@ -63,6 +63,14 @@ reqwest = { version = "0.12", features = ["json"] }
 #   - Set RUST_LOG=warn for quiet output
 env_logger = "0.11"
 
+# axum: Lightweight async HTTP framework for the LAN web server
+#   - Serves combined notes+timer view to external browsers
+#   - Shares tokio runtime with OSC server
+axum = "0.8"
+
+# tokio-stream: Stream utilities for SSE (Server-Sent Events)
+tokio-stream = { version = "0.1", features = ["sync"] }
+
 # Windows-specific dependencies
 # =============================
 [target.'cfg(windows)'.dependencies]
