@@ -19,7 +19,10 @@ VALID_MODES = ["broadcast", "satellite"]
 DEFAULT_SATELLITE_PORT = 16622
 
 # Re-export from generated constants (source of truth: spec/protocol-constants.json)
-from rpi_osc_bridge.generated_constants import VALID_CHANNELS, DEFAULT_BROADCAST_PORT
+try:
+    from rpi_osc_bridge.generated_constants import VALID_CHANNELS, DEFAULT_BROADCAST_PORT
+except ImportError:
+    from generated_constants import VALID_CHANNELS, DEFAULT_BROADCAST_PORT
 DEFAULT_CONFIG_PORT = 80
 
 CONFIG_FILE = "/etc/rpi-osc-bridge/config.json"

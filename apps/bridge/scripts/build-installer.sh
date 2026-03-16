@@ -54,6 +54,7 @@ trap "rm -rf $TEMP_DIR" EXIT
 
 # Copy required files (from new monorepo layout into flat deploy layout)
 cp "$BRIDGE_DIR/src/rpi_osc_bridge/constants.py" "$TEMP_DIR/"
+cp "$BRIDGE_DIR/src/rpi_osc_bridge/generated_constants.py" "$TEMP_DIR/"
 cp "$BRIDGE_DIR/src/rpi_osc_bridge/config.py" "$TEMP_DIR/"
 cp "$BRIDGE_DIR/src/rpi_osc_bridge/devices.py" "$TEMP_DIR/"
 cp "$BRIDGE_DIR/src/rpi_osc_bridge/osc.py" "$TEMP_DIR/"

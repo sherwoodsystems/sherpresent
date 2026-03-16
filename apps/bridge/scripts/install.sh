@@ -48,6 +48,7 @@ mkdir -p "$INSTALL_DIR"
 if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
     echo "Copying files from $SCRIPT_DIR to $INSTALL_DIR..."
     cp "$SCRIPT_DIR/constants.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/generated_constants.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/config.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/devices.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/osc.py" "$INSTALL_DIR/"
