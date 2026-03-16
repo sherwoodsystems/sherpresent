@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use super::{PresentationAdapter, PresentationState, SlideInfo, parse_notes_response};
+use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo, parse_notes_response};
 use crate::applescript::run_applescript;
 
 pub struct PowerPointAdapter;
@@ -289,6 +289,82 @@ impl PresentationAdapter for PowerPointAdapter {
             Err(result[6..].to_string())
         } else {
             Ok(())
+        }
+    }
+
+    /// Batched live status — single AppleScript call instead of 3-4 separate ones.
+    fn get_live_status(&self, name: &str) -> LiveStatus {
+        let script = format!(
+            r#"tell application "Microsoft PowerPoint"
+                set isOpen to "false"
+                set isPresenting to "false"
+                set currentSlide to "0"
+                set totalSlides to "0"
+                set noteText to ""
+                set zoomVal to ""
+                try
+                    set pres to presentation "{}"
+                    set isOpen to "true"
+                    try
+                        set ssw to slide show window of pres
+                        set ssView to slide show view of ssw
+                        set isPresenting to "true"
+                        set currentSlide to (current show position of ssView) as text
+                        set totalSlides to (count slides of pres) as text
+                        try
+                            set idx to current show position of ssView
+                            set notesSlide to notes page of slide idx of pres
+                            repeat with s in shapes of notesSlide
+                                try
+                                    if has text frame of s then
+                                        set t to content of text range of text frame of s
+                                        if t is not "" and t is not missing value then
+                                            set noteText to t
+                                        end if
+                                    end if
+                                end try
+                            end repeat
+                        end try
+                        try
+                            set pvWindow to presenter view window 1
+                            set pTool to presenter tool of pvWindow
+                            set zoomVal to (notes zoom of pTool) as text
+                        end try
+                    end try
+                end try
+                return isOpen & "|||" & isPresenting & "|||" & currentSlide & "|||" & totalSlides & "|||" & zoomVal & "|||" & noteText
+            end tell"#,
+            name
+        );
+
+        match run_applescript(&script) {
+            Ok(result) => {
+                let parts: Vec<&str> = result.splitn(6, "|||").collect();
+                if parts.len() < 5 {
+                    return LiveStatus::default();
+                }
+
+                let is_open = parts[0].trim() == "true";
+                let is_presenting = parts[1].trim() == "true";
+                let current_slide = parts[2].trim().parse().unwrap_or(0);
+                let total_slides = parts[3].trim().parse().unwrap_or(0);
+                let zoom_level = parts[4].trim().parse().ok();
+                let notes = if parts.len() >= 6 && !parts[5].trim().is_empty() && parts[5].trim() != "missing value" {
+                    Some(parts[5].to_string())
+                } else {
+                    None
+                };
+
+                LiveStatus {
+                    is_open,
+                    is_presenting,
+                    current_slide,
+                    total_slides,
+                    zoom_level,
+                    presenter_notes: notes,
+                }
+            }
+            Err(_) => LiveStatus::default(),
         }
     }
 }

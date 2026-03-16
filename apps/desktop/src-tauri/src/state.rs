@@ -63,6 +63,10 @@ pub struct AppState {
 
     /// Latency measurement ring buffer
     pub latency_store: Arc<LatencyStore>,
+
+    /// Timestamp (Unix ms) of the last UI/OSC slide command.
+    /// Used by polling to skip cycles during active use, avoiding IPC contention.
+    pub last_command_at: Arc<Mutex<u64>>,
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default
@@ -82,6 +86,7 @@ impl Default for AppState {
             notes_broadcast: tokio::sync::broadcast::channel(64).0,
             web_server_handle: Mutex::new(None),
             latency_store: Arc::new(LatencyStore::new(50)),
+            last_command_at: Arc::new(Mutex::new(0)),
         }
     }
 }

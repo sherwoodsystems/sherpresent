@@ -25,6 +25,8 @@ pub fn start_status_polling(
 
     let notes_cache = app.state::<AppState>().notes_cache.clone();
 
+    let last_command_at = app.state::<AppState>().last_command_at.clone();
+
     std::thread::spawn(move || {
         let mut last_broadcast_status: Option<LiveStatus> = None;
         let mut was_presenting = false;
@@ -34,6 +36,22 @@ pub fn start_status_polling(
                 let polling = state_ref.lock().unwrap();
                 if !*polling {
                     break;
+                }
+            }
+
+            // Skip this poll cycle if a slide command was executed within the last 3s.
+            // This avoids competing for the Apple Event IPC channel during active use.
+            {
+                let last_cmd = *last_command_at.lock().unwrap();
+                if last_cmd > 0 {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    if now.saturating_sub(last_cmd) < 3000 {
+                        std::thread::sleep(std::time::Duration::from_millis(2000));
+                        continue;
+                    }
                 }
             }
 

@@ -137,6 +137,10 @@ pub struct StateManager {
 
     /// Tauri app handle for emitting events to the frontend
     app_handle: Option<AppHandle>,
+
+    /// Shared timestamp of last UI/OSC command (Unix ms).
+    /// Polling skips cycles when a command was recent (avoids IPC contention).
+    last_command_at: Arc<Mutex<u64>>,
 }
 
 impl StateManager {
@@ -148,6 +152,7 @@ impl StateManager {
         state_change_tx: mpsc::Sender<CachedState>,
         latency_store: Arc<LatencyStore>,
         app_handle: Option<AppHandle>,
+        last_command_at: Arc<Mutex<u64>>,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(CachedState::now())),
@@ -159,6 +164,7 @@ impl StateManager {
             refresh_in_progress: Arc::new(Mutex::new(false)),
             latency_store,
             app_handle,
+            last_command_at,
         }
     }
 
@@ -401,7 +407,6 @@ impl StateManager {
         let adapter_name = self.adapter_name.clone();
         let presentation_name = self.presentation_name.clone();
         let adapter_config = self.adapter_config.clone();
-        let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
         let latency_store = self.latency_store.clone();
@@ -412,11 +417,6 @@ impl StateManager {
 
         // Spawn the blocking work on a separate thread
         tokio::task::spawn(async move {
-            // Clone for use after the spawn_blocking closure consumes originals
-            let adapter_name_for_refresh = adapter_name.clone();
-            let presentation_name_for_refresh = presentation_name.clone();
-            let adapter_config_for_refresh = adapter_config.clone();
-
             // Run the blocking AppleScript on a blocking thread
             let result = tokio::task::spawn_blocking(move || {
                 if let Some(adapter) = get_adapter(&adapter_name, &adapter_config) {
@@ -427,7 +427,7 @@ impl StateManager {
             })
             .await;
 
-            // Capture latency after adapter completes (before the settle sleep)
+            // Capture latency after adapter completes
             let after_ms = latency::monotonic_ms();
             let event = latency::make_event(before_ms, after_ms, command_label, source, adapter_label);
             latency_store.push(event.clone());
@@ -435,49 +435,62 @@ impl StateManager {
                 let _ = handle.emit("latency-event", &event);
             }
 
-            // After command completes, schedule a refresh
-            // Wait 50ms to let PowerPoint settle
-            tokio::time::sleep(Duration::from_millis(50)).await;
-
-            // Trigger a refresh (reusing the logic)
-            Self::do_refresh_internal(
-                adapter_name_for_refresh,
-                presentation_name_for_refresh,
-                adapter_config_for_refresh,
-                refresh_flag,
-                state,
-                tx,
-            )
-            .await;
-
-            // Log errors for debugging
-            if let Err(e) = result {
-                log::warn!("Adapter command failed: {:?}", e);
+            // Use the command result to update state directly instead of a full refresh.
+            // The adapter's next_slide/prev_slide/goto_slide already return accurate SlideInfo.
+            // The 2s polling cycle catches any desync from external changes.
+            match result {
+                Ok(Ok(slide_info)) => {
+                    let changed = {
+                        let mut st = state.lock().unwrap();
+                        let old_current = st.current_slide;
+                        let old_total = st.total_slides;
+                        st.current_slide = slide_info.current;
+                        st.total_slides = slide_info.total;
+                        st.last_updated_ms = current_time_ms();
+                        old_current != slide_info.current || old_total != slide_info.total
+                    };
+                    if changed {
+                        let new_state = state.lock().unwrap().clone();
+                        let _ = tx.try_send(new_state);
+                    }
+                }
+                Ok(Err(e)) => {
+                    log::warn!("Adapter command failed: {}", e);
+                }
+                Err(e) => {
+                    log::warn!("Adapter task panicked: {:?}", e);
+                }
             }
         });
     }
 
     /// Spawn a background task to set zoom level.
     fn spawn_zoom_command(&self, level: i32) {
-        let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
-        let adapter_name = self.adapter_name.clone();
-        let presentation_name = self.presentation_name.clone();
-        let adapter_config = self.adapter_config.clone();
 
         tokio::task::spawn(async move {
             // Run the blocking AppleScript
-            let _ = tokio::task::spawn_blocking(move || {
+            let result = tokio::task::spawn_blocking(move || {
                 let adapter = PowerPointAdapter;
                 adapter.set_notes_zoom(level)
             })
             .await;
 
-            // Refresh after zoom completes
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            Self::do_refresh_internal(adapter_name, presentation_name, adapter_config, refresh_flag, state, tx)
-                .await;
+            // Update state directly with the requested zoom level on success
+            match result {
+                Ok(Ok(())) => {
+                    {
+                        let mut st = state.lock().unwrap();
+                        st.zoom_level = Some(level);
+                        st.last_updated_ms = current_time_ms();
+                    }
+                    let new_state = state.lock().unwrap().clone();
+                    let _ = tx.try_send(new_state);
+                }
+                Ok(Err(e)) => log::warn!("Zoom command failed: {}", e),
+                Err(e) => log::warn!("Zoom task panicked: {:?}", e),
+            }
         });
     }
 
@@ -649,6 +662,7 @@ impl StateManager {
         let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
+        let last_command_at = self.last_command_at.clone();
 
         // Spawn the polling task
         let handle = tokio::task::spawn(async move {
@@ -656,6 +670,21 @@ impl StateManager {
 
             loop {
                 timer.tick().await;
+
+                // Skip this poll cycle if a slide command was executed within the last 3s.
+                // This avoids competing for the Apple Event IPC channel during active use.
+                {
+                    let last_cmd = *last_command_at.lock().unwrap();
+                    if last_cmd > 0 {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        if now.saturating_sub(last_cmd) < 3000 {
+                            continue;
+                        }
+                    }
+                }
 
                 Self::do_refresh_internal(
                     adapter_name.clone(),

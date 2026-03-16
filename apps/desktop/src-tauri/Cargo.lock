@@ -3806,6 +3806,8 @@ dependencies = [
  "if-addrs 0.13.4",
  "log",
  "mdns-sd",
+ "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
  "reqwest",
  "rosc",
  "serde",

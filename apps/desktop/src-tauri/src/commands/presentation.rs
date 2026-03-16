@@ -96,8 +96,19 @@ pub fn get_notes_zoom() -> Result<Option<i32>, String> {
     }
 }
 
+/// Record the current time as the last command timestamp (suppresses polling for 3s).
+fn stamp_command_time(state: &AppState) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    *state.last_command_at.lock().unwrap() = now;
+}
+
 #[tauri::command]
 pub fn next_slide(app: AppHandle, adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    stamp_command_time(&state);
     let before = latency::monotonic_ms();
     let result = with_adapter(&adapter, &state, |a| a.next_slide(&name))?;
     let after = latency::monotonic_ms();
@@ -109,6 +120,7 @@ pub fn next_slide(app: AppHandle, adapter: String, name: String, state: tauri::S
 
 #[tauri::command]
 pub fn prev_slide(app: AppHandle, adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    stamp_command_time(&state);
     let before = latency::monotonic_ms();
     let result = with_adapter(&adapter, &state, |a| a.prev_slide(&name))?;
     let after = latency::monotonic_ms();
@@ -120,6 +132,7 @@ pub fn prev_slide(app: AppHandle, adapter: String, name: String, state: tauri::S
 
 #[tauri::command]
 pub fn goto_slide(app: AppHandle, adapter: String, name: String, slide: i32, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    stamp_command_time(&state);
     let before = latency::monotonic_ms();
     let result = with_adapter(&adapter, &state, |a| a.goto_slide(&name, slide))?;
     let after = latency::monotonic_ms();
@@ -157,6 +170,8 @@ pub fn get_all_notes(state: tauri::State<AppState>) -> HashMap<i32, String> {
 #[tauri::command]
 pub fn clear_notes_cache(state: tauri::State<AppState>) {
     state.notes_cache.lock().unwrap().clear();
+    // Also clear compiled AppleScript cache since adapter/presentation may have changed
+    crate::applescript::clear_compiled_cache();
 }
 
 #[derive(Clone, serde::Serialize)]
