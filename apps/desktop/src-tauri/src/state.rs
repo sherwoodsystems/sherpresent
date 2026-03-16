@@ -2,7 +2,7 @@ use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
 use crate::config::AdapterConfig;
 use crate::discovery::{DiscoveredPeer, DiscoveryService};
-use crate::osc::OscServerHandle;
+use crate::osc::{LatencyStore, OscServerHandle};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -60,6 +60,9 @@ pub struct AppState {
 
     /// Handle to the running web server (if any)
     pub web_server_handle: Mutex<Option<crate::webserver::WebServerHandle>>,
+
+    /// Latency measurement ring buffer
+    pub latency_store: Arc<LatencyStore>,
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default
@@ -78,6 +81,7 @@ impl Default for AppState {
             status_broadcast: tokio::sync::broadcast::channel(64).0,
             notes_broadcast: tokio::sync::broadcast::channel(64).0,
             web_server_handle: Mutex::new(None),
+            latency_store: Arc::new(LatencyStore::new(50)),
         }
     }
 }

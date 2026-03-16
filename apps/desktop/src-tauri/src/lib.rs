@@ -87,6 +87,9 @@ pub fn run() {
             commands::webserver::stop_web_server,
             commands::webserver::is_web_server_running,
             commands::webserver::get_web_server_url,
+            // Debug
+            commands::debug::get_latency_events,
+            commands::debug::clear_latency_events,
         ])
         .setup(|app| {
             // Load config on startup (or create default)
@@ -113,6 +116,11 @@ pub fn run() {
             let channel_config = config.channel.clone();
             let adapter_config = config.adapter_config.clone();
 
+            let latency_store = {
+                let state = app_handle.state::<AppState>();
+                state.latency_store.clone()
+            };
+
             tauri::async_runtime::spawn(async move {
                 log::info!("Auto-starting OSC server on port {}", osc_config.receive_port);
 
@@ -129,6 +137,8 @@ pub fn run() {
                     presentation_name,
                     adapter_config,
                     state_change_tx,
+                    latency_store,
+                    Some(app_handle.clone()),
                 ));
 
                 // Initial state fetch

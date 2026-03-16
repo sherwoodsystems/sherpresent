@@ -28,11 +28,13 @@
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
 use crate::adapters::{get_adapter, powerpoint::PowerPointAdapter, PresentationAdapter};
 use crate::config::AdapterConfig;
+use super::latency::{self, CommandSource, LatencyStore};
 
 // =============================================================================
 // CACHED STATE
@@ -129,6 +131,12 @@ pub struct StateManager {
 
     /// Flag to prevent concurrent refresh operations.
     refresh_in_progress: Arc<Mutex<bool>>,
+
+    /// Latency measurement store
+    latency_store: Arc<LatencyStore>,
+
+    /// Tauri app handle for emitting events to the frontend
+    app_handle: Option<AppHandle>,
 }
 
 impl StateManager {
@@ -138,6 +146,8 @@ impl StateManager {
         presentation_name: String,
         adapter_config: AdapterConfig,
         state_change_tx: mpsc::Sender<CachedState>,
+        latency_store: Arc<LatencyStore>,
+        app_handle: Option<AppHandle>,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(CachedState::now())),
@@ -147,6 +157,8 @@ impl StateManager {
             state_change_tx,
             polling_handle: Mutex::new(None),
             refresh_in_progress: Arc::new(Mutex::new(false)),
+            latency_store,
+            app_handle,
         }
     }
 
@@ -217,7 +229,7 @@ impl StateManager {
     /// 3. Notify listeners (OSC feedback goes out NOW)
     /// 4. Spawn a background task to actually call PowerPoint
     /// 5. After AppleScript completes, refresh state to verify
-    pub fn next_slide(&self) {
+    pub fn next_slide(&self, source: CommandSource) {
         // First, do the optimistic update
         let should_execute = {
             let mut state = self.state.lock().unwrap();
@@ -247,11 +259,15 @@ impl StateManager {
         self.notify_state_change(self.get_state());
 
         // Now spawn the actual AppleScript command in the background
-        self.spawn_adapter_command(|adapter, name| adapter.next_slide(&name));
+        self.spawn_adapter_command(
+            "next".to_string(),
+            source,
+            |adapter, name| adapter.next_slide(&name),
+        );
     }
 
     /// Go to the previous slide (optimistic update).
-    pub fn prev_slide(&self) {
+    pub fn prev_slide(&self, source: CommandSource) {
         let should_execute = {
             let mut state = self.state.lock().unwrap();
 
@@ -276,11 +292,15 @@ impl StateManager {
         }
 
         self.notify_state_change(self.get_state());
-        self.spawn_adapter_command(|adapter, name| adapter.prev_slide(&name));
+        self.spawn_adapter_command(
+            "prev".to_string(),
+            source,
+            |adapter, name| adapter.prev_slide(&name),
+        );
     }
 
     /// Jump to a specific slide (optimistic update).
-    pub fn goto_slide(&self, slide: i32) {
+    pub fn goto_slide(&self, slide: i32, source: CommandSource) {
         let should_execute = {
             let mut state = self.state.lock().unwrap();
 
@@ -305,7 +325,11 @@ impl StateManager {
         }
 
         self.notify_state_change(self.get_state());
-        self.spawn_adapter_command(move |adapter, name| adapter.goto_slide(&name, slide));
+        self.spawn_adapter_command(
+            format!("goto:{}", slide),
+            source,
+            move |adapter, name| adapter.goto_slide(&name, slide),
+        );
     }
 
     /// Increase notes zoom level (optimistic update).
@@ -368,7 +392,7 @@ impl StateManager {
     ///
     /// `spawn_blocking` runs the closure on a dedicated thread pool for
     /// blocking operations, keeping the async runtime free.
-    fn spawn_adapter_command<F>(&self, command: F)
+    fn spawn_adapter_command<F>(&self, command_label: String, source: CommandSource, command: F)
     where
         F: FnOnce(&dyn crate::adapters::PresentationAdapter, String) -> Result<crate::adapters::SlideInfo, String>
             + Send
@@ -380,6 +404,11 @@ impl StateManager {
         let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
+        let latency_store = self.latency_store.clone();
+        let app_handle = self.app_handle.clone();
+        let adapter_label = self.adapter_name.clone();
+
+        let before_ms = latency::monotonic_ms();
 
         // Spawn the blocking work on a separate thread
         tokio::task::spawn(async move {
@@ -397,6 +426,14 @@ impl StateManager {
                 }
             })
             .await;
+
+            // Capture latency after adapter completes (before the settle sleep)
+            let after_ms = latency::monotonic_ms();
+            let event = latency::make_event(before_ms, after_ms, command_label, source, adapter_label);
+            latency_store.push(event.clone());
+            if let Some(ref handle) = app_handle {
+                let _ = handle.emit("latency-event", &event);
+            }
 
             // After command completes, schedule a refresh
             // Wait 50ms to let PowerPoint settle

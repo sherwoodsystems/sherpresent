@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod canva;
 pub mod config;
+pub mod debug;
 pub mod network;
 pub mod presentation;
 pub mod polling;

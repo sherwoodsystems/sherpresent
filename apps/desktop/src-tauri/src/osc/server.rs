@@ -37,6 +37,7 @@ use rosc::{encoder, OscPacket};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
+use super::latency::CommandSource;
 use super::messages::{OscCommand, OscFeedback};
 use super::state_manager::{CachedState, StateManager};
 use super::CommandSourcePeer;
@@ -633,15 +634,15 @@ impl OscServer {
 
                 // Execute the command
                 match channel_cmd.command {
-                    OscCommand::Next => state_manager.next_slide(),
-                    OscCommand::Previous => state_manager.prev_slide(),
+                    OscCommand::Next => state_manager.next_slide(CommandSource::OscBroadcast),
+                    OscCommand::Previous => state_manager.prev_slide(CommandSource::OscBroadcast),
                     OscCommand::Status => {
                         let state = state_manager.get_state();
                         Self::send_feedback_to_all(&state, feedback_socket, feedback_addrs).await;
                     }
                     OscCommand::Refresh => state_manager.refresh_state(),
                     OscCommand::ChannelCmdGoto { slide, .. } => {
-                        state_manager.goto_slide(slide);
+                        state_manager.goto_slide(slide, CommandSource::OscBroadcast);
                     }
                     _ => {}
                 }
@@ -663,12 +664,12 @@ impl OscServer {
 
         match command {
             OscCommand::Next => {
-                state_manager.next_slide();
+                state_manager.next_slide(CommandSource::Osc);
                 // Feedback is sent automatically when state changes
             }
 
             OscCommand::Previous => {
-                state_manager.prev_slide();
+                state_manager.prev_slide(CommandSource::Osc);
             }
 
             OscCommand::ZoomIn => {
@@ -693,7 +694,7 @@ impl OscServer {
             }
 
             OscCommand::Goto { slide } => {
-                state_manager.goto_slide(slide);
+                state_manager.goto_slide(slide, CommandSource::Osc);
             }
 
             OscCommand::Refresh => {

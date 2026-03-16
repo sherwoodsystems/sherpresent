@@ -7,6 +7,7 @@ use crate::adapters::{
     SlideInfo,
 };
 use crate::config::AdapterConfig;
+use crate::osc::latency::{self, CommandSource};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -96,18 +97,36 @@ pub fn get_notes_zoom() -> Result<Option<i32>, String> {
 }
 
 #[tauri::command]
-pub fn next_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
-    with_adapter(&adapter, &state, |a| a.next_slide(&name))?
+pub fn next_slide(app: AppHandle, adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    let before = latency::monotonic_ms();
+    let result = with_adapter(&adapter, &state, |a| a.next_slide(&name))?;
+    let after = latency::monotonic_ms();
+    let event = latency::make_event(before, after, "next".to_string(), CommandSource::Ui, adapter);
+    state.latency_store.push(event.clone());
+    let _ = app.emit("latency-event", &event);
+    result
 }
 
 #[tauri::command]
-pub fn prev_slide(adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
-    with_adapter(&adapter, &state, |a| a.prev_slide(&name))?
+pub fn prev_slide(app: AppHandle, adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    let before = latency::monotonic_ms();
+    let result = with_adapter(&adapter, &state, |a| a.prev_slide(&name))?;
+    let after = latency::monotonic_ms();
+    let event = latency::make_event(before, after, "prev".to_string(), CommandSource::Ui, adapter);
+    state.latency_store.push(event.clone());
+    let _ = app.emit("latency-event", &event);
+    result
 }
 
 #[tauri::command]
-pub fn goto_slide(adapter: String, name: String, slide: i32, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
-    with_adapter(&adapter, &state, |a| a.goto_slide(&name, slide))?
+pub fn goto_slide(app: AppHandle, adapter: String, name: String, slide: i32, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
+    let before = latency::monotonic_ms();
+    let result = with_adapter(&adapter, &state, |a| a.goto_slide(&name, slide))?;
+    let after = latency::monotonic_ms();
+    let event = latency::make_event(before, after, format!("goto:{}", slide), CommandSource::Ui, adapter);
+    state.latency_store.push(event.clone());
+    let _ = app.emit("latency-event", &event);
+    result
 }
 
 #[tauri::command]

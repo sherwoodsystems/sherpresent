@@ -131,6 +131,26 @@ export interface AppConfig {
   webServer: WebServerConfig;
 }
 
+// =============================================================================
+// LATENCY / DEBUG
+// =============================================================================
+
+export type CommandSource = 'osc' | 'osc_broadcast' | 'ui';
+
+export interface LatencyEvent {
+  command_received_ms: number;
+  adapter_complete_ms: number;
+  latency_ms: number;
+  command: string;
+  source: CommandSource;
+  adapter: string;
+  wall_clock_ms: number;
+}
+
+// =============================================================================
+// PRESENTATION STATE
+// =============================================================================
+
 export interface PresentationState {
   is_open: boolean;
   is_presenting: boolean;

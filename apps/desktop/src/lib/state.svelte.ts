@@ -12,6 +12,7 @@ import {
   type WebServerConfig,
   type DiscoveredPeer,
   type SlideInfo,
+  type LatencyEvent,
   defaultConfig
 } from '$lib/types';
 
@@ -26,12 +27,14 @@ class AppStore {
   webServerUrl = $state('');
   notesCache = $state<NotesCache>({});
   notesScanProgress = $state<{ current: number; total: number; status: string } | null>(null);
+  latencyEvents = $state<LatencyEvent[]>([]);
 
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
   private unlistenStatus: UnlistenFn | null = null;
   private unlistenCanvaLog: UnlistenFn | null = null;
   private unlistenNotes: UnlistenFn | null = null;
   private unlistenScanProgress: UnlistenFn | null = null;
+  private unlistenLatency: UnlistenFn | null = null;
 
   async init() {
     try {
@@ -82,6 +85,21 @@ class AppStore {
       const { category, message } = event.payload;
       console.log(`[CANVA:${category}]`, message);
     });
+
+    // Listen for latency events
+    this.unlistenLatency = await listen<LatencyEvent>('latency-event', (event) => {
+      this.latencyEvents = [event.payload, ...this.latencyEvents].slice(0, 50);
+    });
+
+    // Load any existing latency events
+    try {
+      const existing = await invoke<LatencyEvent[]>('get_latency_events');
+      if (existing.length > 0) {
+        this.latencyEvents = existing.reverse();
+      }
+    } catch (e) {
+      console.error('Failed to load latency events:', e);
+    }
   }
 
   destroy() {
@@ -89,6 +107,7 @@ class AppStore {
     this.unlistenCanvaLog?.();
     this.unlistenNotes?.();
     this.unlistenScanProgress?.();
+    this.unlistenLatency?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
@@ -302,6 +321,15 @@ class AppStore {
       await invoke('stop_notes_scan');
     } catch (e) {
       console.error('Failed to stop notes scan:', e);
+    }
+  }
+
+  async clearLatencyEvents() {
+    try {
+      await invoke('clear_latency_events');
+      this.latencyEvents = [];
+    } catch (e) {
+      console.error('Failed to clear latency events:', e);
     }
   }
 
