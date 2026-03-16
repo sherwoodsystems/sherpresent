@@ -119,11 +119,14 @@ pub fn fetch_all_notes(adapter: String, name: String, state: tauri::State<AppSta
         with_adapter(&adapter, &state, |a| a.get_all_presenter_notes(&name))??
     };
 
+    log::debug!("fetch_all_notes: bulk fetch returned {} entries", bulk_notes.len());
     let mut cache = state.notes_cache.lock().unwrap();
+    let cache_before = cache.len();
     // Merge bulk results into cache (bulk results take precedence)
     for (k, v) in bulk_notes {
         cache.insert(k, v);
     }
+    log::debug!("fetch_all_notes: cache {} -> {} entries, keys: {:?}", cache_before, cache.len(), cache.keys().collect::<Vec<_>>());
     Ok(cache.clone())
 }
 

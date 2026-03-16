@@ -165,20 +165,27 @@ pub fn get_prev_zoom_level(current: i32) -> i32 {
 /// Empty notes are skipped.
 pub fn parse_notes_response(result: &str) -> HashMap<i32, String> {
     let mut notes = HashMap::new();
+    let mut total_lines = 0;
+    let mut empty_count = 0;
     for line in result.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
+        total_lines += 1;
         if let Some((num_str, text)) = line.split_once("|||") {
             if let Ok(slide_num) = num_str.trim().parse::<i32>() {
                 let text = text.trim();
-                if !text.is_empty() {
+                if !text.is_empty() && text != "missing value" {
+                    log::debug!("parse_notes: slide {} has notes ({} chars): {:?}", slide_num, text.len(), &text[..text.len().min(60)]);
                     notes.insert(slide_num, text.to_string());
+                } else {
+                    empty_count += 1;
                 }
             }
         }
     }
+    log::debug!("parse_notes: {} lines total, {} with notes, {} empty", total_lines, notes.len(), empty_count);
     notes
 }
 

@@ -167,9 +167,18 @@ impl PresentationAdapter for KeynoteAdapter {
         );
 
         match run_applescript(&script) {
-            Ok(result) if result.trim().is_empty() => Ok(None),
-            Ok(result) => Ok(Some(result)),
-            Err(_) => Ok(None),
+            Ok(result) if result.trim().is_empty() || result.trim() == "missing value" => {
+                log::debug!("Keynote get_presenter_notes: empty/missing result for current slide");
+                Ok(None)
+            },
+            Ok(result) => {
+                log::debug!("Keynote get_presenter_notes: got {} chars, first 80: {:?}", result.len(), &result[..result.len().min(80)]);
+                Ok(Some(result))
+            },
+            Err(e) => {
+                log::debug!("Keynote get_presenter_notes: error: {}", e);
+                Ok(None)
+            },
         }
     }
 
@@ -189,6 +198,9 @@ impl PresentationAdapter for KeynoteAdapter {
         );
 
         let result = run_applescript(&script)?;
-        Ok(parse_notes_response(&result))
+        log::debug!("Keynote get_all_presenter_notes raw output ({} chars):\n{}", result.len(), &result[..result.len().min(2000)]);
+        let parsed = parse_notes_response(&result);
+        log::debug!("Keynote get_all_presenter_notes parsed: {} slides with notes, keys: {:?}", parsed.len(), parsed.keys().collect::<Vec<_>>());
+        Ok(parsed)
     }
 }

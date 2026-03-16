@@ -11,6 +11,7 @@ import {
   type ChannelConfig,
   type WebServerConfig,
   type DiscoveredPeer,
+  type SlideInfo,
   defaultConfig
 } from '$lib/types';
 
@@ -64,6 +65,7 @@ class AppStore {
 
     // Listen for notes cache updates (progressive fill from polling)
     this.unlistenNotes = await listen<NotesCache>('notes-cache-updated', (event) => {
+      console.log('[notes] polling cache update:', Object.keys(event.payload).length, 'entries, keys:', Object.keys(event.payload));
       this.notesCache = event.payload;
     });
 
@@ -214,10 +216,13 @@ class AppStore {
 
   async nextSlide() {
     try {
-      await invoke('next_slide', {
+      const info = await invoke<SlideInfo>('next_slide', {
         adapter: this.config.adapter,
         name: this.config.presentationName
       });
+      if (this.liveStatus && info) {
+        this.liveStatus = { ...this.liveStatus, current_slide: info.current, total_slides: info.total };
+      }
     } catch (e) {
       console.error('Failed to go to next slide:', e);
     }
@@ -225,10 +230,13 @@ class AppStore {
 
   async prevSlide() {
     try {
-      await invoke('prev_slide', {
+      const info = await invoke<SlideInfo>('prev_slide', {
         adapter: this.config.adapter,
         name: this.config.presentationName
       });
+      if (this.liveStatus && info) {
+        this.liveStatus = { ...this.liveStatus, current_slide: info.current, total_slides: info.total };
+      }
     } catch (e) {
       console.error('Failed to go to previous slide:', e);
     }
@@ -236,11 +244,14 @@ class AppStore {
 
   async gotoSlide(slide: number) {
     try {
-      await invoke('goto_slide', {
+      const info = await invoke<SlideInfo>('goto_slide', {
         adapter: this.config.adapter,
         name: this.config.presentationName,
         slide
       });
+      if (this.liveStatus && info) {
+        this.liveStatus = { ...this.liveStatus, current_slide: info.current, total_slides: info.total };
+      }
     } catch (e) {
       console.error('Failed to go to slide:', e);
     }
@@ -253,6 +264,7 @@ class AppStore {
         adapter: this.config.adapter,
         name: this.config.presentationName
       });
+      console.log('[notes] fetchAllNotes result:', Object.keys(result).length, 'entries, keys:', Object.keys(result), 'values preview:', Object.fromEntries(Object.entries(result).map(([k, v]) => [k, v.substring(0, 50)])));
       this.notesCache = result;
     } catch (e) {
       console.error('Failed to fetch all notes:', e);

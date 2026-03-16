@@ -161,36 +161,76 @@ impl PresentationAdapter for PowerPointAdapter {
             r#"tell application "Microsoft PowerPoint"
                 set pres to presentation "{}"
                 set idx to slide index of slide of view of slide show window of pres
-                try
-                    set noteText to content of text range of text frame of shape 2 of notes page of slide idx of pres
-                    return noteText
-                on error
-                    return ""
-                end try
+                set noteText to ""
+                set notesSlide to notes page of slide idx of pres
+                repeat with s in shapes of notesSlide
+                    try
+                        if has text frame of s then
+                            set t to content of text range of text frame of s
+                            if t is not "" and t is not missing value then
+                                set noteText to t
+                            end if
+                        end if
+                    end try
+                end repeat
+                return noteText
             end tell"#,
             name
         );
 
         match run_applescript(&script) {
-            Ok(result) if result.trim().is_empty() => Ok(None),
-            Ok(result) => Ok(Some(result)),
-            Err(_) => Ok(None),
+            Ok(result) if result.trim().is_empty() || result.trim() == "missing value" => {
+                log::debug!("PowerPoint get_presenter_notes: empty/missing result for current slide");
+                Ok(None)
+            },
+            Ok(result) => {
+                log::debug!("PowerPoint get_presenter_notes: got {} chars, first 80: {:?}", result.len(), &result[..result.len().min(80)]);
+                Ok(Some(result))
+            },
+            Err(e) => {
+                log::debug!("PowerPoint get_presenter_notes: error: {}", e);
+                Ok(None)
+            },
         }
     }
 
     fn get_all_presenter_notes(&self, name: &str) -> Result<HashMap<i32, String>, String> {
+        // Detect the correct notes body shape index from slide 1, then use it for all slides.
+        // This avoids iterating shapes per-slide which causes severe AppleScript IPC overhead.
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set pres to presentation "{}"
                 set totalSlides to count slides of pres
+
+                -- Discover notes body shape index from slide 1
+                -- The notes page has a slide number placeholder (small text) and the
+                -- notes body (large text). We pick the last shape with a text frame,
+                -- which is the notes body rather than the slide number.
+                set bodyIdx to -1
+                try
+                    set notesSlide to notes page of slide 1 of pres
+                    set shapeCount to count shapes of notesSlide
+                    repeat with j from 1 to shapeCount
+                        try
+                            if has text frame of shape j of notesSlide then
+                                set bodyIdx to j
+                            end if
+                        end try
+                    end repeat
+                end try
+
+                if bodyIdx = -1 then set bodyIdx to 2
+
                 set output to ""
                 repeat with i from 1 to totalSlides
+                    set noteText to ""
                     try
-                        set noteText to content of text range of text frame of shape 2 of notes page of slide i of pres
-                        set output to output & (i as text) & "|||" & noteText & linefeed
+                        set noteText to content of text range of text frame of shape bodyIdx of notes page of slide i of pres
+                        if noteText is missing value then set noteText to ""
                     on error
-                        set output to output & (i as text) & "|||" & linefeed
+                        set noteText to ""
                     end try
+                    set output to output & (i as text) & "|||" & noteText & linefeed
                 end repeat
                 return output
             end tell"#,
@@ -198,7 +238,10 @@ impl PresentationAdapter for PowerPointAdapter {
         );
 
         let result = run_applescript(&script)?;
-        Ok(parse_notes_response(&result))
+        log::debug!("PowerPoint get_all_presenter_notes raw output ({} chars):\n{}", result.len(), &result[..result.len().min(2000)]);
+        let parsed = parse_notes_response(&result);
+        log::debug!("PowerPoint get_all_presenter_notes parsed: {} slides with notes, keys: {:?}", parsed.len(), parsed.keys().collect::<Vec<_>>());
+        Ok(parsed)
     }
 
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
