@@ -26,8 +26,6 @@
               </span>
               {#if peer.version === 'bridge'}
                 <span class="peer-badge bridge">Bridge</span>
-              {:else if peer.version}
-                <span class="peer-badge instance">v{peer.version}</span>
               {/if}
             </div>
             <span class="peer-address">{peer.host}:{peer.port}</span>
@@ -41,8 +39,6 @@
               </span>
               {#if peer.version === 'bridge'}
                 <span class="peer-badge bridge">Bridge</span>
-              {:else if peer.version}
-                <span class="peer-badge instance">v{peer.version}</span>
               {/if}
             </div>
             <span class="peer-address">{peer.host}:{peer.port}</span>
@@ -138,10 +134,6 @@
     color: white;
   }
 
-  .peer-badge.instance {
-    background: #007aff;
-    color: white;
-  }
 
   .peer-address {
     font-size: 0.75rem;
@@ -177,9 +169,6 @@
       background: #ff9f0a;
     }
 
-    .peer-badge.instance {
-      background: #0a84ff;
-    }
 
     .peer-address {
       color: #6ab7ff;

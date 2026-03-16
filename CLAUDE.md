@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Companion module: `apps/companion-module/` (git submodule)
 - Specifications: `spec/`
 - Documentation: `docs/`
-- Legacy code: `archive/`
+
 
 ## Build Commands
 
