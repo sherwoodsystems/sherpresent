@@ -106,15 +106,25 @@ fn stamp_command_time(state: &AppState) {
     *state.last_command_at.lock().unwrap_or_else(|e| e.into_inner()) = now;
 }
 
+/// Immediately broadcast an updated LiveStatus to the web server after a slide command.
+/// This ensures the stage view updates instantly instead of waiting for the next 2s poll cycle.
+fn broadcast_status_now(app: &AppHandle, state: &AppState, adapter: &str, name: &str) {
+    let status = with_adapter(adapter, state, |a| a.get_live_status(name))
+        .unwrap_or_default();
+    let _ = app.emit("presentation-status", &status);
+    let _ = state.status_broadcast.send(status);
+}
+
 #[tauri::command]
 pub fn next_slide(app: AppHandle, adapter: String, name: String, state: tauri::State<AppState>) -> Result<SlideInfo, String> {
     stamp_command_time(&state);
     let before = latency::monotonic_ms();
     let result = with_adapter(&adapter, &state, |a| a.next_slide(&name))?;
     let after = latency::monotonic_ms();
-    let event = latency::make_event(before, after, "next".to_string(), CommandSource::Ui, adapter);
+    let event = latency::make_event(before, after, "next".to_string(), CommandSource::Ui, adapter.clone());
     state.latency_store.push(event.clone());
     let _ = app.emit("latency-event", &event);
+    broadcast_status_now(&app, &state, &adapter, &name);
     result
 }
 
@@ -124,9 +134,10 @@ pub fn prev_slide(app: AppHandle, adapter: String, name: String, state: tauri::S
     let before = latency::monotonic_ms();
     let result = with_adapter(&adapter, &state, |a| a.prev_slide(&name))?;
     let after = latency::monotonic_ms();
-    let event = latency::make_event(before, after, "prev".to_string(), CommandSource::Ui, adapter);
+    let event = latency::make_event(before, after, "prev".to_string(), CommandSource::Ui, adapter.clone());
     state.latency_store.push(event.clone());
     let _ = app.emit("latency-event", &event);
+    broadcast_status_now(&app, &state, &adapter, &name);
     result
 }
 
@@ -136,9 +147,10 @@ pub fn goto_slide(app: AppHandle, adapter: String, name: String, slide: i32, sta
     let before = latency::monotonic_ms();
     let result = with_adapter(&adapter, &state, |a| a.goto_slide(&name, slide))?;
     let after = latency::monotonic_ms();
-    let event = latency::make_event(before, after, format!("goto:{}", slide), CommandSource::Ui, adapter);
+    let event = latency::make_event(before, after, format!("goto:{}", slide), CommandSource::Ui, adapter.clone());
     state.latency_store.push(event.clone());
     let _ = app.emit("latency-event", &event);
+    broadcast_status_now(&app, &state, &adapter, &name);
     result
 }
 
