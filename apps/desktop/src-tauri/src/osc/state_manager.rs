@@ -32,7 +32,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
-use crate::adapters::{get_adapter, powerpoint::PowerPointAdapter, PresentationAdapter};
+use crate::adapters::{get_adapter, powerpoint::PowerPointAdapter, LiveStatus, PresentationAdapter};
 use crate::config::AdapterConfig;
 use super::latency::{self, CommandSource, LatencyStore};
 
@@ -141,6 +141,11 @@ pub struct StateManager {
     /// Shared timestamp of last UI/OSC command (Unix ms).
     /// Polling skips cycles when a command was recent (avoids IPC contention).
     last_command_at: Arc<Mutex<u64>>,
+
+    /// Broadcast channel for web server status updates.
+    /// When present, state changes are also broadcast here so the stage view
+    /// updates instantly without waiting for the separate polling loop.
+    status_broadcast: Option<tokio::sync::broadcast::Sender<LiveStatus>>,
 }
 
 impl StateManager {
@@ -153,6 +158,7 @@ impl StateManager {
         latency_store: Arc<LatencyStore>,
         app_handle: Option<AppHandle>,
         last_command_at: Arc<Mutex<u64>>,
+        status_broadcast: Option<tokio::sync::broadcast::Sender<LiveStatus>>,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(CachedState::now())),
@@ -165,6 +171,7 @@ impl StateManager {
             latency_store,
             app_handle,
             last_command_at,
+            status_broadcast,
         }
     }
 
@@ -219,7 +226,20 @@ impl StateManager {
     fn notify_state_change(&self, state: CachedState) {
         // try_send is non-blocking - if the channel is full, we just skip
         // This is fine because we'll send updated state soon anyway
-        let _ = self.state_change_tx.try_send(state);
+        let _ = self.state_change_tx.try_send(state.clone());
+
+        // Also broadcast to web server so stage view updates instantly
+        if let Some(ref tx) = self.status_broadcast {
+            let live_status = LiveStatus {
+                is_open: state.is_open,
+                is_presenting: state.is_presenting,
+                current_slide: state.current_slide,
+                total_slides: state.total_slides,
+                zoom_level: state.zoom_level,
+                presenter_notes: None,
+            };
+            let _ = tx.send(live_status);
+        }
     }
 
     // =========================================================================

@@ -124,6 +124,10 @@ pub fn run() {
                 let state = app_handle.state::<AppState>();
                 state.last_command_at.clone()
             };
+            let status_broadcast = {
+                let state = app_handle.state::<AppState>();
+                state.status_broadcast.clone()
+            };
 
             tauri::async_runtime::spawn(async move {
                 log::info!("Auto-starting OSC server on port {}", osc_config.receive_port);
@@ -144,6 +148,7 @@ pub fn run() {
                     latency_store,
                     Some(app_handle.clone()),
                     last_command_at,
+                    Some(status_broadcast),
                 ));
 
                 // Initial state fetch

@@ -47,6 +47,7 @@ pub async fn start_osc_server(
         state.latency_store.clone(),
         Some(app.clone()),
         state.last_command_at.clone(),
+        Some(state.status_broadcast.clone()),
     ));
 
     // Initial state fetch
