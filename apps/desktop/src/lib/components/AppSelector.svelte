@@ -39,7 +39,7 @@
   </div>
   {#if config.adapter === 'libreoffice'}
     <p class="hint">
-      Enable remote control: Slide Show &gt; Slide Show Settings &gt; Enable remote control
+      Enable remote control: Slide Show &gt; Slide Show Settings &gt; Enable remote control. When prompted for a PIN, enter <strong>1234</strong>.
     </p>
   {:else if config.adapter === 'canva'}
     <p class="hint">

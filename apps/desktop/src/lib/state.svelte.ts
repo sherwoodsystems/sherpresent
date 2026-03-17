@@ -138,18 +138,29 @@ class AppStore {
   }
 
   async selectPresentation(name: string) {
+    console.log('[selectPresentation] called with:', name, '| pollingActive:', this.pollingActive);
     if (this.pollingActive) {
+      console.log('[selectPresentation] stopping existing polling...');
       await this.stopPolling();
+      console.log('[selectPresentation] polling stopped');
     }
 
+    console.log('[selectPresentation] clearing notes cache...');
     await this.clearNotesCache();
+    console.log('[selectPresentation] notes cache cleared');
     this.config = { ...this.config, presentationName: name };
     this.scheduleConfigSave();
 
     if (name) {
+      console.log('[selectPresentation] starting polling for:', name);
       await this.startPolling();
-      await this.fetchAllNotes();
+      console.log('[selectPresentation] polling started');
+      // Notes are fetched by the polling background thread when presenting is detected,
+      // and delivered via 'notes-cache-updated' event. Calling fetchAllNotes() here would
+      // race with the polling thread for the AppleScript EXECUTION_LOCK, blocking the
+      // Tauri IPC thread and freezing the UI.
     }
+    console.log('[selectPresentation] done');
   }
 
   updateOscConfig(oscConfig: OscConfig) {

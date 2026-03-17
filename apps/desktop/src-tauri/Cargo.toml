@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2.10", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -70,14 +70,6 @@ axum = "0.8"
 
 # tokio-stream: Stream utilities for SSE (Server-Sent Events)
 tokio-stream = { version = "0.1", features = ["sync"] }
-
-# macOS-specific dependencies
-# ============================
-[target.'cfg(target_os = "macos")'.dependencies]
-# objc2: Rust bindings for Objective-C runtime (NSAppleScript FFI)
-#   - Enables in-process AppleScript execution, eliminating osascript process spawn overhead
-objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSAppleScript", "NSAppleEventDescriptor", "NSString", "NSDictionary"] }
 
 # Windows-specific dependencies
 # =============================

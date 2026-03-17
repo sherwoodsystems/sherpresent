@@ -20,7 +20,7 @@ pub fn get_adapters() -> Vec<(String, String)> {
 
 /// Helper to get the adapter config from AppState
 fn get_adapter_config(state: &AppState) -> AdapterConfig {
-    state.adapter_config.lock().unwrap().clone()
+    state.adapter_config.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Resolve the correct adapter (Canva singleton or get_adapter()) and call `f` on it.
@@ -30,7 +30,7 @@ fn with_adapter<T>(
     f: impl FnOnce(&dyn PresentationAdapter) -> T,
 ) -> Result<T, String> {
     if adapter_name == "canva" {
-        let canva = state.canva_adapter.lock().unwrap();
+        let canva = state.canva_adapter.lock().unwrap_or_else(|e| e.into_inner());
         let a = canva.as_ref().ok_or("Canva adapter not initialized".to_string())?;
         Ok(f(a))
     } else {
@@ -49,11 +49,11 @@ fn with_adapter_from_arcs<T>(
     f: impl FnOnce(&dyn PresentationAdapter) -> T,
 ) -> Result<T, String> {
     if adapter_name == "canva" {
-        let canva = canva_adapter.lock().unwrap();
+        let canva = canva_adapter.lock().unwrap_or_else(|e| e.into_inner());
         let a = canva.as_ref().ok_or("Canva adapter not initialized".to_string())?;
         Ok(f(a))
     } else {
-        let config = adapter_config.lock().unwrap().clone();
+        let config = adapter_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let a = get_adapter(adapter_name, &config)
             .ok_or_else(|| format!("Unknown adapter: {}", adapter_name))?;
         Ok(f(a.as_ref()))
@@ -103,7 +103,7 @@ fn stamp_command_time(state: &AppState) {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    *state.last_command_at.lock().unwrap() = now;
+    *state.last_command_at.lock().unwrap_or_else(|e| e.into_inner()) = now;
 }
 
 #[tauri::command]
@@ -144,6 +144,16 @@ pub fn goto_slide(app: AppHandle, adapter: String, name: String, slide: i32, sta
 
 #[tauri::command]
 pub fn fetch_all_notes(adapter: String, name: String, state: tauri::State<AppState>) -> Result<HashMap<i32, String>, String> {
+    log::info!("fetch_all_notes: called for adapter={}, name={}", adapter, name);
+    // Return cache if already populated (avoids duplicate fetch race with polling)
+    let cache = state.notes_cache.lock().map_err(|e| e.to_string())?;
+    if !cache.is_empty() {
+        log::info!("fetch_all_notes: returning cached {} entries (skipping expensive fetch)", cache.len());
+        return Ok(cache.clone());
+    }
+    drop(cache);
+
+    log::info!("fetch_all_notes: cache empty, doing expensive AppleScript fetch...");
     let bulk_notes = if adapter == "canva" {
         // Canva doesn't support bulk fetch — return whatever is cached
         HashMap::new()
@@ -152,7 +162,7 @@ pub fn fetch_all_notes(adapter: String, name: String, state: tauri::State<AppSta
     };
 
     log::debug!("fetch_all_notes: bulk fetch returned {} entries", bulk_notes.len());
-    let mut cache = state.notes_cache.lock().unwrap();
+    let mut cache = state.notes_cache.lock().map_err(|e| e.to_string())?;
     let cache_before = cache.len();
     // Merge bulk results into cache (bulk results take precedence)
     for (k, v) in bulk_notes {
@@ -164,12 +174,13 @@ pub fn fetch_all_notes(adapter: String, name: String, state: tauri::State<AppSta
 
 #[tauri::command]
 pub fn get_all_notes(state: tauri::State<AppState>) -> HashMap<i32, String> {
-    state.notes_cache.lock().unwrap().clone()
+    state.notes_cache.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 #[tauri::command]
 pub fn clear_notes_cache(state: tauri::State<AppState>) {
-    state.notes_cache.lock().unwrap().clear();
+    log::info!("clear_notes_cache: clearing notes cache and compiled AppleScript cache");
+    state.notes_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
     // Also clear compiled AppleScript cache since adapter/presentation may have changed
     crate::applescript::clear_compiled_cache();
 }
@@ -190,7 +201,7 @@ pub fn start_notes_scan(
 ) -> Result<(), String> {
     // Check if already scanning
     {
-        let active = state.notes_scan_active.lock().unwrap();
+        let active = state.notes_scan_active.lock().unwrap_or_else(|e| e.into_inner());
         if *active {
             return Err("Scan already in progress".to_string());
         }
@@ -205,7 +216,7 @@ pub fn start_notes_scan(
     let original_slide = slide_info.current;
 
     // Mark scan as active
-    *state.notes_scan_active.lock().unwrap() = true;
+    *state.notes_scan_active.lock().unwrap_or_else(|e| e.into_inner()) = true;
 
     let scan_active = state.notes_scan_active.clone();
     let notes_cache = state.notes_cache.clone();
@@ -225,7 +236,7 @@ pub fn start_notes_scan(
         for i in 1..=total {
             // Check cancellation
             {
-                let active = scan_active.lock().unwrap();
+                let active = scan_active.lock().unwrap_or_else(|e| e.into_inner());
                 if !*active {
                     emit_progress(i, total, "cancelled");
                     return;
@@ -254,7 +265,7 @@ pub fn start_notes_scan(
                 let mut found = false;
                 for _ in 0..15 {
                     std::thread::sleep(std::time::Duration::from_millis(100));
-                    let cache = notes_cache.lock().unwrap();
+                    let cache = notes_cache.lock().unwrap_or_else(|e| e.into_inner());
                     if cache.contains_key(&i) {
                         found = true;
                         break;
@@ -271,7 +282,7 @@ pub fn start_notes_scan(
                     |a| a.get_presenter_notes(&name),
                 ) {
                     if !notes_text.is_empty() {
-                        let mut cache = notes_cache.lock().unwrap();
+                        let mut cache = notes_cache.lock().unwrap_or_else(|e| e.into_inner());
                         cache.insert(i, notes_text);
                     }
                 }
@@ -279,7 +290,7 @@ pub fn start_notes_scan(
 
             // Emit updated cache
             {
-                let cache = notes_cache.lock().unwrap();
+                let cache = notes_cache.lock().unwrap_or_else(|e| e.into_inner());
                 let snapshot = cache.clone();
                 drop(cache);
                 let _ = app_clone.emit("notes-cache-updated", &snapshot);
@@ -293,7 +304,7 @@ pub fn start_notes_scan(
         );
 
         // Mark scan as complete
-        *scan_active.lock().unwrap() = false;
+        *scan_active.lock().unwrap_or_else(|e| e.into_inner()) = false;
         emit_progress(total, total, "complete");
     });
 
@@ -302,5 +313,5 @@ pub fn start_notes_scan(
 
 #[tauri::command]
 pub fn stop_notes_scan(state: tauri::State<AppState>) {
-    *state.notes_scan_active.lock().unwrap() = false;
+    *state.notes_scan_active.lock().unwrap_or_else(|e| e.into_inner()) = false;
 }

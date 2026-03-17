@@ -97,8 +97,7 @@ impl LibreOfficeAdapter {
 
     /// Send the pairing request to LibreOffice
     fn send_pairing_request(&self) -> Result<(), String> {
-        let pin = format!("{:04}", rand_pin());
-        let message = format!("LO_SERVER_CLIENT_PAIR\n{}\n{}\n\n", CLIENT_NAME, pin);
+        let message = format!("LO_SERVER_CLIENT_PAIR\n{}\n{}\n\n", CLIENT_NAME, PAIRING_PIN);
 
         self.send_raw(&message)
     }
@@ -423,26 +422,16 @@ fn strip_html_tags(html: &str) -> String {
     result
 }
 
-/// Generate a random 4-digit PIN for pairing
-fn rand_pin() -> u16 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos();
-    1000 + (nanos % 9000) as u16
-}
+/// Default PIN for LibreOffice Impress remote pairing
+const PAIRING_PIN: &str = "1234";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_rand_pin_range() {
-        for _ in 0..100 {
-            let pin = rand_pin();
-            assert!(pin >= 1000 && pin <= 9999);
-        }
+    fn test_pairing_pin_is_1234() {
+        assert_eq!(PAIRING_PIN, "1234");
     }
 
     #[test]

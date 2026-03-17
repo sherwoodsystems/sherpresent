@@ -43,7 +43,7 @@
       </section>
     {/if}
 
-    {#if appStore.config.adapter !== 'canva'}
+    {#if appStore.config.adapter !== 'canva' && appStore.config.adapter !== 'libreoffice'}
       <section class="section">
         <PresentationPicker
           adapter={appStore.config.adapter}
