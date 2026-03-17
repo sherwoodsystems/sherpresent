@@ -116,6 +116,8 @@ export interface WebServerConfig {
   port: number;
   ontimeHost: string;
   ontimePort: number;
+  /** Font size in px for stage view notes (default: 32) */
+  fontSize: number;
 }
 
 export interface AppConfig {
@@ -200,7 +202,8 @@ export const defaultConfig: AppConfig = {
     enabled: false,
     port: 8080,
     ontimeHost: '',
-    ontimePort: 4001
+    ontimePort: 4001,
+    fontSize: 32
   }
 };
 

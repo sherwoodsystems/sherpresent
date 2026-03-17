@@ -77,7 +77,18 @@
     </div>
 
     <div class="field">
-      <!-- spacer -->
+      <label class="label" for="ws-font-size">Stage Font Size</label>
+      <input
+        id="ws-font-size"
+        type="number"
+        class="input"
+        value={config.fontSize}
+        min="16"
+        max="96"
+        step="2"
+        onchange={(e) => updateField('fontSize', parseInt(e.currentTarget.value) || 32)}
+      />
+      <span class="hint">px — text size for notes in the stage view</span>
     </div>
 
     <div class="field">

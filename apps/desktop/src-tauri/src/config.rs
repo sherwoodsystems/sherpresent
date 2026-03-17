@@ -193,6 +193,13 @@ pub struct WebServerConfig {
     /// Ontime server port (default: 4001)
     #[serde(rename = "ontimePort")]
     pub ontime_port: u16,
+    /// Font size in px for stage view notes (default: 32)
+    #[serde(rename = "fontSize", default = "default_font_size")]
+    pub font_size: u16,
+}
+
+fn default_font_size() -> u16 {
+    32
 }
 
 impl Default for WebServerConfig {
@@ -202,6 +209,7 @@ impl Default for WebServerConfig {
             port: 8080,
             ontime_host: String::new(),
             ontime_port: 4001,
+            font_size: default_font_size(),
         }
     }
 }
