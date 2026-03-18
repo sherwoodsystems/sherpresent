@@ -55,7 +55,7 @@ impl PresentationAdapter for KeynoteAdapter {
             r#"tell application "Keynote"
                 tell document "{}"
                     set currentNum to slide number of current slide
-                    set totalSlides to count slides
+                    set totalSlides to count (every slide whose skipped is false)
                     return (currentNum as text) & "," & (totalSlides as text)
                 end tell
             end tell"#,
@@ -86,7 +86,7 @@ impl PresentationAdapter for KeynoteAdapter {
             r#"tell application "Keynote"
                 tell document "{}"
                     set oldPos to slide number of current slide
-                    set totalSlides to count slides
+                    set totalSlides to count (every slide whose skipped is false)
                     if oldPos >= totalSlides then
                         return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
                     end if
@@ -122,7 +122,7 @@ impl PresentationAdapter for KeynoteAdapter {
             r#"tell application "Keynote"
                 tell document "{}"
                     set oldPos to slide number of current slide
-                    set totalSlides to count slides
+                    set totalSlides to count (every slide whose skipped is false)
                     if oldPos <= 1 then
                         return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
                     end if
@@ -188,8 +188,12 @@ impl PresentationAdapter for KeynoteAdapter {
                 tell document "{}"
                     set output to ""
                     repeat with i from 1 to (count slides)
-                        set noteText to presenter notes of slide i
-                        set output to output & (i as text) & "|||" & noteText & linefeed
+                        set s to slide i
+                        if skipped of s is false then
+                            set sNum to slide number of s
+                            set noteText to presenter notes of s
+                            set output to output & (sNum as text) & "|||" & noteText & linefeed
+                        end if
                     end repeat
                     return output
                 end tell
@@ -220,7 +224,7 @@ impl PresentationAdapter for KeynoteAdapter {
                     set isPresenting to (playing) as text
                     if playing then
                         set currentSlide to (slide number of current slide of doc) as text
-                        set totalSlides to (count slides of doc) as text
+                        set totalSlides to (count (every slide of doc whose skipped is false)) as text
                         try
                             set noteText to presenter notes of current slide of doc
                             if noteText is missing value then set noteText to ""
@@ -258,7 +262,10 @@ impl PresentationAdapter for KeynoteAdapter {
                     presenter_notes: notes,
                 }
             }
-            Err(_) => LiveStatus::default(),
+            Err(e) => {
+                log::warn!("Keynote get_live_status error: {}", e);
+                LiveStatus::default()
+            }
         }
     }
 }
