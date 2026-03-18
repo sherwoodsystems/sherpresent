@@ -84,6 +84,7 @@ pub fn run() {
             commands::bridge::bridge_test_device,
             commands::bridge::bridge_get_logs,
             commands::bridge::bridge_get_satellite_status,
+            commands::bridge::bridge_shutdown,
             // Web Server
             commands::webserver::start_web_server,
             commands::webserver::is_web_server_running,

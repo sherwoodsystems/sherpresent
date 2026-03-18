@@ -4,4 +4,4 @@ $ErrorActionPreference = "Stop"
 
 Set-Location C:\sherpresent\apps\desktop
 bun install
-bun run tauri build
+bun run tauri build --bundles nsis

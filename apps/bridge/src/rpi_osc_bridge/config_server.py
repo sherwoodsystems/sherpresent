@@ -9,6 +9,7 @@ import sys
 import json
 import signal
 import subprocess
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
@@ -530,6 +531,50 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_error(500, f"Server error: {e}")
 
+        # Update device channel
+        elif path.startswith("/devices/") and path.endswith("/channel"):
+            try:
+                parts = path.split("/")
+                slot = parts[2] if len(parts) >= 3 else None
+
+                data = self._read_json_body()
+                channel = data.get("channel", "")
+
+                if slot not in DEVICE_SLOTS:
+                    self._send_json({"success": False, "message": f"Invalid slot: {slot}"}, 400)
+                    return
+
+                if channel != "satellite" and not validate_channel(channel):
+                    self._send_json({"success": False, "message": f"Invalid channel: {channel}"}, 400)
+                    return
+
+                if not MultiDeviceConfig:
+                    self._send_json({"success": False, "message": "MultiDeviceConfig not available"}, 500)
+                    return
+
+                config = MultiDeviceConfig()
+                success = config.update_device_channel(slot, channel)
+
+                if success:
+                    try:
+                        subprocess.run(
+                            ["systemctl", "restart", "rpi-osc-bridge"],
+                            check=True,
+                            capture_output=True
+                        )
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        self._send_json({"success": True, "message": "Channel updated but service restart failed"})
+                        return
+
+                    self._send_json({"success": True, "message": f"Channel updated to {channel}"})
+                else:
+                    self._send_json({"success": False, "message": "Device not found in slot"}, 400)
+
+            except json.JSONDecodeError:
+                self.send_error(400, "Invalid JSON")
+            except Exception as e:
+                self.send_error(500, f"Server error: {e}")
+
         # Unregister a device
         elif path.startswith("/devices/") and path.endswith("/unregister"):
             try:
@@ -591,6 +636,12 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Invalid JSON")
             except Exception as e:
                 self.send_error(500, f"Server error: {e}")
+
+        # Shutdown the Pi
+        elif path == "/shutdown":
+            self._send_json({"success": True, "message": "Shutting down..."})
+            # Delay shutdown so HTTP response is delivered before the process dies
+            threading.Timer(1.0, lambda: subprocess.Popen(["sudo", "shutdown", "-h", "now"])).start()
 
         else:
             self.send_error(404, "Not found")

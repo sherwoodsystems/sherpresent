@@ -102,6 +102,11 @@ pub async fn bridge_get_logs(host: String, config_port: u16) -> Result<BridgeLog
 }
 
 #[tauri::command]
+pub async fn bridge_shutdown(host: String, config_port: u16) -> Result<BridgeApiResponse, String> {
+    BridgeApiClient::new(&host, config_port).shutdown().await
+}
+
+#[tauri::command]
 pub async fn bridge_get_satellite_status(
     host: String,
     config_port: u16,

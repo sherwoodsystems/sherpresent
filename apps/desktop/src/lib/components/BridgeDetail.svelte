@@ -6,6 +6,7 @@
     BridgeGlobalConfig,
     BridgeStatus,
     BridgeRegisteredDevices,
+    BridgeConnectedDevices,
     BridgeSatelliteStatus,
     BridgeApiResponse,
     SaveGlobalConfigRequest,
@@ -29,9 +30,11 @@
   let status = $state<BridgeStatus | null>(null);
   let config = $state<BridgeGlobalConfig | null>(null);
   let registeredDevices = $state<BridgeRegisteredDevices | null>(null);
+  let connectedDevices = $state<BridgeConnectedDevices | null>(null);
   let satelliteStatus = $state<BridgeSatelliteStatus | null>(null);
   let loading = $state(true);
   let saving = $state(false);
+  let shuttingDown = $state(false);
   let saveMessage = $state<string | null>(null);
   let errorCount = $state(0);
   let offline = $state(false);
@@ -59,15 +62,17 @@
 
   async function fetchAll() {
     try {
-      const [s, c, d, sat] = await Promise.all([
+      const [s, c, d, cd, sat] = await Promise.all([
         invoke<BridgeStatus>('bridge_get_status', { host, configPort }),
         invoke<BridgeGlobalConfig>('bridge_get_config', { host, configPort }),
         invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', { host, configPort }),
+        invoke<BridgeConnectedDevices>('bridge_get_devices', { host, configPort }),
         invoke<BridgeSatelliteStatus>('bridge_get_satellite_status', { host, configPort }),
       ]);
       status = s;
       config = c;
       registeredDevices = d;
+      connectedDevices = cd;
       satelliteStatus = sat;
       errorCount = 0;
       offline = false;
@@ -91,6 +96,7 @@
     try {
       status = await invoke<BridgeStatus>('bridge_get_status', { host, configPort });
       registeredDevices = await invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', { host, configPort });
+      connectedDevices = await invoke<BridgeConnectedDevices>('bridge_get_devices', { host, configPort });
       if (editMode === 'satellite') {
         satelliteStatus = await invoke<BridgeSatelliteStatus>('bridge_get_satellite_status', { host, configPort });
       }
@@ -147,7 +153,26 @@
   async function refreshDevices() {
     try {
       registeredDevices = await invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', { host, configPort });
+      connectedDevices = await invoke<BridgeConnectedDevices>('bridge_get_devices', { host, configPort });
     } catch { /* ignore */ }
+  }
+
+  function findConnectedDevice(usbPhys: string) {
+    if (!connectedDevices?.devices) return null;
+    return connectedDevices.devices.find(d => d.usb_phys === usbPhys) ?? null;
+  }
+
+  async function shutdownBridge() {
+    if (!confirm('Are you sure you want to shut down the bridge? You will need physical access to restart it.')) return;
+    shuttingDown = true;
+    try {
+      await invoke<BridgeApiResponse>('bridge_shutdown', { host, configPort });
+      saveMessage = 'Bridge is shutting down...';
+      setTimeout(() => onclose(), 2000);
+    } catch (e) {
+      saveMessage = `Shutdown failed: ${e}`;
+      shuttingDown = false;
+    }
   }
 </script>
 
@@ -254,6 +279,7 @@
               <BridgeDeviceSlot
                 {slotName}
                 {device}
+                connectedDevice={device ? findConnectedDevice(device.usb_phys) : null}
                 {host}
                 {configPort}
                 mode={editMode}
@@ -270,8 +296,15 @@
             {saving ? 'Saving...' : 'Save Configuration'}
           </button>
           {#if saveMessage}
-            <p class="save-message" class:error={saveMessage.startsWith('Error')}>{saveMessage}</p>
+            <p class="save-message" class:error={saveMessage.startsWith('Error') || saveMessage.startsWith('Shutdown failed')}>{saveMessage}</p>
           {/if}
+        </div>
+
+        <!-- Shutdown -->
+        <div class="shutdown-area">
+          <button class="shutdown-btn" onclick={shutdownBridge} disabled={shuttingDown}>
+            {shuttingDown ? 'Shutting down...' : 'Shutdown Bridge'}
+          </button>
         </div>
       </div>
     {/if}
@@ -462,6 +495,27 @@
   }
   .save-message.error { color: #c62828; }
 
+  .shutdown-area {
+    display: flex;
+    justify-content: center;
+    padding-top: 0.5rem;
+    border-top: 1px solid #eee;
+  }
+
+  .shutdown-btn {
+    padding: 0.5rem 1.25rem;
+    background: #fff;
+    color: #c62828;
+    border: 1px solid #ef9a9a;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .shutdown-btn:hover { background: #ffebee; }
+  .shutdown-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
   @media (prefers-color-scheme: dark) {
     .modal-content {
       background: #2a2a2a;
@@ -488,5 +542,8 @@
     }
     .save-message { color: #81c784; }
     .save-message.error { color: #ff8a80; }
+    .shutdown-area { border-top-color: #444; }
+    .shutdown-btn { background: #333; color: #ff8a80; border-color: #5c2a2a; }
+    .shutdown-btn:hover { background: #4a1a1a; }
   }
 </style>

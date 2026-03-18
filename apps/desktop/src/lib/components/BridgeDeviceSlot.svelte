@@ -1,11 +1,12 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import type { BridgeDeviceSlot, BridgeApiResponse } from '$lib/types';
+  import type { BridgeDeviceSlot, BridgeApiResponse, BridgeConnectedDevices } from '$lib/types';
   import BridgeRegistration from './BridgeRegistration.svelte';
 
   let {
     slotName,
     device,
+    connectedDevice,
     host,
     configPort,
     mode,
@@ -14,6 +15,7 @@
   }: {
     slotName: string;
     device: BridgeDeviceSlot | null;
+    connectedDevice: BridgeConnectedDevices['devices'][number] | null;
     host: string;
     configPort: number;
     mode: string;
@@ -75,27 +77,42 @@
   />
 {:else}
   <div class="slot" class:empty={!device}>
-    <div class="slot-header">
-      <span class="slot-name">{slotName.replace('_', ' ')}</span>
-      {#if device}
-        <span class="slot-label">{device.label}</span>
-      {/if}
-    </div>
+    <div class="slot-columns">
+      <div class="slot-left">
+        <div class="slot-header">
+          <span class="slot-name">{slotName.replace('_', ' ')}</span>
+          {#if device}
+            <span class="slot-label">{device.label}</span>
+          {/if}
+        </div>
 
-    {#if device}
-      <div class="slot-info">
-        <span class="channel-badge">{device.channel}</span>
-        {#if mode === 'broadcast'}
-          <div class="test-buttons">
-            <button class="btn-sm" onclick={() => testDevice('prev')} disabled={testing}>Test Prev</button>
-            <button class="btn-sm" onclick={() => testDevice('next')} disabled={testing}>Test Next</button>
+        {#if device}
+          <div class="slot-info">
+            <span class="channel-badge">{device.channel}</span>
+            {#if mode === 'broadcast'}
+              <div class="test-buttons">
+                <button class="btn-sm" onclick={() => testDevice('prev')} disabled={testing}>Test Prev</button>
+                <button class="btn-sm" onclick={() => testDevice('next')} disabled={testing}>Test Next</button>
+              </div>
+            {/if}
+            <button class="btn-sm btn-danger" onclick={unregister}>Unregister</button>
           </div>
+        {:else}
+          <button class="btn-register" onclick={startRegistration}>Register Device</button>
         {/if}
-        <button class="btn-sm btn-danger" onclick={unregister}>Unregister</button>
       </div>
-    {:else}
-      <button class="btn-register" onclick={startRegistration}>Register Device</button>
-    {/if}
+
+      <div class="slot-right">
+        {#if connectedDevice}
+          <div class="connected-device-name">{connectedDevice.name}{connectedDevice.is_perfect_cue ? ' [Perfect Cue]' : ''}</div>
+          <div class="connected-device-port">USB: {connectedDevice.usb_phys || 'unknown'}</div>
+        {:else if device}
+          <span class="connected-empty">Not connected</span>
+        {:else}
+          <span class="connected-empty">No device</span>
+        {/if}
+      </div>
+    </div>
 
     {#if message}
       <p class="slot-message">{message}</p>
@@ -116,6 +133,45 @@
 
   .slot.empty {
     border-style: dashed;
+  }
+
+  .slot-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .slot-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .slot-right {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    font-size: 0.8rem;
+    border-left: 1px solid #e0e0e0;
+    padding-left: 0.75rem;
+  }
+
+  .connected-device-name {
+    font-weight: 500;
+    font-size: 0.8rem;
+  }
+
+  .connected-device-port {
+    font-size: 0.7rem;
+    font-family: monospace;
+    color: #888;
+    margin-top: 0.125rem;
+  }
+
+  .connected-empty {
+    font-size: 0.75rem;
+    color: #999;
+    font-style: italic;
   }
 
   .slot-header {
@@ -200,6 +256,10 @@
   @media (prefers-color-scheme: dark) {
     .slot { background: #333; border-color: #555; }
     .slot.empty { border-color: #555; }
+    .slot-right { border-left-color: #555; }
+    .connected-device-name { color: #eee; }
+    .connected-device-port { color: #777; }
+    .connected-empty { color: #666; }
     .slot-name { color: #aaa; }
     .slot-label { color: #eee; }
     .channel-badge { background: #1a3a5c; color: #8fcfff; }

@@ -31,10 +31,7 @@ Write-Host "  Bun installed: $(bun --version)" -ForegroundColor Green
 
 # --- NSIS ---
 Write-Host "`n[4/6] Installing NSIS..." -ForegroundColor Yellow
-$nsisUrl = "https://sourceforge.net/projects/nsis/files/NSIS%203/3.10/nsis-3.10-setup.exe/download"
-$nsisInstaller = "$env:TEMP\nsis-setup.exe"
-Invoke-WebRequest -Uri $nsisUrl -OutFile $nsisInstaller -UserAgent "Mozilla/5.0"
-Start-Process -Wait -FilePath $nsisInstaller -ArgumentList "/S"
+winget install --id NSIS.NSIS --source winget --accept-source-agreements --accept-package-agreements --silent
 $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
 Write-Host "  NSIS installed." -ForegroundColor Green
 
@@ -46,15 +43,22 @@ Invoke-WebRequest -Uri $gitUrl -OutFile $gitInstaller
 Start-Process -Wait -FilePath $gitInstaller -ArgumentList "/VERYSILENT", "/NORESTART"
 Write-Host "  Git installed." -ForegroundColor Green
 
-# --- OpenSSH Server ---
-Write-Host "`n[6/6] Enabling OpenSSH Server..." -ForegroundColor Yellow
-Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-Set-Service -Name sshd -StartupType Automatic
-Start-Service sshd
+# --- OpenSSH Server (via GitHub ZIP — Add-WindowsCapability hangs in Docker VMs) ---
+Write-Host "`n[6/6] Installing OpenSSH Server..." -ForegroundColor Yellow
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$opensshZip = "$env:TEMP\OpenSSH-Win64.zip"
+$opensshDir = "C:\Program Files\OpenSSH"
+Invoke-WebRequest -Uri 'https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/OpenSSH-Win64.zip' -OutFile $opensshZip
+Expand-Archive -Path $opensshZip -DestinationPath 'C:\Program Files\' -Force
+if (Test-Path "$opensshDir-Win64") { Rename-Item "$opensshDir-Win64" $opensshDir }
+& "$opensshDir\install-sshd.ps1"
+& "$opensshDir\FixHostFilePermissions.ps1" -Confirm:$false
 New-NetFirewallRule -Name "OpenSSH-Server" -DisplayName "OpenSSH Server (sshd)" `
     -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 `
     -ErrorAction SilentlyContinue
-Write-Host "  OpenSSH Server enabled and started." -ForegroundColor Green
+Set-Service -Name sshd -StartupType Automatic
+Start-Service sshd
+Write-Host "  OpenSSH Server installed and started." -ForegroundColor Green
 
 # --- Create project directory ---
 $projectDir = "C:\sherpresent"

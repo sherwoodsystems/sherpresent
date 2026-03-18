@@ -513,6 +513,71 @@
             letter-spacing: 0.5px;
         }
 
+        /* Basic/Advanced mode */
+        .mode-toggle {
+            float: right;
+            font-size: 12px;
+            font-weight: 400;
+            color: #666;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .mode-toggle:hover {
+            color: #000;
+        }
+
+        body.basic-mode .advanced-only {
+            display: none !important;
+        }
+
+        .basic-only {
+            display: none !important;
+        }
+
+        body.basic-mode .basic-only {
+            display: block !important;
+        }
+
+        .basic-waiting {
+            padding: 12px;
+            font-size: 13px;
+            color: #666;
+            font-style: italic;
+            text-align: center;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #ccc;
+            border-top-color: #666;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Inline channel selector */
+        .channel-select {
+            padding: 2px 6px;
+            font-family: monospace;
+            font-size: 12px;
+            border: 1px solid #ccc;
+            background: #e8e8e8;
+            cursor: pointer;
+        }
+
+        .channel-select:focus {
+            outline: 2px solid #000;
+            outline-offset: 0;
+        }
+
         @media (max-width: 600px) {
             body {
                 padding: 10px;
@@ -534,22 +599,18 @@
     </style>
 </head>
 <body>
-    <h1>SherPresent OSC Bridge</h1>
-
-    <div id="status" class="status">
-        Loading status...
-    </div>
+    <h1>SherPresent OSC Bridge <a class="mode-toggle" id="modeToggle" onclick="toggleAdvancedMode()">Advanced</a></h1>
 
     <div id="message" class="message"></div>
 
     <!-- Mode tabs -->
-    <div class="mode-tabs">
+    <div class="mode-tabs advanced-only">
         <button class="mode-tab active" data-mode="broadcast" onclick="onModeChange('broadcast')">Broadcast (OSC)</button>
         <button class="mode-tab" data-mode="satellite" onclick="onModeChange('satellite')">Companion Satellite</button>
     </div>
 
     <!-- Broadcast panel -->
-    <div class="mode-panel active" id="panel-broadcast">
+    <div class="mode-panel active advanced-only" id="panel-broadcast">
         <h3>Broadcast Settings</h3>
         <div class="form-group">
             <label for="broadcastPort">Broadcast Port</label>
@@ -567,7 +628,7 @@
     </div>
 
     <!-- Satellite panel -->
-    <div class="mode-panel" id="panel-satellite">
+    <div class="mode-panel advanced-only" id="panel-satellite">
         <p class="help-text" style="margin-bottom: 15px;">Set up your clicker as a surface in Companion. Only supports 2 buttons — make sure you use the first two buttons in the grid.</p>
         <h3>Connection</h3>
         <div id="satelliteStatus" class="status" style="margin-bottom: 15px;">
@@ -589,7 +650,10 @@
     </div>
 
     <h2>Device Management</h2>
-    <p id="deviceDesc" style="margin-bottom: 15px; font-size: 13px; color: #666;">
+    <p id="basicModeHint" class="basic-only" style="margin-bottom: 15px; font-size: 13px; color: #666;">
+        Basic mode — 1 clicker. <a onclick="toggleAdvancedMode()" style="cursor:pointer; text-decoration:underline;">Need more? Switch to Advanced</a>
+    </p>
+    <p id="deviceDesc" class="advanced-only" style="margin-bottom: 15px; font-size: 13px; color: #666;">
         Register your keyboard devices and assign each to a broadcast channel.
     </p>
 
@@ -619,7 +683,7 @@
                         <label for="regLabel">Device Label</label>
                         <input type="text" id="regLabel" placeholder="Side A">
                     </div>
-                    <div class="form-group">
+                    <div class="form-group advanced-only">
                         <label for="regChannel">Broadcast Channel</label>
                         <select id="regChannel">
                             <!-- Options populated by JavaScript -->
@@ -635,7 +699,7 @@
         </div>
     </div>
 
-    <details class="collapsible-section">
+    <details class="collapsible-section advanced-only">
         <summary>Advanced Settings</summary>
         <div class="settings-content">
             <div class="form-group">
@@ -653,7 +717,7 @@
         </div>
     </details>
 
-    <details class="collapsible-section">
+    <details class="collapsible-section advanced-only">
         <summary>Show Logs</summary>
         <div class="log-container" id="logContainer">
             <div>Loading logs...</div>
@@ -661,11 +725,14 @@
     </details>
 
     <div class="footer">
-        SherPresent OSC Bridge <span class="version-badge">v2.2.1</span> - Configuration saved automatically restarts service
+        SherPresent OSC Bridge <span class="version-badge">v2.3.0</span> - Configuration saved automatically restarts service
+        <div style="margin-top: 15px;">
+            <button id="shutdownBtn" onclick="shutdownBridge()" style="padding: 6px 16px; font-size: 12px; background: #fff; color: #c44; border: 1px solid #c44; cursor: pointer;">Shutdown Bridge</button>
+        </div>
     </div>
 
     <script>
-        const VERSION = '2.2.1';
+        const VERSION = '2.3.0';
         const API_BASE = '';
         const DEVICE_SLOTS = ['usb_1', 'usb_2', 'usb_3'];
         const SLOT_NAMES = {
@@ -673,6 +740,32 @@
             usb_2: 'USB 2',
             usb_3: 'USB 3'
         };
+
+        // Basic/Advanced mode
+        let advancedMode = localStorage.getItem('advancedMode') === 'true';
+
+        function applyBasicAdvancedMode() {
+            if (advancedMode) {
+                document.body.classList.remove('basic-mode');
+                document.getElementById('modeToggle').textContent = 'Basic';
+            } else {
+                document.body.classList.add('basic-mode');
+                document.getElementById('modeToggle').textContent = 'Advanced';
+            }
+        }
+
+        function toggleAdvancedMode() {
+            advancedMode = !advancedMode;
+            localStorage.setItem('advancedMode', advancedMode);
+            applyBasicAdvancedMode();
+            if (advancedMode && typeof stopBasicAutoRegistration === 'function') {
+                stopBasicAutoRegistration();
+            }
+            loadRegisteredDevices();
+        }
+
+        // Apply immediately
+        applyBasicAdvancedMode();
 
         // Global config state
         let globalConfig = {
@@ -697,23 +790,7 @@
 
         // Load service status
         async function loadStatus() {
-            try {
-                const response = await fetch(`${API_BASE}/status`);
-                const data = await response.json();
-
-                const statusEl = document.getElementById('status');
-                if (data.running) {
-                    statusEl.className = 'status running';
-                    statusEl.textContent = 'Service Status: Running';
-                } else {
-                    statusEl.className = 'status stopped';
-                    statusEl.textContent = 'Service Status: Stopped';
-                }
-            } catch (err) {
-                const statusEl = document.getElementById('status');
-                statusEl.className = 'status stopped';
-                statusEl.textContent = 'Service Status: Unknown';
-            }
+            // Status header removed — function kept as no-op for interval callers
         }
 
         // Load global config
@@ -881,15 +958,32 @@
             // Track which connected devices are matched to slots
             const matchedPhys = new Set();
 
-            const rowsHtml = DEVICE_SLOTS.map(slot => {
+            // Build channel options for inline selector
+            const satelliteConnected = document.getElementById('satelliteStatus') &&
+                document.getElementById('satelliteStatus').classList.contains('running');
+
+            const rowsHtml = DEVICE_SLOTS.map((slot, idx) => {
                 const device = devices[slot];
                 const isRegistered = device !== null && device !== undefined;
+                const isAdvancedSlot = idx > 0;
 
                 // Match connected device by usb_phys
                 let connectedDevice = null;
                 if (isRegistered && device.usb_phys) {
                     connectedDevice = connectedByPhys[device.usb_phys] || null;
                     if (connectedDevice) matchedPhys.add(device.usb_phys);
+                }
+
+                // Build channel <select> options
+                let channelOptionsHtml = '';
+                if (isRegistered && !isSatellite) {
+                    const channels = [...globalConfig.valid_channels];
+                    if (satelliteConnected && !channels.includes('satellite')) {
+                        channels.push('satellite');
+                    }
+                    channelOptionsHtml = channels.map(ch =>
+                        `<option value="${escapeHtml(ch)}" ${device.channel === ch ? 'selected' : ''}>${escapeHtml(ch)}</option>`
+                    ).join('');
                 }
 
                 const leftCol = `
@@ -902,8 +996,8 @@
                         </div>
                         ${isRegistered ? `
                             ${!isSatellite ? `
-                            <div class="slot-info">
-                                <div><span class="info-label">Channel:</span> <span class="channel-badge">${escapeHtml(device.channel)}</span></div>
+                            <div class="slot-info advanced-only">
+                                <div><span class="info-label">Channel:</span> <select class="channel-select" onchange="changeDeviceChannel('${slot}', this.value)">${channelOptionsHtml}</select></div>
                             </div>
                             ` : ''}
                             <div class="slot-actions">
@@ -914,9 +1008,15 @@
                                 <button onclick="unregisterDevice('${slot}')">Remove</button>
                             </div>
                         ` : `
-                            <div class="slot-actions">
-                                <button class="btn-primary" onclick="startRegistration('${slot}')">Register Device</button>
-                            </div>
+                            ${(!advancedMode && slot === 'usb_1') ? `
+                                <div class="basic-waiting" id="basicWaiting">
+                                    <span class="spinner"></span> Listening: press any button
+                                </div>
+                            ` : `
+                                <div class="slot-actions">
+                                    <button class="btn-primary" onclick="startRegistration('${slot}')">Register Device</button>
+                                </div>
+                            `}
                         `}
                     </div>
                 `;
@@ -934,10 +1034,69 @@
                     </div>
                 `;
 
-                return `<div class="device-row">${leftCol}${rightCol}</div>`;
+                return `<div class="device-row ${isAdvancedSlot ? 'advanced-only' : ''}">${leftCol}${rightCol}</div>`;
             }).join('');
 
             container.insertAdjacentHTML('beforeend', rowsHtml);
+        }
+
+        // Basic mode auto-registration
+        let basicAutoReg = {
+            active: false,
+            pollInterval: null
+        };
+
+        function startBasicAutoRegistration() {
+            if (basicAutoReg.active) return;
+            basicAutoReg.active = true;
+
+            // Tell backend to start listening for usb_1
+            fetch(`${API_BASE}/registration/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ slot: 'usb_1' })
+            }).catch(() => {});
+
+            // Poll for detection
+            basicAutoReg.pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/registration/status`);
+                    const status = await response.json();
+
+                    if (status.detected_phys) {
+                        clearInterval(basicAutoReg.pollInterval);
+                        basicAutoReg.active = false;
+
+                        // Auto-confirm with defaults
+                        const confirmResp = await fetch(`${API_BASE}/registration/confirm`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                slot: 'usb_1',
+                                usb_phys: status.detected_phys,
+                                channel: 'main',
+                                label: status.detected_name || 'USB 1'
+                            })
+                        });
+                        const result = await confirmResp.json();
+
+                        if (result.success) {
+                            showMessage('Device connected!', 'success');
+                            loadRegisteredDevices();
+                            loadStatus();
+                        }
+                    }
+                } catch (err) {
+                    // Silent fail
+                }
+            }, 500);
+        }
+
+        function stopBasicAutoRegistration() {
+            if (!basicAutoReg.active) return;
+            clearInterval(basicAutoReg.pollInterval);
+            basicAutoReg.active = false;
+            fetch(`${API_BASE}/registration/cancel`, { method: 'POST' }).catch(() => {});
         }
 
         // Start device registration
@@ -1114,6 +1273,30 @@
             }
         }
 
+        // Change device channel inline
+        async function changeDeviceChannel(slot, channel) {
+            try {
+                const response = await fetch(`${API_BASE}/devices/${slot}/channel`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channel })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage(`Channel updated to ${channel}`, 'success');
+                    registeredDeviceChannels[slot] = channel;
+                    loadStatus();
+                } else {
+                    showMessage(`Error: ${result.message}`, 'error');
+                    loadRegisteredDevices();
+                }
+            } catch (err) {
+                showMessage(`Error: ${err.message}`, 'error');
+                loadRegisteredDevices();
+            }
+        }
+
         // Show test indicator arrow
         function showTestIndicator(slot, cmd) {
             const indicator = document.getElementById(`indicator-${slot}`);
@@ -1186,6 +1369,14 @@
                 }
 
                 renderDeviceSlots(data.devices || {});
+
+                // Basic mode: auto-register usb_1 if empty
+                const usb1Empty = !data.devices || !data.devices.usb_1;
+                if (!advancedMode && usb1Empty) {
+                    startBasicAutoRegistration();
+                } else if (basicAutoReg.active && (!usb1Empty || advancedMode)) {
+                    stopBasicAutoRegistration();
+                }
             } catch (err) {
                 console.error('Failed to load registered devices:', err);
             }
@@ -1267,6 +1458,25 @@
         setInterval(loadDevices, 30000);
         setInterval(loadRegisteredDevices, 10000);
         pollLiveEvents();  // Start self-scheduling poll chain
+
+        async function shutdownBridge() {
+            if (!confirm('Are you sure you want to shut down the bridge? You will need physical access to restart it.')) return;
+            try {
+                const res = await fetch(API_BASE + '/shutdown', { method: 'POST' });
+                if (res.ok) {
+                    document.getElementById('shutdownBtn').disabled = true;
+                    document.getElementById('shutdownBtn').textContent = 'Shutting down...';
+                    showMessage('Bridge is shutting down...', false);
+                } else {
+                    showMessage('Shutdown failed (status ' + res.status + ')', true);
+                }
+            } catch (e) {
+                // Connection drop is expected — the Pi is shutting down
+                document.getElementById('shutdownBtn').disabled = true;
+                document.getElementById('shutdownBtn').textContent = 'Shutting down...';
+                showMessage('Bridge is shutting down...', false);
+            }
+        }
     </script>
 </body>
 </html>

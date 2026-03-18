@@ -200,6 +200,14 @@ class MultiDeviceConfig:
 
         return self.save()
 
+    def update_device_channel(self, slot: str, channel: str) -> bool:
+        """Update the channel for an already-registered device."""
+        device = self.devices.get(slot)
+        if device is None:
+            return False
+        device.channel = channel
+        return self.save()
+
     def unregister_device(self, slot: str) -> bool:
         """Remove a device registration."""
         if slot not in self.DEVICE_SLOTS:

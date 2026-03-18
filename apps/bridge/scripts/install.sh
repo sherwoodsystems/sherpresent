@@ -101,6 +101,11 @@ if [ -f "/etc/systemd/system/config-server.service" ]; then
     echo "Web configuration server enabled and started"
 fi
 
+# Enable and start bridge service
+systemctl enable rpi-osc-bridge
+systemctl start rpi-osc-bridge
+echo "Bridge service enabled and started"
+
 # Create log file and runtime directory
 echo "[5/6] Setting up log and runtime directories..."
 touch /var/log/rpi-osc-bridge.log
@@ -126,10 +131,6 @@ echo ""
 echo "Configure via Web UI:"
 echo "  http://$(hostname -I | awk '{print $1}')/"
 echo "  or http://$(hostname).local/"
-echo ""
-echo "Start the bridge service:"
-echo "  sudo systemctl start rpi-osc-bridge"
-echo "  sudo systemctl enable rpi-osc-bridge"
 echo ""
 echo "Check status:"
 echo "  sudo systemctl status rpi-osc-bridge"

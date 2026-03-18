@@ -9,7 +9,11 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "windows:start": "docker compose -f ../../docker-compose.windows.yml up -d",
+    "windows:stop": "docker compose -f ../../docker-compose.windows.yml stop",
+    "windows:build": "bash ../../scripts/build-windows.sh",
+    "windows:build:keep": "bash ../../scripts/build-windows.sh --no-stop"
   },
   "license": "MIT",
   "dependencies": {

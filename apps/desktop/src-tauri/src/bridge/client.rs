@@ -178,6 +178,17 @@ impl BridgeApiClient {
             .map_err(|e| format!("Parse failed: {}", e))
     }
 
+    pub async fn shutdown(&self) -> Result<BridgeApiResponse, String> {
+        self.client
+            .post(format!("{}/shutdown", self.base_url))
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?
+            .json()
+            .await
+            .map_err(|e| format!("Parse failed: {}", e))
+    }
+
     pub async fn get_satellite_status(&self) -> Result<BridgeSatelliteStatus, String> {
         self.client
             .get(format!("{}/satellite/status", self.base_url))
