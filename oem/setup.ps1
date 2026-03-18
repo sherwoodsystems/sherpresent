@@ -63,8 +63,8 @@ if (-not (Test-Path $projectDir)) {
 }
 Write-Host "`nProject directory: $projectDir" -ForegroundColor Cyan
 
-# --- Persist PATH additions ---
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+# --- Persist PATH additions (Machine scope so SSH sessions can see them) ---
+$machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
 $additions = @(
     "$env:USERPROFILE\.cargo\bin",
     "$env:USERPROFILE\.bun\bin",
@@ -72,11 +72,17 @@ $additions = @(
     "C:\Program Files\Git\bin"
 )
 foreach ($dir in $additions) {
-    if ($userPath -notlike "*$dir*") {
-        $userPath = "$dir;$userPath"
+    if ($machinePath -notlike "*$dir*") {
+        $machinePath = "$dir;$machinePath"
     }
 }
-[Environment]::SetEnvironmentVariable("PATH", $userPath, "User")
+[Environment]::SetEnvironmentVariable("PATH", $machinePath, "Machine")
+
+# --- Set PowerShell as default SSH shell ---
+New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell `
+    -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' `
+    -PropertyType String -Force | Out-Null
+Write-Host "  Default SSH shell set to PowerShell." -ForegroundColor Green
 
 Write-Host "`n=== Setup Complete ===" -ForegroundColor Cyan
 Write-Host "Verify with: rustc --version && bun --version && git --version"

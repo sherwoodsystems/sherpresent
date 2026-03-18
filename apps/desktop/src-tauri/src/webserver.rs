@@ -13,17 +13,11 @@ use tokio_stream::StreamExt;
 use crate::adapters::LiveStatus;
 use crate::config::WebServerConfig;
 
-/// Handle for a running web server, allowing graceful shutdown.
+/// Handle for a running web server. Holds JoinHandles to keep tasks alive.
+#[allow(dead_code)]
 pub struct WebServerHandle {
     serve_handle: tokio::task::JoinHandle<()>,
     updater_handle: tokio::task::JoinHandle<()>,
-}
-
-impl WebServerHandle {
-    pub fn abort(self) {
-        self.serve_handle.abort();
-        self.updater_handle.abort();
-    }
 }
 
 /// Shared state for the axum web server

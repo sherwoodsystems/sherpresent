@@ -39,15 +39,6 @@ pub async fn start_web_server(
 }
 
 #[tauri::command]
-pub fn stop_web_server(state: tauri::State<AppState>) {
-    let mut handle = state.web_server_handle.lock().unwrap();
-    if let Some(h) = handle.take() {
-        h.abort();
-        log::info!("Web server stopped");
-    }
-}
-
-#[tauri::command]
 pub fn is_web_server_running(state: tauri::State<AppState>) -> bool {
     let handle = state.web_server_handle.lock().unwrap();
     handle.is_some()

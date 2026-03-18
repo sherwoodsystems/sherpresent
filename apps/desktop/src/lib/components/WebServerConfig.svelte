@@ -14,14 +14,6 @@
     onchange(updated);
   }
 
-  async function toggleServer() {
-    if (appStore.webServerRunning) {
-      await appStore.stopWebServer();
-    } else {
-      await appStore.startWebServer();
-    }
-  }
-
   function copyUrl() {
     if (appStore.webServerUrl) {
       navigator.clipboard.writeText(appStore.webServerUrl);
@@ -31,26 +23,7 @@
 
 <div class="ws-config">
   <h3 class="section-title">Stage View Server</h3>
-  <p class="description">Serve notes and timer to external browsers on your network</p>
-
-  <div class="toggle-row">
-    <label class="toggle-label">
-      <input
-        type="checkbox"
-        checked={config.enabled}
-        onchange={(e) => updateField('enabled', e.currentTarget.checked)}
-      />
-      Enable on startup
-    </label>
-
-    <button
-      class="server-toggle"
-      class:running={appStore.webServerRunning}
-      onclick={toggleServer}
-    >
-      {appStore.webServerRunning ? 'Stop Server' : 'Start Server'}
-    </button>
-  </div>
+  <p class="description">Always running — serves notes and timer to browsers on your network</p>
 
   {#if appStore.webServerRunning && appStore.webServerUrl}
     <div class="connection-info">
@@ -142,44 +115,6 @@
     border-bottom: 1px solid #eee;
   }
 
-  .toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .toggle-label {
-    font-size: 0.8rem;
-    color: #666;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-  }
-
-  .server-toggle {
-    padding: 0.375rem 1rem;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-    background: #007aff;
-    color: #fff;
-  }
-
-  .server-toggle:hover {
-    background: #005ec4;
-  }
-
-  .server-toggle.running {
-    background: #ef4444;
-  }
-
-  .server-toggle.running:hover {
-    background: #dc2626;
-  }
-
   .connection-info {
     background: #e8f4fd;
     border: 1px solid #b3d9f7;
@@ -268,10 +203,6 @@
     .description {
       color: #777;
       border-bottom-color: #444;
-    }
-
-    .toggle-label {
-      color: #aaa;
     }
 
     .connection-info {

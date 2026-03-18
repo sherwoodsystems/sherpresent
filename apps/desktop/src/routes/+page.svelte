@@ -64,9 +64,6 @@
 
 <style>
   .container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 1.5rem;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 1rem;

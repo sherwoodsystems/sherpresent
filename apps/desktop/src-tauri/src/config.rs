@@ -183,8 +183,6 @@ impl Default for LoggingConfig {
 /// Configuration for the LAN-accessible web server (notes + timer view)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebServerConfig {
-    /// Whether the web server is enabled
-    pub enabled: bool,
     /// Port to serve on (default: 8080)
     pub port: u16,
     /// Ontime server host (IP or hostname)
@@ -205,7 +203,6 @@ fn default_font_size() -> u16 {
 impl Default for WebServerConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             port: 8080,
             ontime_host: String::new(),
             ontime_port: 4001,

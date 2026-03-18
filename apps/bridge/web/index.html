@@ -210,10 +210,56 @@
         }
 
         /* Device Management Styles */
-        .device-slots {
+        .device-management {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 15px;
+            gap: 0;
+            border: 1px solid #ccc;
+        }
+
+        .device-management-header {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #666;
+            padding: 8px 15px;
+            background: #f0f0f0;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .device-management-header:first-child {
+            border-right: 1px solid #ccc;
+        }
+
+        .device-row {
+            display: contents;
+        }
+
+        .device-row-left,
+        .device-row-right {
+            padding: 15px;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .device-row-left {
+            border-right: 1px solid #ccc;
+        }
+
+        .device-row:last-child .device-row-left,
+        .device-row:last-child .device-row-right {
+            border-bottom: none;
+        }
+
+        .device-row-right .device-item {
+            padding: 0;
+            border-bottom: none;
+        }
+
+        .connected-empty {
+            font-size: 13px;
+            color: #999;
+            font-style: italic;
         }
 
         .device-slot {
@@ -476,8 +522,13 @@
                 flex-direction: column;
             }
 
-            .device-slots {
+            .device-management {
                 grid-template-columns: 1fr;
+            }
+
+            .device-management-header:first-child,
+            .device-row-left {
+                border-right: none;
             }
         }
     </style>
@@ -517,6 +568,7 @@
 
     <!-- Satellite panel -->
     <div class="mode-panel" id="panel-satellite">
+        <p class="help-text" style="margin-bottom: 15px;">Set up your clicker as a surface in Companion. Only supports 2 buttons — make sure you use the first two buttons in the grid.</p>
         <h3>Connection</h3>
         <div id="satelliteStatus" class="status" style="margin-bottom: 15px;">
             Not connected
@@ -541,8 +593,10 @@
         Register your keyboard devices and assign each to a broadcast channel.
     </p>
 
-    <div class="device-slots" id="deviceSlots">
-        <!-- Device slots will be rendered by JavaScript -->
+    <div class="device-management" id="deviceManagement">
+        <div class="device-management-header">Registration Slots</div>
+        <div class="device-management-header">Connected Devices</div>
+        <!-- Device rows rendered by JavaScript directly into deviceManagement -->
     </div>
 
     <!-- Registration Modal -->
@@ -580,13 +634,6 @@
             </div>
         </div>
     </div>
-
-    <details class="collapsible-section">
-        <summary>Show Connected Devices</summary>
-        <div class="devices-list" id="devicesList">
-            <div>Loading devices...</div>
-        </div>
-    </details>
 
     <details class="collapsible-section">
         <summary>Advanced Settings</summary>
@@ -812,17 +859,41 @@
             }
         }
 
-        // Render device slots
+        // Connected devices cache for right-column rendering
+        let connectedDevicesCache = [];
+
+        // Render device slots with connected devices side-by-side
         function renderDeviceSlots(devices) {
-            const container = document.getElementById('deviceSlots');
+            const container = document.getElementById('deviceManagement');
+            // Remove old rows (keep first two children: the headers)
+            while (container.children.length > 2) {
+                container.removeChild(container.lastChild);
+            }
             const isSatellite = globalConfig.mode === 'satellite';
 
-            container.innerHTML = DEVICE_SLOTS.map(slot => {
+            // Build a map of usb_phys -> connected device for matching
+            const connectedByPhys = {};
+            connectedDevicesCache.forEach(d => {
+                const phys = d.usb_phys || d.usb_port;
+                if (phys) connectedByPhys[phys] = d;
+            });
+
+            // Track which connected devices are matched to slots
+            const matchedPhys = new Set();
+
+            const rowsHtml = DEVICE_SLOTS.map(slot => {
                 const device = devices[slot];
                 const isRegistered = device !== null && device !== undefined;
 
-                return `
-                    <div class="device-slot" data-slot="${slot}">
+                // Match connected device by usb_phys
+                let connectedDevice = null;
+                if (isRegistered && device.usb_phys) {
+                    connectedDevice = connectedByPhys[device.usb_phys] || null;
+                    if (connectedDevice) matchedPhys.add(device.usb_phys);
+                }
+
+                const leftCol = `
+                    <div class="device-row-left" data-slot="${slot}">
                         <div class="slot-header">
                             <span class="slot-label">${isRegistered ? escapeHtml(device.label) : SLOT_NAMES[slot]}<span class="test-indicator" id="indicator-${slot}"></span></span>
                             <span class="slot-status ${isRegistered ? 'registered' : 'not-registered'}">
@@ -849,7 +920,24 @@
                         `}
                     </div>
                 `;
+
+                const rightCol = `
+                    <div class="device-row-right">
+                        ${connectedDevice ? `
+                            <div class="device-item">
+                                <div class="device-name">${escapeHtml(connectedDevice.name)}${connectedDevice.is_perfect_cue ? ' [Perfect Cue]' : ''}</div>
+                                <div class="device-port">USB: ${escapeHtml(connectedDevice.usb_phys || connectedDevice.usb_port || 'unknown')}</div>
+                            </div>
+                        ` : `
+                            <div class="connected-empty">${isRegistered ? 'Not connected' : 'No device'}</div>
+                        `}
+                    </div>
+                `;
+
+                return `<div class="device-row">${leftCol}${rightCol}</div>`;
             }).join('');
+
+            container.insertAdjacentHTML('beforeend', rowsHtml);
         }
 
         // Start device registration
@@ -1128,21 +1216,14 @@
                 const response = await fetch(`${API_BASE}/devices`);
                 const data = await response.json();
 
-                const devicesList = document.getElementById('devicesList');
-                if (data.devices && data.devices.length > 0) {
-                    devicesList.innerHTML = data.devices.map(device => `
-                        <div class="device-item">
-                            <div class="device-name">${escapeHtml(device.name)}${device.is_perfect_cue ? ' [Perfect Cue]' : ''}</div>
-                            <div class="device-path">${escapeHtml(device.path)}</div>
-                            <div class="device-port">USB: ${escapeHtml(device.usb_phys || device.usb_port || 'unknown')}</div>
-                        </div>
-                    `).join('');
-                } else {
-                    devicesList.innerHTML = '<div>No keyboard devices detected</div>';
-                }
+                const newDevices = data.devices || [];
+                const changed = JSON.stringify(newDevices) !== JSON.stringify(connectedDevicesCache);
+                connectedDevicesCache = newDevices;
+                // Re-render to update the right column with fresh connected device data
+                if (changed) loadRegisteredDevices();
             } catch (err) {
                 console.error('Failed to load devices:', err);
-                document.getElementById('devicesList').innerHTML = '<div>Failed to load devices</div>';
+                connectedDevicesCache = [];
             }
         }
 

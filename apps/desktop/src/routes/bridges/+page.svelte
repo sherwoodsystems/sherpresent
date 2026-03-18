@@ -44,7 +44,7 @@
   }
 </script>
 
-<main class="container">
+<main>
   <header class="header">
     <h1>Bridges</h1>
     <p class="subtitle">Remote bridge configuration</p>
@@ -92,12 +92,6 @@
 {/if}
 
 <style>
-  .container {
-    max-width: 600px;
-    margin: 0 auto;
-    padding: 1.5rem;
-  }
-
   .header {
     text-align: center;
     margin-bottom: 1.5rem;

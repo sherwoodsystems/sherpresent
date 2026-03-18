@@ -12,6 +12,8 @@ mod webserver;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
 use crate::state::AppState;
 use crate::osc::{OscServer, StateManager, CommandSourcePeer};
 use crate::discovery::{DiscoveryService, DiscoveredPeer};
@@ -84,7 +86,6 @@ pub fn run() {
             commands::bridge::bridge_get_satellite_status,
             // Web Server
             commands::webserver::start_web_server,
-            commands::webserver::stop_web_server,
             commands::webserver::is_web_server_running,
             commands::webserver::get_web_server_url,
             // Debug
@@ -295,8 +296,8 @@ pub fn run() {
                 }
             });
 
-            // Auto-start web server if enabled
-            if config.web_server.enabled {
+            // Auto-start web server (always on)
+            {
                 let app_handle3 = app.handle().clone();
                 let web_server_config = config.web_server.clone();
 
@@ -328,20 +329,50 @@ pub fn run() {
                 });
             }
 
+            // System tray setup
+            let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let tray_menu = MenuBuilder::new(app)
+                .item(&show_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
+            TrayIconBuilder::new()
+                .menu(&tray_menu)
+                .on_menu_event(|app_handle, event| {
+                    match event.id().as_ref() {
+                        "show" => {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app_handle.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
+                        let app_handle = tray.app_handle();
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Stop OSC server when window closes
-            //
-            // Note: We can't easily call async stop() here, so we just
-            // take the handle. The handle's Drop impl will clean up.
-            // In practice, the app is closing anyway so this is fine.
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let state = window.state::<AppState>();
-                let mut server = state.osc_server.lock().unwrap();
-                if server.take().is_some() {
-                    log::info!("Window closing, OSC server handle dropped");
-                }
+            // Minimize to tray on close instead of quitting
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+                log::info!("Window hidden to tray");
             }
         })
         .run(tauri::generate_context!())

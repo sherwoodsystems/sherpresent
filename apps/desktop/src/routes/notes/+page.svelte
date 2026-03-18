@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import { appStore } from '$lib/state.svelte';
 
   let scrollContainer: HTMLElement;
+  let notesViewUrl = $state('');
 
   const totalSlides = $derived(appStore.liveStatus?.total_slides ?? 0);
   const currentSlide = $derived(appStore.liveStatus?.current_slide ?? 0);
@@ -42,15 +45,26 @@
     }
   });
 
-  onMount(() => {
+  async function openNotesView() {
+    if (notesViewUrl) {
+      await openUrl(notesViewUrl);
+    }
+  }
+
+  onMount(async () => {
     appStore.fetchAllNotes();
+    try {
+      notesViewUrl = await invoke<string>('get_web_server_url');
+    } catch {
+      // web server config not available
+    }
   });
 </script>
 
 <main class="container" bind:this={scrollContainer}>
   <header class="header">
     <div class="header-row">
-      <div>
+      <div class="header-title">
         <h1>Notes Outline</h1>
         {#if totalSlides > 0}
           <p class="subtitle">{notesCount} of {totalSlides} slides have notes</p>
@@ -59,6 +73,11 @@
         {/if}
       </div>
       <div class="header-actions">
+        {#if notesViewUrl}
+          <button class="refresh-btn" onclick={openNotesView} title="Open notes webview">
+            {notesViewUrl} ↗
+          </button>
+        {/if}
         {#if isScanning}
           <button class="cancel-btn" onclick={() => appStore.stopNotesScan()}>Cancel</button>
         {:else if needsScan}
@@ -107,9 +126,6 @@
 
 <style>
   .container {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 1.5rem;
     overflow-y: auto;
     max-height: calc(100vh - 50px);
   }
@@ -122,6 +138,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .header-title {
+    flex-shrink: 0;
   }
 
   .header h1 {
@@ -155,7 +176,9 @@
 
   .header-actions {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
+    flex-shrink: 0;
   }
 
   .scan-btn {
@@ -334,5 +357,6 @@
     .progress-text {
       color: #777;
     }
+
   }
 </style>

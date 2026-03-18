@@ -388,16 +388,6 @@ class AppStore {
     }
   }
 
-  async stopWebServer() {
-    try {
-      await invoke('stop_web_server');
-      this.webServerRunning = false;
-      this.webServerUrl = '';
-    } catch (e) {
-      console.error('Failed to stop web server:', e);
-    }
-  }
-
   async refreshWebServerStatus() {
     try {
       this.webServerRunning = await invoke<boolean>('is_web_server_running');

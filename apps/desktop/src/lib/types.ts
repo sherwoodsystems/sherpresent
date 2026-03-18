@@ -112,7 +112,6 @@ export type ConnectionStatus = 'Disconnected' | 'Connecting' | 'Connected' | { E
 
 /** LAN web server configuration (notes + timer view for external browsers) */
 export interface WebServerConfig {
-  enabled: boolean;
   port: number;
   ontimeHost: string;
   ontimePort: number;
@@ -199,7 +198,6 @@ export const defaultConfig: AppConfig = {
   },
   adapterConfig: { type: 'none' },
   webServer: {
-    enabled: false,
     port: 8080,
     ontimeHost: '',
     ontimePort: 4001,
