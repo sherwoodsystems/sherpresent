@@ -413,8 +413,8 @@
         /* Mode tabs */
         .mode-tabs {
             display: flex;
-            border-bottom: 2px solid #000;
             margin-bottom: 0;
+            border-bottom: 1px solid #000;
         }
 
         .mode-tab {
@@ -426,8 +426,8 @@
             font-size: 14px;
             font-weight: 500;
             cursor: pointer;
-            margin-right: 2px;
-            margin-bottom: -2px;
+            margin-right: -1px;
+            margin-bottom: -1px;
         }
 
         .mode-tab:hover {
@@ -439,8 +439,10 @@
             background: #fff;
             color: #000;
             border-color: #000;
-            border-bottom: 2px solid #fff;
+            border-bottom: 1px solid #fff;
             font-weight: 600;
+            z-index: 1;
+            position: relative;
         }
 
         .mode-panel {
@@ -612,11 +614,11 @@
     </details>
 
     <div class="footer">
-        SherPresent OSC Bridge <span class="version-badge">v2.2.0</span> - Configuration saved automatically restarts service
+        SherPresent OSC Bridge <span class="version-badge">v2.2.1</span> - Configuration saved automatically restarts service
     </div>
 
     <script>
-        const VERSION = '2.2.0';
+        const VERSION = '2.2.1';
         const API_BASE = '';
         const DEVICE_SLOTS = ['usb_1', 'usb_2', 'usb_3'];
         const SLOT_NAMES = {

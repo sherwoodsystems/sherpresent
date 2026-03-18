@@ -59,11 +59,11 @@ yay -S makeself
 # On your dev machine: build the installer
 cd apps/bridge
 ./scripts/build-installer.sh
-# Creates: scripts/rpi-osc-bridge-v2.2.0.run
+# Creates: scripts/rpi-osc-bridge-v2.2.1.run
 
 # Deploy to Pi
-scp scripts/rpi-osc-bridge-v2.2.0.run pi@<PI_IP>:/tmp/
-ssh pi@<PI_IP> 'sudo bash /tmp/rpi-osc-bridge-v2.2.0.run'
+scp scripts/rpi-osc-bridge-v2.2.1.run pi@<PI_IP>:/tmp/
+ssh pi@<PI_IP> 'sudo bash /tmp/rpi-osc-bridge-v2.2.1.run'
 
 # Start the bridge service
 ssh pi@<PI_IP> 'sudo systemctl start rpi-osc-bridge && sudo systemctl enable rpi-osc-bridge'

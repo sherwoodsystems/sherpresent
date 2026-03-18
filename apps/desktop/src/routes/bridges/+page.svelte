@@ -1,32 +1,46 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import type { DiscoveredPeer } from '$lib/types';
   import { usePeers } from '$lib/usePeers.svelte';
   import BridgeDetail from '$lib/components/BridgeDetail.svelte';
 
   const peerState = usePeers(() => checkBridgeParam());
 
-  let selectedBridge = $state<DiscoveredPeer | null>(null);
+  let selectedBridgeId = $state<string | null>(null);
 
   let bridges = $derived(
     peerState.peers.filter(p => p.version === 'bridge' && p.configPort)
   );
 
+  let selectedBridge = $derived(
+    selectedBridgeId ? bridges.find(b => b.instanceId === selectedBridgeId) ?? null : null
+  );
+
   function checkBridgeParam() {
-    if (selectedBridge) return;
+    if (selectedBridgeId) return;
     const bridgeParam = page.url.searchParams.get('bridge');
     if (bridgeParam) {
       const target = bridges.find(b => b.instanceId === bridgeParam);
-      if (target) selectedBridge = target;
+      if (target) selectedBridgeId = target.instanceId;
     }
   }
 
   function openBridge(bridge: DiscoveredPeer) {
-    selectedBridge = bridge;
+    selectedBridgeId = bridge.instanceId;
   }
 
   function closeBridge() {
-    selectedBridge = null;
+    selectedBridgeId = null;
+  }
+
+  function handleBridgeSave(savedName: string) {
+    // Optimistically patch the peer's displayName so the card updates instantly
+    const idx = peerState.peers.findIndex(p => p.instanceId === selectedBridgeId);
+    if (idx !== -1) {
+      peerState.peers[idx] = { ...peerState.peers[idx], displayName: savedName };
+      peerState.peers = [...peerState.peers];
+    }
   }
 </script>
 
@@ -44,16 +58,24 @@
   {:else}
     <div class="bridge-grid">
       {#each bridges as bridge (bridge.instanceId)}
-        <button class="bridge-card" onclick={() => openBridge(bridge)}>
-          <div class="bridge-header">
-            <span class="bridge-name">{bridge.displayName || bridge.host}</span>
-            <span class="online-dot"></span>
-          </div>
-          <div class="bridge-meta">
-            <span class="bridge-host">{bridge.host}</span>
-            <span class="bridge-channel">ch: {bridge.channel}</span>
-          </div>
-        </button>
+        <div class="bridge-card" role="group">
+          <button class="bridge-card-main" onclick={() => openBridge(bridge)}>
+            <div class="bridge-header">
+              <span class="bridge-name">{bridge.displayName || bridge.host}</span>
+              <span class="online-dot"></span>
+            </div>
+            <div class="bridge-meta">
+              <span class="bridge-host">{bridge.host}</span>
+              <span class="bridge-channel">ch: {bridge.channel}</span>
+            </div>
+          </button>
+          <button
+            class="open-config-btn"
+            onclick={() => openUrl(`http://${bridge.host}:${bridge.configPort}`)}
+          >
+            Open Config Page
+          </button>
+        </div>
       {/each}
     </div>
   {/if}
@@ -65,6 +87,7 @@
     configPort={selectedBridge.configPort!}
     bridgeName={selectedBridge.displayName || selectedBridge.host}
     onclose={closeBridge}
+    onsave={handleBridgeSave}
   />
 {/if}
 
@@ -120,23 +143,32 @@
   .bridge-card {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    padding: 1rem;
     background: #fff;
     border: 1px solid #e0e0e0;
     border-radius: 12px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    cursor: pointer;
-    text-align: left;
-    font-family: inherit;
-    font-size: inherit;
-    color: inherit;
+    overflow: hidden;
     transition: all 0.15s ease;
   }
 
   .bridge-card:hover {
     border-color: #1a73e8;
     box-shadow: 0 2px 8px rgba(26, 115, 232, 0.15);
+  }
+
+  .bridge-card-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    width: 100%;
   }
 
   .bridge-header {
@@ -165,6 +197,24 @@
     color: #888;
   }
 
+  .open-config-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    font-family: inherit;
+    font-weight: 500;
+    color: #1a73e8;
+    background: rgba(26, 115, 232, 0.04);
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    width: 100%;
+    text-align: center;
+  }
+  .open-config-btn:hover {
+    background: rgba(26, 115, 232, 0.1);
+  }
+
   .bridge-host {
     font-family: monospace;
   }
@@ -191,5 +241,13 @@
       box-shadow: 0 2px 8px rgba(106, 183, 255, 0.15);
     }
     .bridge-meta { color: #777; }
+    .open-config-btn {
+      color: #6ab7ff;
+      background: rgba(106, 183, 255, 0.04);
+      border-top-color: #444;
+    }
+    .open-config-btn:hover {
+      background: rgba(106, 183, 255, 0.1);
+    }
   }
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import type {
     BridgeGlobalConfig,
     BridgeStatus,
@@ -16,11 +17,13 @@
     configPort,
     bridgeName,
     onclose,
+    onsave,
   }: {
     host: string;
     configPort: number;
     bridgeName: string;
     onclose: () => void;
+    onsave?: (savedName: string) => void;
   } = $props();
 
   let status = $state<BridgeStatus | null>(null);
@@ -128,8 +131,8 @@
         host, configPort, config: req,
       });
       saveMessage = result.message;
-      // Refresh after save
-      setTimeout(() => fetchAll(), 2000);
+      onsave?.(editBridgeName || bridgeName);
+      await fetchAll();
     } catch (e) {
       saveMessage = `Error: ${e}`;
     } finally {
@@ -156,6 +159,9 @@
       <div>
         <h2>{editBridgeName || bridgeName}</h2>
         <span class="host-label">{host}:{configPort}</span>
+        <button class="config-link" onclick={() => openUrl(`http://${host}:${configPort}`)}>
+          Open config page
+        </button>
       </div>
       <button class="close-btn" onclick={onclose} aria-label="Close">&times;</button>
     </header>
@@ -323,6 +329,20 @@
   }
   .close-btn:hover { color: #333; }
 
+  .config-link {
+    display: inline-block;
+    margin-top: 0.25rem;
+    padding: 0;
+    background: none;
+    border: none;
+    font-size: 0.75rem;
+    color: #1a73e8;
+    cursor: pointer;
+    font-family: inherit;
+    text-decoration: underline;
+  }
+  .config-link:hover { color: #1557b0; }
+
   .offline-banner {
     background: #fce4e4;
     color: #c62828;
@@ -452,6 +472,8 @@
     .host-label { color: #777; }
     .close-btn { color: #888; }
     .close-btn:hover { color: #eee; }
+    .config-link { color: #6ab7ff; }
+    .config-link:hover { color: #90caf9; }
     .offline-banner { background: #4a1a1a; color: #ff8a80; }
     .detail-section h3 { color: #aaa; border-bottom-color: #444; }
     .form-group label { color: #aaa; }
