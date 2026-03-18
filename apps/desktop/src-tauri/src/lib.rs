@@ -339,6 +339,7 @@ pub fn run() {
                 .build()?;
 
             TrayIconBuilder::new()
+                .icon(tauri::image::Image::from_path("icons/32x32.png").map_err(|e| e.to_string())?)
                 .menu(&tray_menu)
                 .on_menu_event(|app_handle, event| {
                     match event.id().as_ref() {
