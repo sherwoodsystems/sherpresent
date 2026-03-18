@@ -1131,7 +1131,7 @@
         let lastCommandTime = null;
         let registeredDeviceLabels = {};
 
-        // Poll for live device events
+        // Poll for live device events (self-scheduling to prevent request stacking)
         async function pollLiveEvents() {
             try {
                 const response = await fetch(`${API_BASE}/feedback`);
@@ -1158,6 +1158,7 @@
             } catch (err) {
                 // Silent fail - not critical
             }
+            setTimeout(pollLiveEvents, 200);
         }
 
         // Cache registered device channels
@@ -1265,7 +1266,7 @@
         setInterval(loadLogs, 5000);
         setInterval(loadDevices, 30000);
         setInterval(loadRegisteredDevices, 10000);
-        setInterval(pollLiveEvents, 500);  // Poll for live button presses
+        pollLiveEvents();  // Start self-scheduling poll chain
     </script>
 </body>
 </html>
