@@ -33,6 +33,14 @@
           <span class="status-value">
             {status.current_slide} / {status.total_slides}
           </span>
+          {#if status.total_builds && status.total_builds > 0}
+            <span class="build-indicator">
+              {#each Array(status.total_builds) as _, i}
+                <span class="build-dot" class:filled={i < (status.current_build ?? 0)}></span>
+              {/each}
+              <span class="build-count">({status.current_build ?? 0}/{status.total_builds})</span>
+            </span>
+          {/if}
         </div>
 
         <div class="status-item">
@@ -202,6 +210,32 @@
     color: #34c759;
   }
 
+  .build-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: 0.125rem;
+  }
+
+  .build-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ddd;
+    transition: background 0.15s;
+  }
+
+  .build-dot.filled {
+    background: #007aff;
+  }
+
+  .build-count {
+    font-size: 0.6875rem;
+    color: #999;
+    margin-left: 0.125rem;
+  }
+
   .presenter-notes {
     width: 100%;
     display: flex;
@@ -264,6 +298,18 @@
       background: #3a3a3a;
       border-color: #555;
       color: #eee;
+    }
+
+    .build-dot {
+      background: #555;
+    }
+
+    .build-dot.filled {
+      background: #0a84ff;
+    }
+
+    .build-count {
+      color: #777;
     }
 
     .presenter-notes {

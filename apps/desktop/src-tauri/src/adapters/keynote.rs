@@ -260,6 +260,8 @@ impl PresentationAdapter for KeynoteAdapter {
                     total_slides,
                     zoom_level: None,
                     presenter_notes: notes,
+                    current_build: None,
+                    total_builds: None,
                 }
             }
             Err(e) => {

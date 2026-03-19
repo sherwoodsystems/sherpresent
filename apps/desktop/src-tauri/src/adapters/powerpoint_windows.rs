@@ -36,7 +36,7 @@
 
 #![cfg(target_os = "windows")]
 
-use super::{PresentationAdapter, PresentationState, SlideInfo};
+use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 
 use windows::{
     core::{Interface, BSTR, GUID, PCWSTR},
@@ -612,6 +612,81 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
     fn set_notes_zoom(&self, _level: i32) -> Result<(), String> {
         // Not implemented for Windows yet
         Err("Notes zoom not yet supported on Windows".to_string())
+    }
+
+    fn get_live_status(&self, name: &str) -> LiveStatus {
+        Self::init_com().ok();
+
+        let app = match Self::get_application() {
+            Ok(a) => a,
+            Err(_) => return LiveStatus::default(),
+        };
+
+        let pres = match Self::get_presentation_by_name(&app, name) {
+            Ok(p) => p,
+            Err(_) => return LiveStatus::default(),
+        };
+
+        let window = match Self::get_slideshow_window(&pres) {
+            Ok(w) => w,
+            Err(_) => {
+                return LiveStatus {
+                    is_open: true,
+                    is_presenting: false,
+                    ..Default::default()
+                };
+            }
+        };
+
+        let view = match Self::get_slideshow_view(&window) {
+            Ok(v) => v,
+            Err(_) => {
+                return LiveStatus {
+                    is_open: true,
+                    is_presenting: false,
+                    ..Default::default()
+                };
+            }
+        };
+
+        let slides = Self::get_slides(&pres).ok();
+        let total_slides = slides
+            .as_ref()
+            .and_then(|s| Self::get_property(s, "Count").ok())
+            .and_then(|v| Self::variant_to_i32(&v).ok())
+            .unwrap_or(0);
+
+        let current_slide = Self::get_property(&view, "CurrentShowPosition")
+            .ok()
+            .and_then(|v| Self::variant_to_i32(&v).ok())
+            .unwrap_or(0);
+
+        // Query build/animation step info
+        let click_index = Self::invoke_method(&view, "GetClickIndex")
+            .ok()
+            .and_then(|v| Self::variant_to_i32(&v).ok());
+        let click_count = Self::invoke_method(&view, "GetClickCount")
+            .ok()
+            .and_then(|v| Self::variant_to_i32(&v).ok());
+
+        let (current_build, total_builds) = match (click_index, click_count) {
+            (Some(idx), Some(cnt)) if cnt > 0 => (Some(idx), Some(cnt)),
+            _ => (None, None),
+        };
+
+        // Get presenter notes
+        let presenter_notes = self.get_presenter_notes(name).ok().flatten();
+
+        LiveStatus {
+            is_open: true,
+            is_presenting: true,
+            current_slide,
+            total_slides,
+            zoom_level: None,
+            presenter_notes,
+            current_build,
+            total_builds,
+        }
     }
 }
 

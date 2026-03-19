@@ -326,7 +326,7 @@ impl OscFeedback {
     /// to individual OSC addresses. By sending separate messages, clients
     /// can subscribe to just the data they need.
     pub fn from_state(state: &CachedState) -> Vec<OscMessage> {
-        vec![
+        let mut messages = vec![
             // Is a slideshow currently running?
             // OscType::Int is a 32-bit signed integer
             OscMessage {
@@ -353,7 +353,21 @@ impl OscFeedback {
                 addr: "/clicker/zoom/level".to_string(),
                 args: vec![OscType::Int(state.zoom_level.unwrap_or(0))],
             },
-        ]
+        ];
+
+        // Build/animation step info (only sent when builds exist on this slide)
+        if let (Some(current_build), Some(total_builds)) = (state.current_build, state.total_builds) {
+            messages.push(OscMessage {
+                addr: "/clicker/slide/build".to_string(),
+                args: vec![OscType::Int(current_build)],
+            });
+            messages.push(OscMessage {
+                addr: "/clicker/slide/builds".to_string(),
+                args: vec![OscType::Int(total_builds)],
+            });
+        }
+
+        messages
     }
 
     /// Create channel-aware feedback messages for broadcast mode.
@@ -361,7 +375,7 @@ impl OscFeedback {
     /// These use the format `/clicker/<channel>/state/<property>` so that
     /// receivers can filter by channel.
     pub fn from_state_with_channel(state: &CachedState, channel: &str) -> Vec<OscMessage> {
-        vec![
+        let mut messages = vec![
             OscMessage {
                 addr: format!("/clicker/{}/state/presenting", channel),
                 args: vec![OscType::Int(if state.is_presenting { 1 } else { 0 })],
@@ -382,7 +396,19 @@ impl OscFeedback {
                 addr: format!("/clicker/{}/state/zoom", channel),
                 args: vec![OscType::Int(state.zoom_level.unwrap_or(0))],
             },
-        ]
+        ];
+
+        if let (Some(current_build), Some(total_builds)) = (state.current_build, state.total_builds) {
+            messages.push(OscMessage {
+                addr: format!("/clicker/{}/state/build", channel),
+                args: vec![
+                    OscType::Int(current_build),
+                    OscType::Int(total_builds),
+                ],
+            });
+        }
+
+        messages
     }
 
     /// Create a single feedback message for just the zoom level.

@@ -171,6 +171,10 @@ export interface LiveStatus {
   total_slides: number;
   zoom_level: number | null;
   presenter_notes?: string | null;
+  /** Current build/animation step (0 = none fired). Only present when slide has builds. */
+  current_build?: number | null;
+  /** Total click-triggered build steps on this slide. Only present when slide has builds. */
+  total_builds?: number | null;
 }
 
 export const defaultConfig: AppConfig = {

@@ -42,6 +42,10 @@ pub struct LiveStatus {
     pub total_slides: i32,
     pub zoom_level: Option<i32>,
     pub presenter_notes: Option<String>,
+    /// Current build/animation step on this slide (0 = no builds fired yet)
+    pub current_build: Option<i32>,
+    /// Total click-triggered build steps on this slide (0 or None = no builds)
+    pub total_builds: Option<i32>,
 }
 
 
@@ -110,6 +114,8 @@ pub trait PresentationAdapter: Send + Sync {
                 total_slides: 0,
                 zoom_level: None,
                 presenter_notes: None,
+                current_build: None,
+                total_builds: None,
             };
         }
 
@@ -128,6 +134,8 @@ pub trait PresentationAdapter: Send + Sync {
             total_slides: slide_info.total,
             zoom_level,
             presenter_notes,
+            current_build: None,
+            total_builds: None,
         }
     }
 }

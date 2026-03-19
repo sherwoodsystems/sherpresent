@@ -68,6 +68,12 @@ pub struct CachedState {
     /// None if not available (e.g., Keynote doesn't support this)
     pub zoom_level: Option<i32>,
 
+    /// Current build/animation step on this slide (0 = no builds fired)
+    pub current_build: Option<i32>,
+
+    /// Total click-triggered build steps on this slide (None/0 = no builds)
+    pub total_builds: Option<i32>,
+
     /// When this state was last updated (not serialized)
     /// Using u64 milliseconds instead of Instant for serialization
     #[serde(skip)]
@@ -220,6 +226,8 @@ impl StateManager {
             || old.current_slide != new.current_slide
             || old.total_slides != new.total_slides
             || old.zoom_level != new.zoom_level
+            || old.current_build != new.current_build
+            || old.total_builds != new.total_builds
     }
 
     /// Send state change notification through the channel.
@@ -237,6 +245,8 @@ impl StateManager {
                 total_slides: state.total_slides,
                 zoom_level: state.zoom_level,
                 presenter_notes: None,
+                current_build: state.current_build,
+                total_builds: state.total_builds,
             };
             let _ = tx.send(live_status);
         }
@@ -630,24 +640,14 @@ impl StateManager {
             return new_state;
         };
 
-        // Get presentation state
-        if let Ok(pres_state) = adapter.get_presentation_state(presentation_name) {
-            new_state.is_open = pres_state.is_open;
-            new_state.is_presenting = pres_state.is_presenting;
-
-            // Only fetch slide info if presenting
-            if pres_state.is_presenting {
-                if let Ok(slide_info) = adapter.get_slide_info(presentation_name) {
-                    new_state.current_slide = slide_info.current;
-                    new_state.total_slides = slide_info.total;
-                }
-
-                // Get zoom level
-                if let Ok(Some(zoom)) = adapter.get_notes_zoom() {
-                    new_state.zoom_level = Some(zoom);
-                }
-            }
-        }
+        let status = adapter.get_live_status(presentation_name);
+        new_state.is_open = status.is_open;
+        new_state.is_presenting = status.is_presenting;
+        new_state.current_slide = status.current_slide;
+        new_state.total_slides = status.total_slides;
+        new_state.zoom_level = status.zoom_level;
+        new_state.current_build = status.current_build;
+        new_state.total_builds = status.total_builds;
 
         new_state
     }

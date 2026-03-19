@@ -284,6 +284,8 @@ impl PresentationAdapter for PowerPointAdapter {
                 set totalSlides to "0"
                 set noteText to ""
                 set zoomLevel to "0"
+                set clickIdx to "0"
+                set clickCnt to "0"
                 try
                     set pres to presentation "{}"
                     set isOpen to "true"
@@ -293,6 +295,10 @@ impl PresentationAdapter for PowerPointAdapter {
                         set isPresenting to "true"
                         set currentSlide to (current show position of ssView) as text
                         set totalSlides to (count slides of pres) as text
+                        try
+                            set clickIdx to (get click index of ssView) as text
+                            set clickCnt to (get click count of ssView) as text
+                        end try
                         try
                             set idx to current show position of ssView
                             set notesSlide to notes page of slide idx of pres
@@ -313,14 +319,14 @@ impl PresentationAdapter for PowerPointAdapter {
                         end try
                     end try
                 end try
-                return isOpen & "|||" & isPresenting & "|||" & currentSlide & "|||" & totalSlides & "|||" & noteText & "|||" & zoomLevel
+                return isOpen & "|||" & isPresenting & "|||" & currentSlide & "|||" & totalSlides & "|||" & noteText & "|||" & zoomLevel & "|||" & clickIdx & "|||" & clickCnt
             end tell"#,
             name
         );
 
         match run_applescript(&script) {
             Ok(result) => {
-                let parts: Vec<&str> = result.splitn(6, "|||").collect();
+                let parts: Vec<&str> = result.splitn(8, "|||").collect();
                 if parts.len() < 4 {
                     return LiveStatus::default();
                 }
@@ -339,6 +345,22 @@ impl PresentationAdapter for PowerPointAdapter {
                 } else {
                     None
                 };
+                let click_index: Option<i32> = if parts.len() >= 7 {
+                    parts[6].trim().parse().ok()
+                } else {
+                    None
+                };
+                let click_count: Option<i32> = if parts.len() >= 8 {
+                    parts[7].trim().parse().ok()
+                } else {
+                    None
+                };
+
+                // Only report build info when there are actual builds on this slide
+                let (current_build, total_builds) = match (click_index, click_count) {
+                    (Some(idx), Some(cnt)) if cnt > 0 => (Some(idx), Some(cnt)),
+                    _ => (None, None),
+                };
 
                 LiveStatus {
                     is_open,
@@ -347,6 +369,8 @@ impl PresentationAdapter for PowerPointAdapter {
                     total_slides,
                     zoom_level: zoom,
                     presenter_notes: notes,
+                    current_build,
+                    total_builds,
                 }
             }
             Err(_) => LiveStatus::default(),

@@ -468,6 +468,8 @@ impl PresentationAdapter for CanvaAdapter {
                 total_slides: 0,
                 zoom_level: None,
                 presenter_notes: None,
+                current_build: None,
+                total_builds: None,
             };
         }
 
@@ -478,6 +480,8 @@ impl PresentationAdapter for CanvaAdapter {
             total_slides: state.total_pages,
             zoom_level: None,
             presenter_notes: state.presenter_notes.clone(),
+            current_build: None,
+            total_builds: None,
         }
     }
 
