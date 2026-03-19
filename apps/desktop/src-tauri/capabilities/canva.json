@@ -3,6 +3,9 @@
   "identifier": "canva-remote",
   "description": "Capability for the Canva remote control webview window",
   "windows": ["canva"],
+  "remote": {
+    "urls": ["https://*.canva.com"]
+  },
   "permissions": [
     "core:default",
     "core:event:default"

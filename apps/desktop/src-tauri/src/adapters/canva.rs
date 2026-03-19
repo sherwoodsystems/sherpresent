@@ -10,12 +10,16 @@ use tauri::{webview::WebviewWindowBuilder, Emitter, Manager, Url};
 
 const INTERCEPT_SCRIPT: &str = r#"
 (function() {
+  var __ipcWarned = false;
   function tauriLog(category, data) {
     const msg = typeof data === 'string' ? data : JSON.stringify(data);
     const ipc = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
       || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
     if (ipc) {
       ipc('log_from_webview', { category: category, message: msg }).catch(function(e) {});
+    } else if (!__ipcWarned) {
+      __ipcWarned = true;
+      console.warn('[CANVA-WEBVIEW] Tauri IPC bridge not available — state updates will not reach Rust. Check remote.urls in canva capability.');
     }
   }
 
@@ -245,7 +249,11 @@ const INTERCEPT_SCRIPT: &str = r#"
 
   window.__canvaCurrentPage = 0;
 
-  tauriLog('INTERCEPT', 'All interceptors installed');
+  var ipcAvailable = !!(
+    (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
+    || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke)
+  );
+  tauriLog('INTERCEPT', 'All interceptors installed (IPC available: ' + ipcAvailable + ')');
 })();
 "#;
 

@@ -413,23 +413,12 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         let window = Self::get_slideshow_window(&pres)?;
         let view = Self::get_slideshow_view(&window)?;
 
-        // Get current position before moving
         let slides = Self::get_slides(&pres)?;
         let count_var = Self::get_property(&slides, "Count")?;
         let total = Self::variant_to_i32(&count_var)?;
 
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current_pos = Self::variant_to_i32(&pos_var)?;
-
-        // Don't go past the last slide
-        if current_pos >= total {
-            return Ok(SlideInfo {
-                current: current_pos,
-                total,
-            });
-        }
-
-        // Call Next method
+        // Let PowerPoint handle boundaries — .Next() at end is a no-op,
+        // and it naturally steps through animations before advancing slides
         Self::invoke_method(&view, "Next")?;
 
         // Get new position
@@ -450,23 +439,12 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         let window = Self::get_slideshow_window(&pres)?;
         let view = Self::get_slideshow_view(&window)?;
 
-        // Get current position before moving
         let slides = Self::get_slides(&pres)?;
         let count_var = Self::get_property(&slides, "Count")?;
         let total = Self::variant_to_i32(&count_var)?;
 
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current_pos = Self::variant_to_i32(&pos_var)?;
-
-        // Don't go before the first slide
-        if current_pos <= 1 {
-            return Ok(SlideInfo {
-                current: current_pos,
-                total,
-            });
-        }
-
-        // Call Previous method
+        // Let PowerPoint handle boundaries — .Previous() at start is a no-op,
+        // and it naturally steps back through animations
         Self::invoke_method(&view, "Previous")?;
 
         // Get new position

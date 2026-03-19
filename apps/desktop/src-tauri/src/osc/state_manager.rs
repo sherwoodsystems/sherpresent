@@ -275,13 +275,21 @@ impl StateManager {
                 return;
             }
 
-            // Don't go past the last slide
-            if state.current_slide >= state.total_slides {
+            // Check if builds remain on the current slide
+            let has_remaining_builds = match (state.current_build, state.total_builds) {
+                (Some(current), Some(total)) => current < total,
+                _ => false,
+            };
+
+            // Don't go past the last slide (unless builds remain)
+            if state.current_slide >= state.total_slides && !has_remaining_builds {
                 return;
             }
 
-            // Optimistic update
-            state.current_slide += 1;
+            // Optimistic update: only increment slide when no builds remain
+            if !has_remaining_builds {
+                state.current_slide += 1;
+            }
             state.last_updated_ms = current_time_ms();
 
             true
@@ -311,13 +319,21 @@ impl StateManager {
                 return;
             }
 
-            // Don't go before slide 1
-            if state.current_slide <= 1 {
+            // Check if builds have been fired on this slide
+            let has_fired_builds = match state.current_build {
+                Some(current) => current > 0,
+                _ => false,
+            };
+
+            // Don't go before slide 1 (unless builds have been fired)
+            if state.current_slide <= 1 && !has_fired_builds {
                 return;
             }
 
-            // Optimistic update
-            state.current_slide -= 1;
+            // Optimistic update: only decrement slide when no builds fired
+            if !has_fired_builds {
+                state.current_slide -= 1;
+            }
             state.last_updated_ms = current_time_ms();
 
             true

@@ -90,11 +90,7 @@ impl PresentationAdapter for PowerPointAdapter {
             r#"tell application "Microsoft PowerPoint"
                 set ssView to slide show view of slide show window of presentation "{}"
                 set pres to presentation "{}"
-                set oldPos to current show position of ssView
                 set totalSlides to count slides of pres
-                if oldPos >= totalSlides then
-                    return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
-                end if
                 go to next slide ssView
                 set newPos to current show position of ssView
                 return "OK," & (newPos as text) & "," & (totalSlides as text)
@@ -126,11 +122,7 @@ impl PresentationAdapter for PowerPointAdapter {
             r#"tell application "Microsoft PowerPoint"
                 set ssView to slide show view of slide show window of presentation "{}"
                 set pres to presentation "{}"
-                set oldPos to current show position of ssView
                 set totalSlides to count slides of pres
-                if oldPos <= 1 then
-                    return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
-                end if
                 go to previous slide ssView
                 set newPos to current show position of ssView
                 return "OK," & (newPos as text) & "," & (totalSlides as text)
