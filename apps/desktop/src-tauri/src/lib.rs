@@ -92,6 +92,8 @@ pub fn run() {
             // Debug
             commands::debug::get_latency_events,
             commands::debug::clear_latency_events,
+            // App
+            commands::app::quit_app,
         ])
         .setup(|app| {
             // Load config on startup (or create default)
@@ -376,7 +378,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let tauri::tray::TrayIconEvent::Click { .. } = event {
+            if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
                 if let Some(window) = tray.app_handle().get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();

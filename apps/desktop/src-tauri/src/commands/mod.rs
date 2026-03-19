@@ -8,3 +8,4 @@ pub mod polling;
 pub mod osc;
 pub mod discovery;
 pub mod webserver;
+pub mod app;

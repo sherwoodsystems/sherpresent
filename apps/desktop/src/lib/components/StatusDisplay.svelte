@@ -27,61 +27,65 @@
     <p class="placeholder">Not presenting</p>
   {:else}
     <div class="status-content">
-      <div class="status-grid">
-        <div class="status-item">
-          <span class="status-label">Slide</span>
-          <span class="status-value">
-            {status.current_slide} / {status.total_slides}
-          </span>
-          {#if status.total_builds && status.total_builds > 0}
-            <span class="build-indicator">
-              {#each Array(status.total_builds) as _, i}
-                <span class="build-dot" class:filled={i < (status.current_build ?? 0)}></span>
-              {/each}
-              <span class="build-count">({status.current_build ?? 0}/{status.total_builds})</span>
+      <div class="status-row">
+        <div class="status-grid">
+          <div class="status-item">
+            <span class="status-label">Slide</span>
+            <span class="status-value">
+              {status.current_slide} / {status.total_slides}
             </span>
+            {#if status.total_builds && status.total_builds > 0}
+              <span class="build-indicator">
+                {#each Array(status.total_builds) as _, i}
+                  <span class="build-dot" class:filled={i < (status.current_build ?? 0)}></span>
+                {/each}
+                <span class="build-count">({status.current_build ?? 0}/{status.total_builds})</span>
+              </span>
+            {/if}
+          </div>
+
+          <div class="status-item">
+            <span class="status-label">Status</span>
+            <span class="status-value presenting">
+              Presenting
+            </span>
+          </div>
+
+          {#if supportsZoom && status.zoom_level !== null}
+            <div class="status-item">
+              <span class="status-label">Zoom</span>
+              <span class="status-value">{status.zoom_level}%</span>
+            </div>
           {/if}
         </div>
+      </div>
 
-        <div class="status-item">
-          <span class="status-label">Status</span>
-          <span class="status-value presenting">
-            Presenting
-          </span>
+      <div class="status-row controls-row">
+        <div class="nav-buttons">
+          <button class="nav-btn" onclick={onprev} disabled={!status.current_slide || status.current_slide <= 1}>
+            ← Prev
+          </button>
+          <button class="nav-btn" onclick={onnext} disabled={!status.current_slide || status.current_slide >= status.total_slides}>
+            Next →
+          </button>
         </div>
 
-        {#if supportsZoom && status.zoom_level !== null}
-          <div class="status-item">
-            <span class="status-label">Zoom</span>
-            <span class="status-value">{status.zoom_level}%</span>
-          </div>
-        {/if}
-      </div>
-
-      <div class="nav-buttons">
-        <button class="nav-btn" onclick={onprev} disabled={!status.current_slide || status.current_slide <= 1}>
-          ← Prev
-        </button>
-        <button class="nav-btn" onclick={onnext} disabled={!status.current_slide || status.current_slide >= status.total_slides}>
-          Next →
-        </button>
-      </div>
-
-      <div class="goto-controls">
-        <input
-          type="number"
-          class="goto-input"
-          min="1"
-          max={status.total_slides}
-          bind:value={gotoValue}
-          placeholder="#"
-          onkeydown={(e) => { if (e.key === 'Enter' && gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
-        />
-        <button
-          class="nav-btn"
-          onclick={() => { if (gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
-          disabled={!gotoValue}
-        >Go</button>
+        <div class="goto-controls">
+          <input
+            type="number"
+            class="goto-input"
+            min="1"
+            max={status.total_slides}
+            bind:value={gotoValue}
+            placeholder="#"
+            onkeydown={(e) => { if (e.key === 'Enter' && gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
+          />
+          <button
+            class="nav-btn"
+            onclick={() => { if (gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
+            disabled={!gotoValue}
+          >Go</button>
+        </div>
       </div>
     </div>
 
@@ -122,9 +126,13 @@
 
   .status-content {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .status-row {
+    display: flex;
     justify-content: center;
-    gap: 2rem;
   }
 
   .status-grid {
@@ -132,16 +140,18 @@
     gap: 1.5rem;
   }
 
+  .controls-row {
+    gap: 1rem;
+  }
+
   .nav-buttons {
     display: flex;
     gap: 0.5rem;
-    flex-shrink: 0;
   }
 
   .goto-controls {
     display: flex;
     gap: 0.25rem;
-    flex-shrink: 0;
   }
 
   .goto-input {

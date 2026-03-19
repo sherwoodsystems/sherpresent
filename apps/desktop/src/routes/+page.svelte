@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
   import AppSelector from '$lib/components/AppSelector.svelte';
   import AdapterConfig from '$lib/components/AdapterConfig.svelte';
   import PresentationPicker from '$lib/components/PresentationPicker.svelte';
@@ -57,6 +58,19 @@
       <NetworkOverview />
     </section>
 
+    <section class="quit-section">
+      <button
+        class="quit-btn"
+        onclick={() => {
+          if (confirm('Are you sure you want to quit SherPresent?')) {
+            invoke('quit_app');
+          }
+        }}
+      >
+        Quit SherPresent
+      </button>
+    </section>
+
   {:else}
     <p class="loading">Loading...</p>
   {/if}
@@ -105,6 +119,28 @@
     font-style: italic;
   }
 
+  .quit-section {
+    grid-column: 1 / -1;
+    text-align: center;
+  }
+
+  .quit-btn {
+    width: 100%;
+    padding: 0.875rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    background: #dc3545;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .quit-btn:hover {
+    background: #c82333;
+  }
+
   @media (prefers-color-scheme: dark) {
     .header h1 {
       color: #eee;
@@ -121,6 +157,14 @@
 
     .loading {
       color: #777;
+    }
+
+    .quit-btn {
+      background: #a82030;
+    }
+
+    .quit-btn:hover {
+      background: #c82333;
     }
   }
 </style>
