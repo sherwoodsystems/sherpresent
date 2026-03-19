@@ -117,23 +117,23 @@
     align-items: center;
     justify-content: center;
     gap: 2rem;
-    flex-wrap: wrap;
   }
 
   .status-grid {
     display: flex;
     gap: 1.5rem;
-    flex-wrap: wrap;
   }
 
   .nav-buttons {
     display: flex;
     gap: 0.5rem;
+    flex-shrink: 0;
   }
 
   .goto-controls {
     display: flex;
     gap: 0.25rem;
+    flex-shrink: 0;
   }
 
   .goto-input {
@@ -194,6 +194,8 @@
     font-size: 1.25rem;
     font-weight: 600;
     color: #333;
+    font-variant-numeric: tabular-nums;
+    min-width: 5ch;
   }
 
   .status-value.presenting {
