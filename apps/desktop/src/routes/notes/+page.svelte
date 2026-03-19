@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { save } from '@tauri-apps/plugin-dialog';
   import { appStore } from '$lib/state.svelte';
 
   let scrollContainer: HTMLElement;
@@ -51,6 +52,29 @@
     }
   }
 
+  async function exportMarkdown() {
+    const lines: string[] = [];
+    for (const slide of slides) {
+      if (slide.notes) {
+        lines.push(`# Slide ${slide.number}\n\n${slide.notes}\n`);
+      }
+    }
+    const markdown = lines.join('\n');
+
+    const defaultName = appStore.config.presentationName
+      ? `${appStore.config.presentationName} - Notes.md`
+      : 'Presentation Notes.md';
+
+    const filePath = await save({
+      defaultPath: defaultName,
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    });
+
+    if (filePath) {
+      await invoke('save_text_file', { path: filePath, content: markdown });
+    }
+  }
+
   onMount(async () => {
     appStore.fetchAllNotes();
     try {
@@ -73,6 +97,11 @@
         {/if}
       </div>
       <div class="header-actions">
+        {#if notesCount > 0}
+          <button class="refresh-btn" onclick={exportMarkdown} title="Export notes as Markdown">
+            Export
+          </button>
+        {/if}
         {#if notesViewUrl}
           <button class="refresh-btn" onclick={openNotesView} title="Open notes webview">
             {notesViewUrl} ↗

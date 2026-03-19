@@ -12,6 +12,7 @@ use tokio_stream::StreamExt;
 
 use crate::adapters::LiveStatus;
 use crate::config::WebServerConfig;
+use crate::osc::ScrollDirection;
 
 /// Handle for a running web server. Holds JoinHandles to keep tasks alive.
 #[allow(dead_code)]
@@ -26,6 +27,7 @@ struct WebServerState {
     notes_cache: Arc<Mutex<HashMap<i32, String>>>,
     status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
     notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
+    scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
     last_status: Arc<Mutex<LiveStatus>>,
     ontime_host: String,
     ontime_port: u16,
@@ -38,11 +40,13 @@ pub async fn start(
     notes_cache: Arc<Mutex<HashMap<i32, String>>>,
     status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
     notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
+    scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
 ) -> Result<WebServerHandle, String> {
     let state = WebServerState {
         notes_cache,
         status_broadcast,
         notes_broadcast,
+        scroll_broadcast,
         last_status: Arc::new(Mutex::new(LiveStatus::default())),
         ontime_host: config.ontime_host,
         ontime_port: config.ontime_port,
@@ -142,6 +146,7 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
     // Subscribe to broadcast channels
     let mut status_rx = state.status_broadcast.subscribe();
     let mut notes_rx = state.notes_broadcast.subscribe();
+    let mut scroll_rx = state.scroll_broadcast.subscribe();
 
     loop {
         tokio::select! {
@@ -165,6 +170,27 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
                         let msg = serde_json::json!({
                             "type": "notes",
                             "payload": notes,
+                        });
+                        if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            result = scroll_rx.recv() => {
+                match result {
+                    Ok(direction) => {
+                        let dir_str = match direction {
+                            ScrollDirection::Up => "up",
+                            ScrollDirection::Down => "down",
+                        };
+                        let msg = serde_json::json!({
+                            "type": "scroll",
+                            "payload": {
+                                "direction": dir_str,
+                                "pixels": 150,
+                            },
                         });
                         if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
                             break;
@@ -604,6 +630,7 @@ fn build_page_html(ontime_host: &str, ontime_port: u16, font_size: u16) -> Strin
         let totalSlides = 0;
         let isPresenting = false;
         let notes = {{}};
+        const notesSection = document.getElementById('notes-section');
 
         function escapeHtml(text) {{
             const div = document.createElement('div');
@@ -642,7 +669,6 @@ fn build_page_html(ontime_host: &str, ontime_port: u16, font_size: u16) -> Strin
             }}
 
             notesScroll.innerHTML = html;
-            scrollToActive();
         }}
 
         function updateActiveSlide() {{
@@ -661,7 +687,8 @@ fn build_page_html(ontime_host: &str, ontime_port: u16, font_size: u16) -> Strin
         function scrollToActive() {{
             const active = notesScroll.querySelector('.slide-notes.active');
             if (active) {{
-                active.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                const offset = active.offsetTop - notesSection.offsetTop - 32;
+                notesSection.scrollTo({{ top: offset, behavior: 'smooth' }});
             }}
         }}
 
@@ -707,6 +734,10 @@ fn build_page_html(ontime_host: &str, ontime_port: u16, font_size: u16) -> Strin
                     }} else if (data.type === 'notes') {{
                         notes = data.payload;
                         buildNotesBlocks();
+                    }} else if (data.type === 'scroll') {{
+                        const pixels = data.payload.pixels || 150;
+                        const direction = data.payload.direction === 'up' ? -1 : 1;
+                        notesSection.scrollBy({{ top: direction * pixels, behavior: 'smooth' }});
                     }}
                 }} catch (e) {{
                     console.error('[Stage] Failed to parse message:', event.data, e);

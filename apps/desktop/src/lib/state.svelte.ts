@@ -35,6 +35,7 @@ class AppStore {
   private unlistenNotes: UnlistenFn | null = null;
   private unlistenScanProgress: UnlistenFn | null = null;
   private unlistenLatency: UnlistenFn | null = null;
+  private navigatingUntil = 0;
 
   async init() {
     try {
@@ -63,6 +64,7 @@ class AppStore {
 
     // Listen for status updates
     this.unlistenStatus = await listen<LiveStatus>('presentation-status', (event) => {
+      if (Date.now() < this.navigatingUntil) return; // Skip stale updates during transition
       this.liveStatus = event.payload;
     });
 
@@ -246,12 +248,20 @@ class AppStore {
 
   async nextSlide() {
     try {
+      const oldSlide = this.liveStatus?.current_slide ?? 0;
       const info = await invoke<SlideInfo>('next_slide', {
         adapter: this.config.adapter,
         name: this.config.presentationName
       });
       if (this.liveStatus && info) {
-        this.liveStatus = { ...this.liveStatus, current_slide: info.current, total_slides: info.total };
+        let displaySlide = info.current;
+        // If the adapter returned the old slide number and a transition is in progress,
+        // optimistically show the next slide number
+        if (info.current === oldSlide && (info.transition_duration ?? 0) > 0) {
+          displaySlide = oldSlide + 1;
+        }
+        this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
+        this.liveStatus = { ...this.liveStatus, current_slide: displaySlide, total_slides: info.total };
       }
     } catch (e) {
       console.error('Failed to go to next slide:', e);
@@ -260,12 +270,18 @@ class AppStore {
 
   async prevSlide() {
     try {
+      const oldSlide = this.liveStatus?.current_slide ?? 0;
       const info = await invoke<SlideInfo>('prev_slide', {
         adapter: this.config.adapter,
         name: this.config.presentationName
       });
       if (this.liveStatus && info) {
-        this.liveStatus = { ...this.liveStatus, current_slide: info.current, total_slides: info.total };
+        let displaySlide = info.current;
+        if (info.current === oldSlide && oldSlide > 1) {
+          displaySlide = oldSlide - 1;
+        }
+        this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
+        this.liveStatus = { ...this.liveStatus, current_slide: displaySlide, total_slides: info.total };
       }
     } catch (e) {
       console.error('Failed to go to previous slide:', e);
@@ -274,13 +290,20 @@ class AppStore {
 
   async gotoSlide(slide: number) {
     try {
+      const oldSlide = this.liveStatus?.current_slide ?? 0;
       const info = await invoke<SlideInfo>('goto_slide', {
         adapter: this.config.adapter,
         name: this.config.presentationName,
         slide
       });
       if (this.liveStatus && info) {
-        this.liveStatus = { ...this.liveStatus, current_slide: info.current, total_slides: info.total };
+        let displaySlide = info.current;
+        // If the adapter returned the old slide number, optimistically use the target
+        if (info.current === oldSlide && info.current !== slide) {
+          displaySlide = slide;
+        }
+        this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
+        this.liveStatus = { ...this.liveStatus, current_slide: displaySlide, total_slides: info.total };
       }
     } catch (e) {
       console.error('Failed to go to slide:', e);

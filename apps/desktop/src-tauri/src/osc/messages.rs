@@ -87,9 +87,21 @@ pub enum OscCommand {
     /// Forwarded goto command from peer
     ChannelCmdGoto { origin: String, slide: i32 },
 
+    /// Scroll the stage view notes up
+    ScrollUp,
+    /// Scroll the stage view notes down
+    ScrollDown,
+
     /// An OSC address we don't recognize
     /// The String contains the original address for logging
     Unknown(String),
+}
+
+/// Direction for scroll commands (sent via broadcast channel to web server)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScrollDirection {
+    Up,
+    Down,
 }
 
 /// Result of parsing a channel-based OSC command
@@ -133,6 +145,8 @@ impl OscCommand {
             "resume" => Self::ChannelCmdNext { origin: "resume".to_string() }, // Placeholder for resume
             "status" => Self::Status,
             "refresh" => Self::Refresh,
+            "scrollUp" => Self::ScrollUp,
+            "scrollDown" => Self::ScrollDown,
             _ => return None,
         };
 
@@ -159,6 +173,8 @@ impl OscCommand {
                 let slide = Self::get_int_arg(args, 0).unwrap_or(1);
                 Self::Goto { slide }
             }
+            "/clicker/scrollUp" => Self::ScrollUp,
+            "/clicker/scrollDown" => Self::ScrollDown,
 
             // Channel commands with arguments
             "/clicker/channel/announce" => {
@@ -459,6 +475,33 @@ mod tests {
             OscCommand::from_message("/clicker/refresh", &[]),
             OscCommand::Refresh
         );
+    }
+
+    #[test]
+    fn test_scroll_command_parsing() {
+        assert_eq!(
+            OscCommand::from_message("/clicker/scrollUp", &[]),
+            OscCommand::ScrollUp
+        );
+        assert_eq!(
+            OscCommand::from_message("/clicker/scrollDown", &[]),
+            OscCommand::ScrollDown
+        );
+    }
+
+    #[test]
+    fn test_scroll_channel_command_parsing() {
+        let result = OscCommand::from_channel_message("/clicker/main/scrollUp", &[]);
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.channel, "main");
+        assert_eq!(cmd.command, OscCommand::ScrollUp);
+
+        let result = OscCommand::from_channel_message("/clicker/backup/scrollDown", &[]);
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.channel, "backup");
+        assert_eq!(cmd.command, OscCommand::ScrollDown);
     }
 
     #[test]

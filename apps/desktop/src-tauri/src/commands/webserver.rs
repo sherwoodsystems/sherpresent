@@ -20,12 +20,14 @@ pub async fn start_web_server(
     let notes_cache = state.notes_cache.clone();
     let status_broadcast = state.status_broadcast.clone();
     let notes_broadcast = state.notes_broadcast.clone();
+    let scroll_broadcast = state.scroll_broadcast.clone();
 
     let web_handle = crate::webserver::start(
         cfg.web_server,
         notes_cache,
         status_broadcast,
         notes_broadcast,
+        scroll_broadcast,
     )
     .await?;
 

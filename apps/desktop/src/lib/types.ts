@@ -160,6 +160,7 @@ export interface PresentationState {
 export interface SlideInfo {
   current: number;
   total: number;
+  transition_duration?: number | null;
 }
 
 export type NotesCache = Record<string, string>;

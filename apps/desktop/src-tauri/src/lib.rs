@@ -26,6 +26,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // Note: We removed tauri_plugin_shell since we no longer use a sidecar
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -50,6 +51,7 @@ pub fn run() {
             commands::presentation::clear_notes_cache,
             commands::presentation::start_notes_scan,
             commands::presentation::stop_notes_scan,
+            commands::presentation::save_text_file,
             // Polling
             commands::polling::start_status_polling,
             commands::polling::stop_status_polling,
@@ -132,6 +134,10 @@ pub fn run() {
                 let state = app_handle.state::<AppState>();
                 state.status_broadcast.clone()
             };
+            let scroll_broadcast = {
+                let state = app_handle.state::<AppState>();
+                state.scroll_broadcast.clone()
+            };
 
             tauri::async_runtime::spawn(async move {
                 log::info!("Auto-starting OSC server on port {}", osc_config.receive_port);
@@ -177,8 +183,10 @@ pub fn run() {
                         &channel_config,
                         peer_tx,
                     )
+                    .with_scroll_broadcast(scroll_broadcast.clone())
                 } else {
                     OscServer::new(osc_config, state_manager)
+                        .with_scroll_broadcast(scroll_broadcast.clone())
                 };
 
                 match osc_server.start(state_change_rx).await {
@@ -311,12 +319,14 @@ pub fn run() {
                     let notes_cache = state.notes_cache.clone();
                     let status_broadcast = state.status_broadcast.clone();
                     let notes_broadcast = state.notes_broadcast.clone();
+                    let scroll_broadcast = state.scroll_broadcast.clone();
 
                     match webserver::start(
                         web_server_config,
                         notes_cache,
                         status_broadcast,
                         notes_broadcast,
+                        scroll_broadcast,
                     )
                     .await
                     {

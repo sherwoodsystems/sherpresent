@@ -82,7 +82,7 @@ impl PresentationAdapter for PowerPointAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total })
+        Ok(SlideInfo { current, total, transition_duration: None })
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -114,7 +114,7 @@ impl PresentationAdapter for PowerPointAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total })
+        Ok(SlideInfo { current, total, transition_duration: None })
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -146,7 +146,7 @@ impl PresentationAdapter for PowerPointAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total })
+        Ok(SlideInfo { current, total, transition_duration: None })
     }
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
