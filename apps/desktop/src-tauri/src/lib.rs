@@ -11,8 +11,7 @@ mod commands;
 mod webserver;
 
 use std::sync::Arc;
-use tauri::{Emitter, Manager, WebviewUrl};
-use tauri::webview::WebviewWindowBuilder;
+use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use crate::state::AppState;
@@ -25,10 +24,7 @@ pub fn run() {
     // This helps with debugging OSC server issues
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let port = 9527;
-
     tauri::Builder::default()
-        .plugin(tauri_plugin_localhost::Builder::new(port).build())
         .plugin(tauri_plugin_opener::init())
         // Note: We removed tauri_plugin_shell since we no longer use a sidecar
         .manage(AppState::default())
@@ -97,15 +93,7 @@ pub fn run() {
             commands::debug::get_latency_events,
             commands::debug::clear_latency_events,
         ])
-        .setup(move |app| {
-            // Create the main window programmatically to use the localhost URL
-            // This bypasses issues some Windows systems have with the custom tauri:// protocol
-            let url = format!("http://localhost:{}", port).parse().unwrap();
-            let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("SherPresent")
-                .inner_size(500.0, 650.0)
-                .build()?;
-
+        .setup(|app| {
             // Load config on startup (or create default)
             let config = config::load_config(app.handle()).unwrap_or_default();
 
