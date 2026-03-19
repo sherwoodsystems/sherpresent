@@ -221,6 +221,38 @@ impl PowerPointWindowsAdapter {
         }
     }
 
+    /// Call a method with a single integer argument
+    ///
+    /// Equivalent to VBA: `obj.MethodName(intArg)`
+    fn invoke_method_with_int_arg(disp: &IDispatch, name: &str, arg_value: i32) -> Result<VARIANT, String> {
+        unsafe {
+            let dispid = Self::get_dispid(disp, name)?;
+            let mut result = VARIANT::default();
+            let arg = VARIANT::from(arg_value);
+            let mut args = [arg];
+            let params = DISPPARAMS {
+                rgvarg: args.as_mut_ptr(),
+                rgdispidNamedArgs: ptr::null_mut(),
+                cArgs: 1,
+                cNamedArgs: 0,
+            };
+
+            disp.Invoke(
+                dispid,
+                &GUID::zeroed(),
+                0,
+                DISPATCH_METHOD,
+                &params,
+                Some(&mut result),
+                None,
+                None,
+            )
+            .map_err(|e| format!("Failed to invoke method '{}({}): {}", name, arg_value, e))?;
+
+            Ok(result)
+        }
+    }
+
     /// Extract an IDispatch from a VARIANT
     fn variant_to_dispatch(var: &VARIANT) -> Result<IDispatch, String> {
         IDispatch::try_from(var)
@@ -445,6 +477,29 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
             current: new_pos,
             total,
         })
+    }
+
+    fn goto_slide(&self, name: &str, slide: i32) -> Result<SlideInfo, String> {
+        Self::init_com()?;
+
+        let app = Self::get_application()?;
+        let pres = Self::get_presentation_by_name(&app, name)?;
+        let window = Self::get_slideshow_window(&pres)?;
+        let view = Self::get_slideshow_view(&window)?;
+
+        let slides = Self::get_slides(&pres)?;
+        let count_var = Self::get_property(&slides, "Count")?;
+        let total = Self::variant_to_i32(&count_var)?;
+
+        // Clamp to valid range
+        let target = slide.clamp(1, total);
+
+        Self::invoke_method_with_int_arg(&view, "GotoSlide", target)?;
+
+        let new_pos_var = Self::get_property(&view, "CurrentShowPosition")?;
+        let new_pos = Self::variant_to_i32(&new_pos_var)?;
+
+        Ok(SlideInfo { current: new_pos, total })
     }
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {

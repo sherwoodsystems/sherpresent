@@ -10,7 +10,7 @@
 
 <main class="container">
   <header class="header">
-    <h1>sher-present</h1>
+    <h1>SherPresent</h1>
     <p class="subtitle">Presentation Remote Control</p>
   </header>
 

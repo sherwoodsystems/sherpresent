@@ -29,7 +29,7 @@ pub async fn start_osc_server(
     {
         log::info!(
             "Windows firewall note: If LAN access doesn't work, run PowerShell as Admin: \
-             New-NetFirewallRule -DisplayName 'sher-present OSC' -Direction Inbound -Protocol UDP -LocalPort {} -Action Allow",
+             New-NetFirewallRule -DisplayName 'SherPresent OSC' -Direction Inbound -Protocol UDP -LocalPort {} -Action Allow",
             config.osc.receive_port
         );
     }
