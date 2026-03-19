@@ -21,6 +21,7 @@
   let logFilePath = $state("");
   let captures = $state<CaptureFile[]>([]);
   let logDir = $state("");
+  let canvaUrl = $state("");
 
   let sortedCategories = $derived(
     Object.entries(stats.categories).sort((a, b) => b[1] - a[1])
@@ -28,7 +29,8 @@
 
   async function openCanva() {
     try {
-      logFilePath = await invoke<string>("open_canva");
+      const url = canvaUrl.trim() || undefined;
+      logFilePath = await invoke<string>("open_canva", { url });
       canvaOpen = true;
       stats = { totalEntries: 0, categories: {}, logFile: logFilePath };
     } catch (e) {
@@ -73,6 +75,13 @@
     if (cat.startsWith("ANIMATION") || cat.startsWith("TRANSITION")) return "#ce93d8";
     if (cat.startsWith("DOM")) return "#ffab91";
     if (cat.startsWith("CANVAS")) return "#f06292";
+    if (cat.startsWith("NET_RECORD")) return "#66bb6a";
+    if (cat.startsWith("SLIDE_CHANGE")) return "#ffca28";
+    if (cat.startsWith("PAGE_")) return "#ab47bc";
+    if (cat.startsWith("INLINE_SCRIPT")) return "#7e57c2";
+    if (cat.startsWith("WINDOW_GLOBAL") || cat.startsWith("GLOBALS")) return "#5c6bc0";
+    if (cat.startsWith("BEACON")) return "#26a69a";
+    if (cat.startsWith("SW_")) return "#ef5350";
     if (cat.startsWith("STATE")) return "#fff176";
     return "#90a4ae";
   }
@@ -140,7 +149,17 @@
     </section>
   {:else}
     <section class="welcome">
-      <p>Click <strong>Open Canva</strong> to launch the instrumented browser.</p>
+      <div class="url-input-group">
+        <input
+          type="text"
+          bind:value={canvaUrl}
+          placeholder="Paste Canva public view link (optional)..."
+          class="url-input"
+          onkeydown={(e) => { if (e.key === 'Enter') openCanva(); }}
+        />
+        <button class="btn open" onclick={openCanva}>Analyze</button>
+      </div>
+      <p class="hint">Paste a public view URL to capture a specific presentation, or leave blank to browse Canva.</p>
       <p class="hint">All network traffic, console output, animations, DOM mutations, and canvas usage will be captured to a JSONL file for offline analysis.</p>
     </section>
   {/if}
@@ -297,6 +316,27 @@
     padding: 60px 20px;
   }
   .welcome p { margin: 8px 0; }
+
+  .url-input-group {
+    display: flex;
+    gap: 10px;
+    max-width: 600px;
+    margin: 0 auto 16px auto;
+  }
+
+  .url-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    background: #16213e;
+    color: #e0e0e0;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+  .url-input:focus { border-color: #4fc3f7; }
+  .url-input::placeholder { color: #546e7a; }
 
   .hint { font-size: 12px; color: #546e7a; }
   .hint code { color: #90a4ae; }

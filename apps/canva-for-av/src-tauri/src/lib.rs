@@ -87,6 +87,29 @@ const INTERCEPT_SCRIPT: &str = r#"
   window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
   window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
 
+  // --- Skip list for noise ---
+  var SKIP_DOMAINS = [
+    'telemetry.canva.com',
+    'ct.canva.com',
+    'googleads',
+    'doubleclick',
+    '_online?',
+    'google-analytics.com',
+    'googlesyndication.com',
+    'googletagmanager.com',
+    'facebook.net',
+    'facebook.com/tr',
+    'sentry.io',
+    '/cdn-cgi/rum',
+  ];
+  function shouldSkipCapture(url) {
+    if (url.endsWith('.wasm')) {
+      tauriLog('NET_SKIP_WASM', { url: url });
+      return true;
+    }
+    return SKIP_DOMAINS.some(function(d) { return url.includes(d); });
+  }
+
   // --- Monkey-patch fetch ---
   const origFetch = window.fetch;
   window.fetch = function() {
@@ -96,21 +119,24 @@ const INTERCEPT_SCRIPT: &str = r#"
       return origFetch.apply(this, args);
     }
     const method = (args[1] && args[1].method) ? args[1].method : 'GET';
+    var reqBody = null;
+    try { reqBody = (args[1] && args[1].body) ? String(args[1].body) : null; } catch(e) {}
     tauriLog('FETCH_REQ', { method: method, url: url });
 
-    var FETCH_BODY_PATTERNS = [
-      '/documents/',
-      '/remotecontrol/',
-      '/livepresentation/',
-      'media-public.canva.com',
-    ];
     return origFetch.apply(this, args).then(function(response) {
       tauriLog('FETCH_RES', { method: method, url: url, status: response.status });
-      var shouldCapture = FETCH_BODY_PATTERNS.some(function(p) { return url.includes(p); });
-      if (shouldCapture) {
+      if (!shouldSkipCapture(url)) {
         response.clone().text().then(function(body) {
-          tauriLog('FETCH_BODY', { method: method, url: url, status: response.status, body: body });
-        });
+          tauriLog('NET_RECORD', JSON.stringify({
+            type: 'fetch',
+            url: url,
+            method: method,
+            requestBody: reqBody,
+            status: response.status,
+            responseBody: body,
+            timestamp: Date.now()
+          }));
+        }).catch(function(e) {});
       }
       return response;
     }).catch(function(err) {
@@ -133,14 +159,27 @@ const INTERCEPT_SCRIPT: &str = r#"
   };
   XMLHttpRequest.prototype.send = function(body) {
     if (!this._isIpc) {
-      tauriLog('XHR_SEND', { method: this._logMethod, url: this._logUrl, body: body ? String(body).substring(0, 2000) : null });
-      var FULL_BODY_PATTERNS = ['/documents/', '/remotecontrol/', '/livepresentation/'];
+      var reqBody = body ? String(body) : null;
+      tauriLog('XHR_SEND', { method: this._logMethod, url: this._logUrl, body: reqBody ? reqBody.substring(0, 2000) : null });
       var xhrUrl = this._logUrl;
+      var xhrMethod = this._logMethod;
       this.addEventListener('load', function() {
-        var isFullBody = FULL_BODY_PATTERNS.some(function(p) { return xhrUrl.includes(p); });
         var respBody = '';
-        try { respBody = isFullBody ? (this.responseText || '') : (this.responseText || '').substring(0, 4000); } catch(e) {}
-        tauriLog('XHR_DONE', { method: this._logMethod, url: this._logUrl, status: this.status, response: respBody });
+        try { respBody = this.responseText || ''; } catch(e) {}
+        // Always emit XHR_DONE for compatibility
+        tauriLog('XHR_DONE', { method: xhrMethod, url: xhrUrl, status: this.status, response: respBody.substring(0, 4000) });
+        // Full NET_RECORD for replay
+        if (!shouldSkipCapture(xhrUrl)) {
+          tauriLog('NET_RECORD', JSON.stringify({
+            type: 'xhr',
+            url: xhrUrl,
+            method: xhrMethod,
+            requestBody: reqBody,
+            status: this.status,
+            responseBody: respBody,
+            timestamp: Date.now()
+          }));
+        }
       });
     }
     return origXHRSend.apply(this, arguments);
@@ -227,6 +266,14 @@ const INTERCEPT_SCRIPT: &str = r#"
     });
     setInterval(function() {
       if (mutationLog.added > 0 || mutationLog.removed > 0 || mutationLog.attributes > 0 || mutationLog.text > 0) {
+        // Detect slide changes: massive DOM mutation bursts
+        if (mutationLog.added > 200 && mutationLog.removed > 100) {
+          tauriLog('SLIDE_CHANGE_DETECTED', {
+            added: mutationLog.added,
+            removed: mutationLog.removed,
+            timestamp: Date.now()
+          });
+        }
         tauriLog('DOM_SUMMARY', mutationLog);
         mutationLog = { added: 0, removed: 0, attributes: 0, text: 0 };
       }
@@ -250,6 +297,122 @@ const INTERCEPT_SCRIPT: &str = r#"
     });
     return origGetContext.apply(this, arguments);
   };
+
+  // --- Canvas capture probe ---
+  setInterval(function() {
+    var canvases = document.querySelectorAll('canvas');
+    if (canvases.length === 0) {
+      tauriLog('CANVAS_PROBE', { count: 0, message: 'No canvas elements found' });
+      return;
+    }
+    canvases.forEach(function(c, i) {
+      try {
+        var dataUrl = c.toDataURL('image/png').substring(0, 100);
+        tauriLog('CANVAS_PROBE', { index: i, width: c.width, height: c.height, tainted: false, preview: dataUrl });
+      } catch(e) {
+        tauriLog('CANVAS_PROBE', { index: i, width: c.width, height: c.height, tainted: true, error: String(e) });
+      }
+    });
+  }, 5000);
+
+  // --- Capture initial page state (embedded JSON, inline scripts, __NEXT_DATA__, etc.) ---
+  function capturePageState() {
+    // Look for common embedded data patterns
+    var patterns = [
+      { name: '__NEXT_DATA__', selector: 'script#__NEXT_DATA__' },
+      { name: '__APOLLO_STATE__', global: '__APOLLO_STATE__' },
+      { name: '__CANVA_DATA__', global: '__CANVA_DATA__' },
+    ];
+    patterns.forEach(function(p) {
+      if (p.selector) {
+        var el = document.querySelector(p.selector);
+        if (el && el.textContent) {
+          tauriLog('PAGE_STATE', JSON.stringify({ source: p.name, size: el.textContent.length, data: el.textContent }));
+        }
+      }
+      if (p.global && window[p.global]) {
+        try {
+          var data = JSON.stringify(window[p.global]);
+          tauriLog('PAGE_STATE', JSON.stringify({ source: p.name, size: data.length, data: data }));
+        } catch(e) {}
+      }
+    });
+
+    // Capture ALL inline script contents (Canva often embeds data in anonymous script tags)
+    var scripts = document.querySelectorAll('script:not([src])');
+    scripts.forEach(function(s, i) {
+      var content = s.textContent || '';
+      if (content.length > 50) {
+        tauriLog('INLINE_SCRIPT', JSON.stringify({ index: i, size: content.length, content: content }));
+      }
+    });
+
+    // Dump all window globals that look like embedded data
+    var interestingGlobals = [];
+    try {
+      for (var key in window) {
+        if (key.startsWith('__') && key !== '__ipcWarned') {
+          try {
+            var val = window[key];
+            if (val && typeof val === 'object') {
+              var json = JSON.stringify(val);
+              if (json.length > 100) {
+                interestingGlobals.push({ key: key, size: json.length });
+                tauriLog('WINDOW_GLOBAL', JSON.stringify({ key: key, size: json.length, data: json.substring(0, 50000) }));
+              }
+            }
+          } catch(e) {}
+        }
+      }
+    } catch(e) {}
+    if (interestingGlobals.length > 0) {
+      tauriLog('GLOBALS_SUMMARY', JSON.stringify(interestingGlobals));
+    }
+
+    // Capture full page HTML (first 200KB) for server-rendered content analysis
+    try {
+      var html = document.documentElement.outerHTML;
+      tauriLog('PAGE_HTML_SIZE', JSON.stringify({ size: html.length, url: location.href, title: document.title }));
+      // Split into chunks if very large (IPC has limits)
+      var chunkSize = 100000;
+      for (var ci = 0; ci < html.length && ci < 500000; ci += chunkSize) {
+        tauriLog('PAGE_HTML', JSON.stringify({ chunk: ci / chunkSize, data: html.substring(ci, ci + chunkSize) }));
+      }
+    } catch(e) {
+      tauriLog('PAGE_HTML_ERROR', String(e));
+    }
+  }
+
+  // Run page state capture after load, and again after a delay for SPA hydration
+  if (document.readyState === 'complete') {
+    setTimeout(capturePageState, 2000);
+  } else {
+    window.addEventListener('load', function() {
+      setTimeout(capturePageState, 2000);
+    });
+  }
+  // Also capture again after 10s for late-loading content
+  setTimeout(capturePageState, 10000);
+
+  // --- Intercept navigator.sendBeacon ---
+  if (navigator.sendBeacon) {
+    var origBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function(url, data) {
+      if (!shouldSkipCapture(String(url))) {
+        tauriLog('BEACON', JSON.stringify({ url: String(url), data: data ? String(data).substring(0, 10000) : null }));
+      }
+      return origBeacon(url, data);
+    };
+  }
+
+  // --- Detect Service Worker registration ---
+  if (navigator.serviceWorker) {
+    var origRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+    navigator.serviceWorker.register = function(scriptURL, options) {
+      tauriLog('SW_REGISTER', JSON.stringify({ scriptURL: String(scriptURL), options: options }));
+      return origRegister(scriptURL, options);
+    };
+  }
 
   var ipcAvailable = !!(
     (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
@@ -284,10 +447,21 @@ fn new_log_file() -> PathBuf {
 }
 
 #[tauri::command]
-fn open_canva(app: tauri::AppHandle, state: tauri::State<'_, ManagedState>) -> Result<String, String> {
+fn open_canva(app: tauri::AppHandle, state: tauri::State<'_, ManagedState>, url: Option<String>) -> Result<String, String> {
     if let Some(existing) = app.get_webview_window("canva") {
         let _ = existing.close();
     }
+
+    // Validate and resolve target URL
+    let target_url = match url {
+        Some(ref u) if !u.is_empty() => {
+            if !u.contains("canva.com") {
+                return Err("URL must be a canva.com link".to_string());
+            }
+            tauri::Url::parse(u).map_err(|e| format!("Invalid URL: {}", e))?
+        }
+        _ => tauri::Url::parse("https://www.canva.com").unwrap(),
+    };
 
     // Start a new capture file for this session
     let log_path = new_log_file();
@@ -299,8 +473,7 @@ fn open_canva(app: tauri::AppHandle, state: tauri::State<'_, ManagedState>) -> R
         s.category_counts.clear();
     }
 
-    let url = tauri::Url::parse("https://www.canva.com").unwrap();
-    WebviewWindowBuilder::new(&app, "canva", tauri::WebviewUrl::External(url))
+    WebviewWindowBuilder::new(&app, "canva", tauri::WebviewUrl::External(target_url))
         .title("Canva Analyzer")
         .inner_size(1280.0, 900.0)
         .initialization_script(INTERCEPT_SCRIPT)

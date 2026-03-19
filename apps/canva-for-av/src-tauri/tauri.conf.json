@@ -19,7 +19,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: tauri: https://*.canva.com https://*.canva.dev; img-src 'self' asset: http://asset.localhost https://*.canva.com; style-src 'self' 'unsafe-inline'"
+      "csp": null
     }
   },
   "bundle": {
