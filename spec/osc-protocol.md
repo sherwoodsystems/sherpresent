@@ -69,6 +69,11 @@ Sent to port 9002 (broadcast). Format: `/clicker/{channel}/{command}`
 | `/clicker/{channel}/black` | none | Black screen (placeholder) |
 | `/clicker/{channel}/white` | none | White screen (placeholder) |
 | `/clicker/{channel}/resume` | none | Resume from black/white (placeholder) |
+| `/clicker/{channel}/zoom` | none | Query current notes zoom level |
+| `/clicker/{channel}/zoomIn` | none | Increase notes zoom level |
+| `/clicker/{channel}/zoomOut` | none | Decrease notes zoom level |
+| `/clicker/{channel}/scrollUp` | none | Scroll stage view notes up |
+| `/clicker/{channel}/scrollDown` | none | Scroll stage view notes down |
 
 ### Channel Feedback
 

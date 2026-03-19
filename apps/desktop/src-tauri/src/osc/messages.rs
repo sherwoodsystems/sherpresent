@@ -145,6 +145,9 @@ impl OscCommand {
             "resume" => Self::ChannelCmdNext { origin: "resume".to_string() }, // Placeholder for resume
             "status" => Self::Status,
             "refresh" => Self::Refresh,
+            "zoom" => Self::Zoom,
+            "zoomIn" => Self::ZoomIn,
+            "zoomOut" => Self::ZoomOut,
             "scrollUp" => Self::ScrollUp,
             "scrollDown" => Self::ScrollDown,
             _ => return None,
@@ -487,6 +490,27 @@ mod tests {
             OscCommand::from_message("/clicker/scrollDown", &[]),
             OscCommand::ScrollDown
         );
+    }
+
+    #[test]
+    fn test_zoom_channel_command_parsing() {
+        let result = OscCommand::from_channel_message("/clicker/main/zoomIn", &[]);
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.channel, "main");
+        assert_eq!(cmd.command, OscCommand::ZoomIn);
+
+        let result = OscCommand::from_channel_message("/clicker/backup/zoomOut", &[]);
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.channel, "backup");
+        assert_eq!(cmd.command, OscCommand::ZoomOut);
+
+        let result = OscCommand::from_channel_message("/clicker/main/zoom", &[]);
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.channel, "main");
+        assert_eq!(cmd.command, OscCommand::Zoom);
     }
 
     #[test]
