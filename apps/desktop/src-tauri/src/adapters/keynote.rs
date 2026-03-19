@@ -91,6 +91,12 @@ impl PresentationAdapter for KeynoteAdapter {
                         return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
                     end if
                     show next
+                    -- Wait up to 0.5s for transition to settle
+                    repeat 5 times
+                        delay 0.1
+                        set newPos to slide number of current slide
+                        if newPos is not oldPos then exit repeat
+                    end repeat
                     set newPos to slide number of current slide
                     return "OK," & (newPos as text) & "," & (totalSlides as text)
                 end tell
@@ -127,11 +133,64 @@ impl PresentationAdapter for KeynoteAdapter {
                         return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
                     end if
                     show previous
+                    -- Wait up to 0.5s for transition to settle
+                    repeat 5 times
+                        delay 0.1
+                        set newPos to slide number of current slide
+                        if newPos is not oldPos then exit repeat
+                    end repeat
                     set newPos to slide number of current slide
                     return "OK," & (newPos as text) & "," & (totalSlides as text)
                 end tell
             end tell"#,
             name
+        );
+
+        let result = run_applescript(&script)?;
+        let parts: Vec<&str> = result.split(',').collect();
+
+        if parts.len() != 3 {
+            return Err("Unexpected response format".to_string());
+        }
+
+        let current = parts[1]
+            .trim()
+            .parse()
+            .map_err(|_| "Failed to parse current slide")?;
+        let total = parts[2]
+            .trim()
+            .parse()
+            .map_err(|_| "Failed to parse total slides")?;
+
+        Ok(SlideInfo { current, total })
+    }
+
+    fn goto_slide(&self, name: &str, slide: i32) -> Result<SlideInfo, String> {
+        let script = format!(
+            r#"tell application "Keynote"
+                tell document "{}"
+                    set totalSlides to count (every slide whose skipped is false)
+                    if {slide} < 1 or {slide} > totalSlides then
+                        return "BOUNDARY," & (slide number of current slide as text) & "," & (totalSlides as text)
+                    end if
+                    set matchingSlides to (every slide whose slide number is {slide})
+                    if (count matchingSlides) = 0 then
+                        return "BOUNDARY," & (slide number of current slide as text) & "," & (totalSlides as text)
+                    end if
+                    set oldPos to slide number of current slide
+                    set current slide to item 1 of matchingSlides
+                    -- Wait up to 0.5s for transition to settle
+                    repeat 5 times
+                        delay 0.1
+                        set newPos to slide number of current slide
+                        if newPos is not oldPos then exit repeat
+                    end repeat
+                    set newPos to slide number of current slide
+                    return "OK," & (newPos as text) & "," & (totalSlides as text)
+                end tell
+            end tell"#,
+            name,
+            slide = slide
         );
 
         let result = run_applescript(&script)?;

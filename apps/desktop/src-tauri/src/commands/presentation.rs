@@ -327,3 +327,8 @@ pub fn start_notes_scan(
 pub fn stop_notes_scan(state: tauri::State<AppState>) {
     *state.notes_scan_active.lock().unwrap_or_else(|e| e.into_inner()) = false;
 }
+
+#[tauri::command]
+pub fn save_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content).map_err(|e| e.to_string())
+}

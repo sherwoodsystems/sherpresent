@@ -44,6 +44,7 @@ pub mod state_manager;
 // Re-export main types for convenient access from lib.rs
 // This means you can do `osc::OscServer` instead of `osc::server::OscServer`
 pub use latency::{CommandSource, LatencyEvent, LatencyStore};
+pub use messages::ScrollDirection;
 pub use server::{OscServer, OscServerHandle};
 pub use state_manager::{CachedState, StateManager};
 
