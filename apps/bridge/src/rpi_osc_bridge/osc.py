@@ -1,4 +1,4 @@
-"""OSC broadcast sender and feedback listener for rpi-osc-bridge."""
+"""OSC sender (direct + broadcast) and feedback listener for rpi-osc-bridge."""
 
 import os
 import json
@@ -35,7 +35,50 @@ except ImportError:
 
 import uuid as _uuid
 
-from constants import DEFAULT_BROADCAST_PORT, DEFAULT_CONFIG_PORT, MDNS_SERVICE_TYPE, BRIDGE_VERSION_STRING
+from constants import DEFAULT_BROADCAST_PORT, DEFAULT_CONFIG_PORT, DEFAULT_DIRECT_PORT, \
+    DEFAULT_FEEDBACK_PORT, MDNS_SERVICE_TYPE, BRIDGE_VERSION_STRING, PEERS_STATE_FILE
+
+
+class DirectSender:
+    """Sends OSC commands directly to a specific desktop app (unicast)."""
+
+    def __init__(self, host: str, port: int):
+        self.host = host
+        self.port = port
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    def send_next(self):
+        self._send("/clicker/next")
+
+    def send_prev(self):
+        self._send("/clicker/prev")
+
+    def send_goto(self, slide: int):
+        self._send("/clicker/goto", slide)
+
+    def _send(self, address: str, *args):
+        """Send OSC message to target host, 3x for reliability."""
+        try:
+            builder = OscMessageBuilder(address=address)
+            for arg in args:
+                builder.add_arg(arg)
+            msg = builder.build()
+
+            for i in range(3):
+                self.socket.sendto(msg.dgram, (self.host, self.port))
+                if i < 2:
+                    time.sleep(0.010)
+
+            logging.debug(f"Sent (3x) to {self.host}:{self.port}: {address}")
+        except Exception as e:
+            logging.error(f"Direct send failed: {e}")
+
+    def close(self):
+        """Close the socket."""
+        try:
+            self.socket.close()
+        except Exception:
+            pass
 
 
 class BroadcastSender:
@@ -140,13 +183,14 @@ class BroadcastSender:
 class PeerDiscovery:
     """
     Discovers desktop peers via mDNS browsing.
-    Maintains a set of (ip, port) for discovered desktop instances.
+    Maintains a dict of discovered desktop instances with their connection info.
     Filters out version=bridge peers (other bridges).
+    Writes discovered peers to a JSON file for the config server.
     """
 
     def __init__(self, broadcast_port: int = DEFAULT_BROADCAST_PORT):
         self.broadcast_port = broadcast_port
-        self._peers = {}  # name -> (ip, port)
+        self._peers = {}  # name -> {ip, port, name, channel, instance}
         self._lock = threading.Lock()
         self._zeroconf = None
         self._browser = None
@@ -184,21 +228,62 @@ class PeerDiscovery:
             addresses = info.parsed_addresses()
             if addresses:
                 ip = addresses[0]
-                # Desktop listens on broadcast port for broadcast commands
+                osc_port = info.port or self.broadcast_port
+                instance_id = properties.get("instance", name)
+                peer_name = properties.get("name", name)
+                channel = properties.get("channel", "")
+
                 with self._lock:
-                    self._peers[name] = (ip, self.broadcast_port)
-                logging.debug(f"Discovered desktop peer: {name} at {ip}:{self.broadcast_port}")
+                    self._peers[name] = {
+                        "host": ip,
+                        "port": osc_port,
+                        "name": peer_name,
+                        "channel": channel,
+                        "instance": instance_id,
+                    }
+                logging.debug(f"Discovered desktop peer: {peer_name} at {ip}:{osc_port}")
+                self._write_peers_file()
 
         elif state_change == ServiceStateChange.Removed:
             with self._lock:
                 if name in self._peers:
                     del self._peers[name]
                     logging.debug(f"Desktop peer removed: {name}")
+            self._write_peers_file()
 
     def get_desktop_peers(self):
         """Return list of (ip, port) tuples for discovered desktop peers."""
         with self._lock:
-            return list(self._peers.values())
+            return [(p["host"], p["port"]) for p in self._peers.values()]
+
+    def get_peers_dict(self) -> dict:
+        """Return dict of {instance_id: {host, port, name, channel}} for the web UI."""
+        with self._lock:
+            result = {}
+            for service_name, peer in self._peers.items():
+                result[peer["instance"]] = {
+                    "host": peer["host"],
+                    "port": peer["port"],
+                    "name": peer["name"],
+                    "channel": peer["channel"],
+                }
+            return result
+
+    def _write_peers_file(self):
+        """Write discovered peers to JSON file for config_server."""
+        try:
+            peers_dict = self.get_peers_dict()
+            os.makedirs(os.path.dirname(PEERS_STATE_FILE), exist_ok=True)
+
+            temp_file = PEERS_STATE_FILE + ".tmp"
+            with open(temp_file, 'w') as f:
+                json.dump({
+                    "peers": peers_dict,
+                    "updated_at": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                }, f, indent=2)
+            os.rename(temp_file, PEERS_STATE_FILE)
+        except Exception as e:
+            logging.debug(f"Could not write peers file: {e}")
 
     def stop(self):
         """Stop browsing."""
@@ -217,7 +302,7 @@ class MdnsAnnouncer:
     Desktop instances browsing for this service will see the bridge appear.
     """
 
-    def __init__(self, channel: str, port: int = DEFAULT_BROADCAST_PORT,
+    def __init__(self, channel: str = "bridge", port: int = DEFAULT_BROADCAST_PORT,
                  bridge_id: str = "", bridge_name: str = "",
                  config_port: int = DEFAULT_CONFIG_PORT):
         self.channel = channel
@@ -291,14 +376,16 @@ class MdnsAnnouncer:
 
 class FeedbackListener:
     """
-    Listens for OSC feedback from broadcast channel and writes to state file.
-    Handles channel-aware messages: /clicker/<channel>/state/*
+    Listens for OSC feedback and writes to state file.
+    Supports both direct mode (/clicker/state/*) and
+    channel mode (/clicker/<channel>/state/*).
     """
 
-    def __init__(self, channel: str, port: int, state_file: str):
+    def __init__(self, channel: str, port: int, state_file: str, direct_mode: bool = False):
         self.channel = channel
         self.port = port
         self.state_file = state_file
+        self.direct_mode = direct_mode
         self.state = {
             "channel": channel,
             "presenting": False,
@@ -314,11 +401,21 @@ class FeedbackListener:
         self._last_error_logged = 0
 
         self.dispatcher = dispatcher.Dispatcher()
-        self.dispatcher.map(f"/clicker/{channel}/state/presenting", self.handle_presenting)
-        self.dispatcher.map(f"/clicker/{channel}/state/open", self.handle_open)
-        self.dispatcher.map(f"/clicker/{channel}/state/slide", self.handle_slide)
-        self.dispatcher.map(f"/clicker/{channel}/state/zoom", self.handle_zoom)
-        self.dispatcher.map("/clicker/*/state/*", self.handle_any_state)
+
+        if direct_mode:
+            # Direct mode: /clicker/state/* and /clicker/slide/*
+            self.dispatcher.map("/clicker/state/presenting", self.handle_presenting)
+            self.dispatcher.map("/clicker/state/open", self.handle_open)
+            self.dispatcher.map("/clicker/state/zoom", self.handle_zoom)
+            self.dispatcher.map("/clicker/slide/current", self.handle_slide_current)
+            self.dispatcher.map("/clicker/slide/total", self.handle_slide_total)
+        else:
+            # Channel mode: /clicker/<channel>/state/*
+            self.dispatcher.map(f"/clicker/{channel}/state/presenting", self.handle_presenting)
+            self.dispatcher.map(f"/clicker/{channel}/state/open", self.handle_open)
+            self.dispatcher.map(f"/clicker/{channel}/state/slide", self.handle_slide)
+            self.dispatcher.map(f"/clicker/{channel}/state/zoom", self.handle_zoom)
+            self.dispatcher.map("/clicker/*/state/*", self.handle_any_state)
 
         self.server = osc_server.ThreadingOSCUDPServer(
             ('0.0.0.0', self.port),
@@ -349,6 +446,14 @@ class FeedbackListener:
             })
         elif args:
             self.update_state({"current_slide": int(args[0])})
+
+    def handle_slide_current(self, address, *args):
+        if args:
+            self.update_state({"current_slide": int(args[0])})
+
+    def handle_slide_total(self, address, *args):
+        if args:
+            self.update_state({"total_slides": int(args[0])})
 
     def handle_zoom(self, address, *args):
         if args:
@@ -394,14 +499,15 @@ class FeedbackListener:
         self.update_state({})
 
     def start(self):
-        """Start listening for broadcast feedback in background thread."""
+        """Start listening for feedback in background thread."""
         if self.running:
             return
 
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
-        logging.debug(f"Feedback listener on port {self.port} for channel '{self.channel}'")
+        mode_str = "direct" if self.direct_mode else f"channel '{self.channel}'"
+        logging.debug(f"Feedback listener on port {self.port} for {mode_str}")
 
     def _run(self):
         try:

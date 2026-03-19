@@ -18,25 +18,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from devices import find_keyboards_with_ports
     from config import MultiDeviceConfig
-    from osc import BroadcastSender
-    from constants import VALID_CHANNELS, VALID_MODES, DEFAULT_BROADCAST_PORT, \
+    from osc import DirectSender
+    from constants import VALID_MODES, DEFAULT_FEEDBACK_PORT, \
         DEFAULT_SATELLITE_PORT, CONFIG_FILE, REGISTRATION_FILE, \
-        FEEDBACK_STATE_FILE, SATELLITE_STATUS_FILE, DEVICE_SLOTS
+        FEEDBACK_STATE_FILE, PEERS_STATE_FILE, SATELLITE_STATUS_FILE, DEVICE_SLOTS
     from file_utils import safe_read_json, safe_write_json
 except ImportError:
     print("WARNING: Could not import bridge utilities")
     find_keyboards_with_ports = None
     MultiDeviceConfig = None
-    BroadcastSender = None
+    DirectSender = None
     safe_read_json = None
     safe_write_json = None
-    VALID_CHANNELS = ["main", "backup"]
-    VALID_MODES = ["broadcast", "satellite"]
-    DEFAULT_BROADCAST_PORT = 9002
+    VALID_MODES = ["direct", "satellite"]
+    DEFAULT_FEEDBACK_PORT = 9001
     DEFAULT_SATELLITE_PORT = 16622
     CONFIG_FILE = "/etc/rpi-osc-bridge/config.json"
     REGISTRATION_FILE = "/var/run/rpi-osc-bridge/registration.json"
     FEEDBACK_STATE_FILE = "/var/run/rpi-osc-bridge/feedback.json"
+    PEERS_STATE_FILE = "/var/run/rpi-osc-bridge/peers.json"
     SATELLITE_STATUS_FILE = "/var/run/rpi-osc-bridge/satellite.json"
     DEVICE_SLOTS = ["usb_1", "usb_2", "usb_3"]
 
@@ -49,21 +49,14 @@ def validate_port(port: int) -> bool:
     return 1 <= port <= 65535
 
 
-def validate_channel(channel: str) -> bool:
-    """Validate channel name."""
-    return channel in VALID_CHANNELS
-
-
 def get_global_config() -> dict:
-    """Get global configuration (mode, ports, satellite, log level, valid channels)."""
+    """Get global configuration."""
     if not MultiDeviceConfig:
         return {
-            "mode": "broadcast",
-            "broadcast_port": DEFAULT_BROADCAST_PORT,
-            "feedback_port": DEFAULT_BROADCAST_PORT,
+            "mode": "direct",
+            "feedback_port": DEFAULT_FEEDBACK_PORT,
             "log_level": "INFO",
             "satellite": {"host": None, "port": DEFAULT_SATELLITE_PORT},
-            "valid_channels": list(VALID_CHANNELS),
             "valid_modes": list(VALID_MODES),
             "error": "MultiDeviceConfig not available"
         }
@@ -72,7 +65,6 @@ def get_global_config() -> dict:
         config = MultiDeviceConfig()
         return {
             "mode": config.mode,
-            "broadcast_port": config.broadcast_port,
             "feedback_port": config.feedback_port,
             "log_level": config.log_level,
             "bridge_id": config.bridge_id,
@@ -81,32 +73,26 @@ def get_global_config() -> dict:
                 "host": config.satellite_host,
                 "port": config.satellite_port,
             },
-            "valid_channels": list(VALID_CHANNELS),
             "valid_modes": list(VALID_MODES),
         }
     except Exception as e:
         return {
-            "mode": "broadcast",
-            "broadcast_port": DEFAULT_BROADCAST_PORT,
-            "feedback_port": DEFAULT_BROADCAST_PORT,
+            "mode": "direct",
+            "feedback_port": DEFAULT_FEEDBACK_PORT,
             "log_level": "INFO",
             "satellite": {"host": None, "port": DEFAULT_SATELLITE_PORT},
-            "valid_channels": list(VALID_CHANNELS),
             "valid_modes": list(VALID_MODES),
             "error": str(e)
         }
 
 
-def save_global_config(broadcast_port: int, feedback_port: int, log_level: str,
+def save_global_config(feedback_port: int, log_level: str,
                        bridge_name: str = None, mode: str = None,
                        satellite_host: str = None,
                        satellite_port: int = None) -> tuple[bool, str]:
-    """Save global configuration (mode, ports, satellite, log level)."""
+    """Save global configuration."""
     if not MultiDeviceConfig:
         return False, "MultiDeviceConfig not available"
-
-    if not validate_port(broadcast_port):
-        return False, "Invalid broadcast port number"
 
     if not validate_port(feedback_port):
         return False, "Invalid feedback port number"
@@ -122,7 +108,6 @@ def save_global_config(broadcast_port: int, feedback_port: int, log_level: str,
 
     try:
         config = MultiDeviceConfig()
-        config.broadcast_port = broadcast_port
         config.feedback_port = feedback_port
         config.log_level = log_level
         if bridge_name is not None:
@@ -186,6 +171,18 @@ def get_feedback_state() -> dict:
     }
 
 
+def get_peers() -> dict:
+    """Read discovered desktop peers from file."""
+    try:
+        if os.path.exists(PEERS_STATE_FILE):
+            with open(PEERS_STATE_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error reading peers: {e}", file=sys.stderr)
+
+    return {"peers": {}, "updated_at": None}
+
+
 def get_satellite_status() -> dict:
     """Read satellite connection status from file."""
     try:
@@ -237,7 +234,7 @@ def get_devices() -> list:
 
 
 def get_registered_devices() -> dict:
-    """Get registered devices from config (v3 format with per-device channels)."""
+    """Get registered devices from config (v5 format with per-device targets)."""
     if not MultiDeviceConfig:
         return {"devices": {}, "error": "MultiDeviceConfig not available"}
 
@@ -245,12 +242,12 @@ def get_registered_devices() -> dict:
         config = MultiDeviceConfig()
         result = {}
         for slot in DEVICE_SLOTS:
-            target = config.devices.get(slot)
-            if target:
+            device = config.devices.get(slot)
+            if device:
                 result[slot] = {
-                    "label": target.label,
-                    "usb_phys": target.usb_phys,
-                    "channel": target.channel
+                    "label": device.label,
+                    "usb_phys": device.usb_phys,
+                    "target": device.target
                 }
             else:
                 result[slot] = None
@@ -259,10 +256,8 @@ def get_registered_devices() -> dict:
             "mode": config.mode,
             "log_level": config.log_level,
             "feedback_port": config.feedback_port,
-            "broadcast_port": config.broadcast_port,
             "bridge_id": config.bridge_id,
             "bridge_name": config.bridge_name,
-            "valid_channels": list(VALID_CHANNELS),
             "valid_modes": list(VALID_MODES),
         }
     except Exception as e:
@@ -319,21 +314,18 @@ def cancel_registration() -> tuple[bool, str]:
         return False, str(e)
 
 
-def confirm_registration(slot: str, usb_phys: str, channel: str,
-                        label: str) -> tuple[bool, str]:
-    """Confirm device registration with channel assignment."""
+def confirm_registration(slot: str, usb_phys: str,
+                        label: str, target: dict | None = None) -> tuple[bool, str]:
+    """Confirm device registration with optional target assignment."""
     if not MultiDeviceConfig:
         return False, "MultiDeviceConfig not available"
 
     if slot not in DEVICE_SLOTS:
         return False, f"Invalid slot: {slot}"
 
-    if not validate_channel(channel):
-        return False, f"Invalid channel: {channel}"
-
     try:
         config = MultiDeviceConfig()
-        success = config.register_device(slot, usb_phys, channel, label)
+        success = config.register_device(slot, usb_phys, label, target=target)
 
         if success:
             cancel_registration()
@@ -385,22 +377,55 @@ def unregister_device(slot: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def send_test_broadcast(slot: str, command: str) -> tuple[bool, str]:
-    """Send test broadcast command for a specific device's channel."""
+def update_device_target(slot: str, target: dict | None) -> tuple[bool, str]:
+    """Update the target for a registered device."""
     if not MultiDeviceConfig:
         return False, "MultiDeviceConfig not available"
 
-    if not BroadcastSender:
-        return False, "BroadcastSender not available"
+    if slot not in DEVICE_SLOTS:
+        return False, f"Invalid slot: {slot}"
 
     try:
         config = MultiDeviceConfig()
-        target = config.devices.get(slot)
+        success = config.update_device_target(slot, target)
 
-        if not target:
+        if success:
+            try:
+                subprocess.run(
+                    ["systemctl", "restart", "rpi-osc-bridge"],
+                    check=True,
+                    capture_output=True
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                return True, "Target updated but service restart failed"
+
+            return True, "Target updated"
+        else:
+            return False, "Device not found in slot"
+
+    except Exception as e:
+        return False, str(e)
+
+
+def send_test_command(slot: str, command: str) -> tuple[bool, str]:
+    """Send test OSC command for a specific device's target."""
+    if not MultiDeviceConfig:
+        return False, "MultiDeviceConfig not available"
+
+    if not DirectSender:
+        return False, "DirectSender not available"
+
+    try:
+        config = MultiDeviceConfig()
+        device = config.devices.get(slot)
+
+        if not device:
             return False, f"Device {slot} not registered"
 
-        sender = BroadcastSender(channel=target.channel, port=config.broadcast_port)
+        if not device.target:
+            return False, f"Device {slot} has no target assigned"
+
+        sender = DirectSender(host=device.target["host"], port=device.target["port"])
 
         if command == "next":
             sender.send_next()
@@ -411,7 +436,7 @@ def send_test_broadcast(slot: str, command: str) -> tuple[bool, str]:
             return False, f"Unknown command: {command}"
 
         sender.close()
-        return True, f"Broadcast {command} on channel '{target.channel}'"
+        return True, f"Sent {command} to {device.target.get('name', device.target['host'])}:{device.target['port']}"
 
     except Exception as e:
         return False, str(e)
@@ -462,6 +487,9 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
 
         elif path == "/feedback":
             self._send_json(get_feedback_state())
+
+        elif path == "/peers":
+            self._send_json(get_peers())
 
         elif path == "/logs":
             self._send_json({"logs": get_recent_logs()})
@@ -518,10 +546,10 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
                 data = self._read_json_body()
                 slot = data.get("slot")
                 usb_phys = data.get("usb_phys")
-                channel = data.get("channel", "main")
                 label = data.get("label", slot)
+                target = data.get("target")  # {host, port, name?, instance_id?} or None
 
-                success, message = confirm_registration(slot, usb_phys, channel, label)
+                success, message = confirm_registration(slot, usb_phys, label, target=target)
                 self._send_json(
                     {"success": success, "message": message},
                     200 if success else 400
@@ -531,44 +559,33 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_error(500, f"Server error: {e}")
 
-        # Update device channel
-        elif path.startswith("/devices/") and path.endswith("/channel"):
+        # Update device target
+        elif path.startswith("/devices/") and path.endswith("/target"):
             try:
                 parts = path.split("/")
                 slot = parts[2] if len(parts) >= 3 else None
 
                 data = self._read_json_body()
-                channel = data.get("channel", "")
+                target = data.get("target")  # {host, port, name?, instance_id?} or None
 
                 if slot not in DEVICE_SLOTS:
                     self._send_json({"success": False, "message": f"Invalid slot: {slot}"}, 400)
                     return
 
-                if channel != "satellite" and not validate_channel(channel):
-                    self._send_json({"success": False, "message": f"Invalid channel: {channel}"}, 400)
-                    return
-
-                if not MultiDeviceConfig:
-                    self._send_json({"success": False, "message": "MultiDeviceConfig not available"}, 500)
-                    return
-
-                config = MultiDeviceConfig()
-                success = config.update_device_channel(slot, channel)
-
-                if success:
-                    try:
-                        subprocess.run(
-                            ["systemctl", "restart", "rpi-osc-bridge"],
-                            check=True,
-                            capture_output=True
-                        )
-                    except (subprocess.CalledProcessError, FileNotFoundError):
-                        self._send_json({"success": True, "message": "Channel updated but service restart failed"})
+                # Validate target if provided
+                if target is not None:
+                    if not isinstance(target, dict) or "host" not in target or "port" not in target:
+                        self._send_json({"success": False, "message": "Target must have host and port"}, 400)
+                        return
+                    if not validate_port(target["port"]):
+                        self._send_json({"success": False, "message": "Invalid target port"}, 400)
                         return
 
-                    self._send_json({"success": True, "message": f"Channel updated to {channel}"})
-                else:
-                    self._send_json({"success": False, "message": "Device not found in slot"}, 400)
+                success, message = update_device_target(slot, target)
+                self._send_json(
+                    {"success": success, "message": message},
+                    200 if success else 400
+                )
 
             except json.JSONDecodeError:
                 self.send_error(400, "Invalid JSON")
@@ -589,7 +606,7 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_error(500, f"Server error: {e}")
 
-        # Test broadcast for a specific device's channel
+        # Test command for a specific device's target
         elif path.startswith("/devices/") and "/test/" in path:
             try:
                 parts = path.split("/")
@@ -600,7 +617,7 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
                     self.send_error(400, "Invalid test command")
                     return
 
-                success, message = send_test_broadcast(slot, cmd)
+                success, message = send_test_command(slot, cmd)
                 self._send_json(
                     {"success": success, "message": message},
                     200 if success else 400
@@ -608,13 +625,12 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_error(500, f"Server error: {e}")
 
-        # Save global configuration (mode, ports, satellite, log level)
+        # Save global configuration
         elif path == "/config/global":
             try:
                 data = self._read_json_body()
 
-                broadcast_port = data.get("broadcast_port", DEFAULT_BROADCAST_PORT)
-                feedback_port = data.get("feedback_port", DEFAULT_BROADCAST_PORT)
+                feedback_port = data.get("feedback_port", DEFAULT_FEEDBACK_PORT)
                 log_level = data.get("log_level", "INFO")
                 bridge_name = data.get("bridge_name")
                 mode = data.get("mode")
@@ -624,7 +640,7 @@ class ConfigServerHandler(BaseHTTPRequestHandler):
                 satellite_port = satellite.get("port") if isinstance(satellite, dict) else None
 
                 success, message = save_global_config(
-                    broadcast_port, feedback_port, log_level, bridge_name,
+                    feedback_port, log_level, bridge_name,
                     mode=mode, satellite_host=satellite_host,
                     satellite_port=satellite_port
                 )

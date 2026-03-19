@@ -48,6 +48,7 @@ pub async fn start_osc_server(
         Some(app.clone()),
         state.last_command_at.clone(),
         Some(state.status_broadcast.clone()),
+        Some(state.canva_adapter.clone()),
     ));
 
     // Initial state fetch

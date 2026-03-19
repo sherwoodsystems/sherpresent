@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WebServerConfig } from '../types';
   import { appStore } from '$lib/state.svelte';
+  import ConnectionInfo from './ConnectionInfo.svelte';
 
   interface Props {
     config: WebServerConfig;
@@ -13,12 +14,6 @@
     const updated = { ...config, [field]: value };
     onchange(updated);
   }
-
-  function copyUrl() {
-    if (appStore.webServerUrl) {
-      navigator.clipboard.writeText(appStore.webServerUrl);
-    }
-  }
 </script>
 
 <div class="ws-config">
@@ -26,13 +21,7 @@
   <p class="description">Always running — serves notes and timer to browsers on your network</p>
 
   {#if appStore.webServerRunning && appStore.webServerUrl}
-    <div class="connection-info">
-      <span class="connection-label">Stage view available at:</span>
-      <div class="url-row">
-        <code class="connection-address">{appStore.webServerUrl}</code>
-        <button class="copy-btn" onclick={copyUrl}>Copy</button>
-      </div>
-    </div>
+    <ConnectionInfo label="Stage view available at:" value={appStore.webServerUrl} />
   {/if}
 
   <div class="config-grid">
@@ -115,48 +104,6 @@
     border-bottom: 1px solid #eee;
   }
 
-  .connection-info {
-    background: #e8f4fd;
-    border: 1px solid #b3d9f7;
-    border-radius: 8px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .connection-label {
-    font-size: 0.75rem;
-    color: #1a73e8;
-    font-weight: 500;
-  }
-
-  .url-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .connection-address {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #1a56c4;
-  }
-
-  .copy-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.7rem;
-    border: 1px solid #b3d9f7;
-    border-radius: 4px;
-    background: #fff;
-    color: #1a73e8;
-    cursor: pointer;
-  }
-
-  .copy-btn:hover {
-    background: #d0e8fc;
-  }
-
   .hint {
     font-size: 0.7rem;
     color: #888;
@@ -203,29 +150,6 @@
     .description {
       color: #777;
       border-bottom-color: #444;
-    }
-
-    .connection-info {
-      background: #1a3a5c;
-      border-color: #2a5a8c;
-    }
-
-    .connection-label {
-      color: #6ab7ff;
-    }
-
-    .connection-address {
-      color: #8fcfff;
-    }
-
-    .copy-btn {
-      background: #2a5a8c;
-      border-color: #3a6a9c;
-      color: #8fcfff;
-    }
-
-    .copy-btn:hover {
-      background: #3a6a9c;
     }
 
     .hint {

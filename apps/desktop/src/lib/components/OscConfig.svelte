@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import type { OscConfig } from '../types';
+  import ConnectionInfo from './ConnectionInfo.svelte';
 
   interface Props {
     config: OscConfig;
@@ -28,10 +29,7 @@
   <h3 class="section-title">OSC Configuration</h3>
 
   {#if localIp}
-    <div class="connection-info">
-      <span class="connection-label">Remote clients connect to:</span>
-      <code class="connection-address">{localIp}:{config.receivePort}</code>
-    </div>
+    <ConnectionInfo label="Remote clients connect to:" value="{localIp}:{config.receivePort}" />
   {/if}
 
   <div class="config-grid">
@@ -91,30 +89,6 @@
     border-bottom: 1px solid #eee;
   }
 
-  .connection-info {
-    background: #e8f4fd;
-    border: 1px solid #b3d9f7;
-    border-radius: 8px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .connection-label {
-    font-size: 0.75rem;
-    color: #1a73e8;
-    font-weight: 500;
-  }
-
-  .connection-address {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #1a56c4;
-    background: transparent;
-    padding: 0;
-  }
 
   .hint {
     font-size: 0.7rem;
@@ -158,19 +132,6 @@
     .section-title {
       color: #eee;
       border-bottom-color: #444;
-    }
-
-    .connection-info {
-      background: #1a3a5c;
-      border-color: #2a5a8c;
-    }
-
-    .connection-label {
-      color: #6ab7ff;
-    }
-
-    .connection-address {
-      color: #8fcfff;
     }
 
     .hint {

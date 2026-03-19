@@ -32,7 +32,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
-use crate::adapters::{get_adapter, powerpoint::PowerPointAdapter, LiveStatus, PresentationAdapter};
+use crate::adapters::{canva::CanvaAdapter, get_adapter, powerpoint::PowerPointAdapter, LiveStatus, PresentationAdapter};
 use crate::config::AdapterConfig;
 use super::latency::{self, CommandSource, LatencyStore};
 
@@ -152,6 +152,11 @@ pub struct StateManager {
     /// When present, state changes are also broadcast here so the stage view
     /// updates instantly without waiting for the separate polling loop.
     status_broadcast: Option<tokio::sync::broadcast::Sender<LiveStatus>>,
+
+    /// Canva adapter singleton (shared with AppState).
+    /// Canva is not created by `get_adapter()` — it's a long-lived singleton
+    /// that holds a webview reference, so we need a direct reference here.
+    canva_adapter: Option<Arc<Mutex<Option<CanvaAdapter>>>>,
 }
 
 impl StateManager {
@@ -165,6 +170,7 @@ impl StateManager {
         app_handle: Option<AppHandle>,
         last_command_at: Arc<Mutex<u64>>,
         status_broadcast: Option<tokio::sync::broadcast::Sender<LiveStatus>>,
+        canva_adapter: Option<Arc<Mutex<Option<CanvaAdapter>>>>,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(CachedState::now())),
@@ -178,6 +184,7 @@ impl StateManager {
             app_handle,
             last_command_at,
             status_broadcast,
+            canva_adapter,
         }
     }
 
@@ -458,6 +465,7 @@ impl StateManager {
         let latency_store = self.latency_store.clone();
         let app_handle = self.app_handle.clone();
         let adapter_label = self.adapter_name.clone();
+        let canva_adapter = self.canva_adapter.clone();
 
         let before_ms = latency::monotonic_ms();
 
@@ -465,7 +473,18 @@ impl StateManager {
         tokio::task::spawn(async move {
             // Run the blocking AppleScript on a blocking thread
             let result = tokio::task::spawn_blocking(move || {
-                if let Some(adapter) = get_adapter(&adapter_name, &adapter_config) {
+                if adapter_name == "canva" {
+                    if let Some(ref canva_arc) = canva_adapter {
+                        let canva = canva_arc.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some(ref adapter) = *canva {
+                            command(adapter as &dyn PresentationAdapter, presentation_name)
+                        } else {
+                            Err("Canva adapter not initialized".to_string())
+                        }
+                    } else {
+                        Err("Canva adapter not available".to_string())
+                    }
+                } else if let Some(adapter) = get_adapter(&adapter_name, &adapter_config) {
                     command(adapter.as_ref(), presentation_name)
                 } else {
                     Err("Adapter not found".to_string())
@@ -564,9 +583,10 @@ impl StateManager {
         let refresh_flag = self.refresh_in_progress.clone();
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
+        let canva_adapter = self.canva_adapter.clone();
 
         tokio::task::spawn(async move {
-            Self::do_refresh_internal(adapter_name, presentation_name, adapter_config, refresh_flag, state, tx)
+            Self::do_refresh_internal(adapter_name, presentation_name, adapter_config, refresh_flag, state, tx, canva_adapter)
                 .await;
         });
     }
@@ -579,6 +599,7 @@ impl StateManager {
         refresh_flag: Arc<Mutex<bool>>,
         state: Arc<Mutex<CachedState>>,
         tx: mpsc::Sender<CachedState>,
+        canva_adapter: Option<Arc<Mutex<Option<CanvaAdapter>>>>,
     ) {
         // Set flag to prevent concurrent refreshes
         {
@@ -591,7 +612,7 @@ impl StateManager {
 
         // Fetch state from presentation software (blocking)
         let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config)
+            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config, &canva_adapter)
         })
         .await
         .unwrap_or_else(|_| CachedState::now());
@@ -630,9 +651,10 @@ impl StateManager {
         let adapter_name = self.adapter_name.clone();
         let presentation_name = self.presentation_name.clone();
         let adapter_config = self.adapter_config.clone();
+        let canva_adapter = self.canva_adapter.clone();
 
         let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config)
+            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config, &canva_adapter)
         })
         .await
         .unwrap_or_else(|_| CachedState::now());
@@ -649,8 +671,31 @@ impl StateManager {
     /// Fetch complete state from the presentation software.
     ///
     /// This is the actual AppleScript work - it's blocking and slow.
-    fn fetch_all_state(adapter_name: &str, presentation_name: &str, adapter_config: &AdapterConfig) -> CachedState {
+    /// For Canva, uses the singleton adapter instead of the factory.
+    fn fetch_all_state(
+        adapter_name: &str,
+        presentation_name: &str,
+        adapter_config: &AdapterConfig,
+        canva_adapter: &Option<Arc<Mutex<Option<CanvaAdapter>>>>,
+    ) -> CachedState {
         let mut new_state = CachedState::now();
+
+        if adapter_name == "canva" {
+            if let Some(ref canva_arc) = canva_adapter {
+                let canva = canva_arc.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(ref adapter) = *canva {
+                    let status = adapter.get_live_status(presentation_name);
+                    new_state.is_open = status.is_open;
+                    new_state.is_presenting = status.is_presenting;
+                    new_state.current_slide = status.current_slide;
+                    new_state.total_slides = status.total_slides;
+                    new_state.zoom_level = status.zoom_level;
+                    new_state.current_build = status.current_build;
+                    new_state.total_builds = status.total_builds;
+                }
+            }
+            return new_state;
+        }
 
         let Some(adapter) = get_adapter(adapter_name, adapter_config) else {
             return new_state;
@@ -699,6 +744,7 @@ impl StateManager {
         let state = self.state.clone();
         let tx = self.state_change_tx.clone();
         let last_command_at = self.last_command_at.clone();
+        let canva_adapter = self.canva_adapter.clone();
 
         // Spawn the polling task
         let handle = tokio::task::spawn(async move {
@@ -729,6 +775,7 @@ impl StateManager {
                     refresh_flag.clone(),
                     state.clone(),
                     tx.clone(),
+                    canva_adapter.clone(),
                 )
                 .await;
             }

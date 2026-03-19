@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SherPresent Bridge</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1115; color: #e0e0e0; padding: 16px; max-width: 600px; margin: 0 auto; }
+  h1 { font-size: 1.3em; margin-bottom: 12px; color: #fff; }
+  h2 { font-size: 1.1em; margin: 16px 0 8px; color: #ccc; }
+  .card { background: #1a1d23; border-radius: 8px; padding: 12px; margin-bottom: 12px; border: 1px solid #2a2d35; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .status-dot.online { background: #4caf50; }
+  .status-dot.offline { background: #f44336; }
+  .slot { border: 1px solid #2a2d35; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+  .slot-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .slot-label { font-weight: 600; }
+  .slot-empty { color: #666; font-style: italic; }
+  .target-info { font-size: 0.85em; color: #aaa; margin-bottom: 6px; }
+  select, input[type="text"], input[type="number"] { background: #252830; border: 1px solid #3a3d45; border-radius: 4px; color: #e0e0e0; padding: 6px 8px; font-size: 0.9em; width: 100%; }
+  select:focus, input:focus { outline: none; border-color: #5b8def; }
+  button { background: #2a5bd7; color: #fff; border: none; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85em; }
+  button:hover { background: #3a6be7; }
+  button.danger { background: #c0392b; }
+  button.danger:hover { background: #e74c3c; }
+  button.secondary { background: #3a3d45; }
+  button.secondary:hover { background: #4a4d55; }
+  .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+  .manual-inputs { display: flex; gap: 6px; margin-top: 6px; }
+  .manual-inputs input { flex: 1; }
+  .manual-inputs input.port { max-width: 80px; }
+  .feedback { font-size: 0.85em; color: #aaa; }
+  .feedback .slide { font-size: 1.4em; color: #fff; font-weight: 700; }
+  .register-msg { background: #1e3a5f; border: 1px solid #2a5bd7; border-radius: 6px; padding: 10px; margin-bottom: 8px; font-size: 0.9em; }
+  .log-area { background: #111; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 0.75em; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: #aaa; }
+  .section-toggle { cursor: pointer; user-select: none; }
+  .section-toggle::before { content: "\25B6 "; font-size: 0.7em; }
+  .section-toggle.open::before { content: "\25BC "; }
+  .hidden { display: none; }
+  .settings-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .settings-row label { min-width: 100px; font-size: 0.9em; }
+  .settings-row select, .settings-row input { flex: 1; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 0.85em; z-index: 100; opacity: 0; transition: opacity 0.3s; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<h1>SherPresent Bridge</h1>
+
+<div class="card" id="status-card">
+  <span class="status-dot" id="svc-dot"></span>
+  <span id="svc-text">Checking...</span>
+  <span style="float:right; font-size:0.8em; color:#666" id="bridge-name"></span>
+</div>
+
+<!-- Feedback -->
+<div class="card" id="feedback-card">
+  <div class="feedback">
+    <span class="slide" id="fb-slide">--</span>
+    <span id="fb-presenting" style="margin-left:8px;"></span>
+    <div style="margin-top:4px;">
+      <span id="fb-last-cmd"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Device Slots -->
+<h2>Devices</h2>
+<div id="slots-container"></div>
+
+<!-- Registration -->
+<div id="register-section" class="hidden">
+  <div class="register-msg" id="register-msg">
+    Press a button on the clicker you want to register...
+    <div id="register-detected" style="margin-top:6px;"></div>
+    <div class="btn-row">
+      <button onclick="cancelRegistration()">Cancel</button>
+      <button id="register-confirm-btn" class="hidden" onclick="confirmRegistration()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings -->
+<h2 class="section-toggle" onclick="toggleSection('settings')">Settings</h2>
+<div id="settings-section" class="card hidden">
+  <div class="settings-row">
+    <label>Mode</label>
+    <select id="cfg-mode" onchange="onModeChange()">
+      <option value="direct">Direct</option>
+      <option value="satellite">Satellite</option>
+    </select>
+  </div>
+  <div class="settings-row">
+    <label>Feedback Port</label>
+    <input type="number" id="cfg-feedback-port" value="9001">
+  </div>
+  <div class="settings-row">
+    <label>Bridge Name</label>
+    <input type="text" id="cfg-bridge-name">
+  </div>
+  <div class="settings-row">
+    <label>Log Level</label>
+    <select id="cfg-log-level">
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO">INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+    </select>
+  </div>
+  <div id="satellite-settings" class="hidden">
+    <div class="settings-row">
+      <label>Satellite Host</label>
+      <input type="text" id="cfg-sat-host" placeholder="192.168.1.x">
+    </div>
+    <div class="settings-row">
+      <label>Satellite Port</label>
+      <input type="number" id="cfg-sat-port" value="16622">
+    </div>
+  </div>
+  <div class="btn-row">
+    <button onclick="saveSettings()">Save &amp; Restart</button>
+  </div>
+</div>
+
+<!-- Logs -->
+<h2 class="section-toggle" onclick="toggleSection('logs')">Logs</h2>
+<div id="logs-section" class="hidden">
+  <div class="log-area" id="log-area"></div>
+  <div class="btn-row" style="margin-top:6px;">
+    <button class="secondary" onclick="loadLogs()">Refresh</button>
+  </div>
+</div>
+
+<!-- Shutdown -->
+<div style="margin-top:24px; text-align:center;">
+  <button class="danger" onclick="if(confirm('Shut down the Pi?')) shutdownPi()">Shutdown Pi</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let peers = {};
+let registrationSlot = null;
+let registrationPhys = null;
+let registrationName = null;
+let openSections = {};
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function toggleSection(id) {
+  const el = document.getElementById(id + '-section');
+  const toggle = el.previousElementSibling;
+  if (el.classList.contains('hidden')) {
+    el.classList.remove('hidden');
+    toggle.classList.add('open');
+    openSections[id] = true;
+    if (id === 'logs') loadLogs();
+  } else {
+    el.classList.add('hidden');
+    toggle.classList.remove('open');
+    openSections[id] = false;
+  }
+}
+
+async function api(method, path, body) {
+  const opts = { method };
+  if (body) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  return res.json();
+}
+
+// --- Status ---
+async function loadStatus() {
+  try {
+    const data = await api('GET', '/status');
+    const dot = document.getElementById('svc-dot');
+    const text = document.getElementById('svc-text');
+    dot.className = 'status-dot ' + (data.running ? 'online' : 'offline');
+    text.textContent = data.running ? 'Bridge Running' : 'Bridge Stopped';
+  } catch (e) {
+    document.getElementById('svc-text').textContent = 'Connection error';
+  }
+}
+
+// --- Feedback ---
+async function loadFeedback() {
+  try {
+    const data = await api('GET', '/feedback');
+    const slideEl = document.getElementById('fb-slide');
+    if (data.current_slide > 0) {
+      slideEl.textContent = data.current_slide + (data.total_slides ? '/' + data.total_slides : '');
+    } else {
+      slideEl.textContent = '--';
+    }
+    document.getElementById('fb-presenting').textContent = data.presenting ? 'Presenting' : '';
+    if (data.last_command) {
+      const cmd = data.last_command.split('/').pop();
+      document.getElementById('fb-last-cmd').textContent = 'Last: ' + cmd;
+    }
+  } catch (e) {}
+}
+
+// --- Peers ---
+async function loadPeers() {
+  try {
+    const data = await api('GET', '/peers');
+    peers = data.peers || {};
+  } catch (e) {
+    peers = {};
+  }
+}
+
+// --- Devices ---
+async function loadDevices() {
+  try {
+    const data = await api('GET', '/devices/registered');
+    const container = document.getElementById('slots-container');
+    const nameEl = document.getElementById('bridge-name');
+    nameEl.textContent = data.bridge_name || '';
+
+    // Load settings
+    document.getElementById('cfg-mode').value = data.mode || 'direct';
+    document.getElementById('cfg-feedback-port').value = data.feedback_port || 9001;
+    document.getElementById('cfg-bridge-name').value = data.bridge_name || '';
+    document.getElementById('cfg-log-level').value = data.log_level || 'INFO';
+    onModeChange();
+
+    container.innerHTML = '';
+    const slots = ['usb_1', 'usb_2', 'usb_3'];
+    slots.forEach(slot => {
+      const device = data.devices[slot];
+      container.appendChild(renderSlot(slot, device));
+    });
+  } catch (e) {
+    console.error('loadDevices error:', e);
+  }
+}
+
+function renderSlot(slot, device) {
+  const div = document.createElement('div');
+  div.className = 'slot';
+
+  const slotNum = slot.replace('usb_', 'USB ');
+
+  if (!device) {
+    div.innerHTML = `
+      <div class="slot-header">
+        <span class="slot-label">${slotNum}</span>
+        <span class="slot-empty">Empty</span>
+      </div>
+      <button onclick="startRegistration('${slot}')">Register Device</button>
+    `;
+  } else {
+    const target = device.target;
+    let targetDesc = '<span style="color:#f0ad4e;">No target assigned</span>';
+    if (target) {
+      const name = target.name || target.host;
+      targetDesc = `${name} (${target.host}:${target.port})`;
+    }
+
+    // Build peer options
+    let peerOptions = '<option value="">-- No target --</option>';
+    for (const [id, peer] of Object.entries(peers)) {
+      const selected = target && target.host === peer.host && target.port === peer.port ? 'selected' : '';
+      peerOptions += `<option value="${id}" ${selected}>${peer.name} (${peer.host}:${peer.port})</option>`;
+    }
+    peerOptions += '<option value="__manual__">Manual IP:Port...</option>';
+
+    const isManual = target && !Object.values(peers).some(p => p.host === target.host && p.port === target.port);
+
+    div.innerHTML = `
+      <div class="slot-header">
+        <span class="slot-label">${slotNum}: ${device.label || slot}</span>
+      </div>
+      <div class="target-info">Target: ${targetDesc}</div>
+      <select onchange="onTargetChange('${slot}', this)">
+        ${peerOptions}
+      </select>
+      <div class="manual-inputs ${isManual ? '' : 'hidden'}" id="manual-${slot}">
+        <input type="text" placeholder="IP address" value="${target && isManual ? target.host : ''}" id="manual-host-${slot}">
+        <input type="number" class="port" placeholder="Port" value="${target && isManual ? target.port : '9000'}" id="manual-port-${slot}">
+        <button onclick="setManualTarget('${slot}')">Set</button>
+      </div>
+      <div class="btn-row">
+        <button class="secondary" onclick="testDevice('${slot}', 'prev')">Test Prev</button>
+        <button class="secondary" onclick="testDevice('${slot}', 'next')">Test Next</button>
+        <button class="danger" onclick="unregisterDevice('${slot}')">Remove</button>
+      </div>
+    `;
+
+    // Select manual option if applicable
+    if (isManual && target) {
+      div.querySelector('select').value = '__manual__';
+    }
+  }
+
+  return div;
+}
+
+function onTargetChange(slot, selectEl) {
+  const val = selectEl.value;
+  const manualDiv = document.getElementById('manual-' + slot);
+
+  if (val === '__manual__') {
+    if (manualDiv) manualDiv.classList.remove('hidden');
+    return;
+  }
+
+  if (manualDiv) manualDiv.classList.add('hidden');
+
+  let target = null;
+  if (val && peers[val]) {
+    const peer = peers[val];
+    target = { host: peer.host, port: peer.port, name: peer.name, instance_id: val };
+  }
+
+  setDeviceTarget(slot, target);
+}
+
+async function setDeviceTarget(slot, target) {
+  const data = await api('POST', `/devices/${slot}/target`, { target });
+  if (data.success) {
+    toast(data.message);
+    setTimeout(loadDevices, 1000);
+  } else {
+    toast('Error: ' + data.message);
+  }
+}
+
+async function setManualTarget(slot) {
+  const host = document.getElementById('manual-host-' + slot).value.trim();
+  const port = parseInt(document.getElementById('manual-port-' + slot).value) || 9000;
+
+  if (!host) {
+    toast('Enter an IP address');
+    return;
+  }
+
+  const target = { host, port, name: host };
+  await setDeviceTarget(slot, target);
+}
+
+async function testDevice(slot, cmd) {
+  const data = await api('POST', `/devices/${slot}/test/${cmd}`);
+  toast(data.message);
+}
+
+async function unregisterDevice(slot) {
+  if (!confirm('Remove this device?')) return;
+  const data = await api('POST', `/devices/${slot}/unregister`);
+  toast(data.message);
+  if (data.success) loadDevices();
+}
+
+// --- Registration ---
+function startRegistration(slot) {
+  registrationSlot = slot;
+  registrationPhys = null;
+  registrationName = null;
+  document.getElementById('register-section').classList.remove('hidden');
+  document.getElementById('register-detected').textContent = '';
+  document.getElementById('register-confirm-btn').classList.add('hidden');
+  api('POST', '/registration/start', { slot });
+  pollRegistration();
+}
+
+async function pollRegistration() {
+  if (!registrationSlot) return;
+  try {
+    const data = await api('GET', '/registration/status');
+    if (data.detected_phys) {
+      registrationPhys = data.detected_phys;
+      registrationName = data.detected_name || 'Unknown device';
+      document.getElementById('register-detected').textContent = 'Detected: ' + registrationName;
+      document.getElementById('register-confirm-btn').classList.remove('hidden');
+    }
+  } catch (e) {}
+  if (registrationSlot) {
+    setTimeout(pollRegistration, 500);
+  }
+}
+
+async function confirmRegistration() {
+  if (!registrationSlot || !registrationPhys) return;
+  const label = registrationName || registrationSlot.replace('usb_', 'USB ');
+  const data = await api('POST', '/registration/confirm', {
+    slot: registrationSlot,
+    usb_phys: registrationPhys,
+    label: label,
+    target: null
+  });
+  toast(data.message);
+  registrationSlot = null;
+  document.getElementById('register-section').classList.add('hidden');
+  if (data.success) setTimeout(loadDevices, 1000);
+}
+
+async function cancelRegistration() {
+  registrationSlot = null;
+  document.getElementById('register-section').classList.add('hidden');
+  await api('POST', '/registration/cancel');
+}
+
+// --- Settings ---
+function onModeChange() {
+  const mode = document.getElementById('cfg-mode').value;
+  document.getElementById('satellite-settings').classList.toggle('hidden', mode !== 'satellite');
+}
+
+async function saveSettings() {
+  const body = {
+    mode: document.getElementById('cfg-mode').value,
+    feedback_port: parseInt(document.getElementById('cfg-feedback-port').value) || 9001,
+    bridge_name: document.getElementById('cfg-bridge-name').value,
+    log_level: document.getElementById('cfg-log-level').value,
+    satellite: {
+      host: document.getElementById('cfg-sat-host').value || null,
+      port: parseInt(document.getElementById('cfg-sat-port').value) || 16622
+    }
+  };
+  const data = await api('POST', '/config/global', body);
+  toast(data.message);
+  if (data.success) setTimeout(() => { loadStatus(); loadDevices(); }, 2000);
+}
+
+// --- Logs ---
+async function loadLogs() {
+  try {
+    const data = await api('GET', '/logs');
+    document.getElementById('log-area').textContent = (data.logs || []).join('\n');
+    const area = document.getElementById('log-area');
+    area.scrollTop = area.scrollHeight;
+  } catch (e) {}
+}
+
+// --- Shutdown ---
+async function shutdownPi() {
+  await api('POST', '/shutdown');
+  toast('Shutting down...');
+}
+
+// --- Init ---
+async function init() {
+  await loadPeers();
+  await loadStatus();
+  await loadFeedback();
+  await loadDevices();
+}
+
+init();
+setInterval(loadStatus, 5000);
+setInterval(loadFeedback, 2000);
+setInterval(loadPeers, 5000);
+setInterval(loadDevices, 10000);
+</script>
+</body>
+</html>

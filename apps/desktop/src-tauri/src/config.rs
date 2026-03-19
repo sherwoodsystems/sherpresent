@@ -150,11 +150,11 @@ impl ChannelConfig {
 impl Default for ChannelConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             channel_name: "main".to_string(),
             instance_id: Uuid::new_v4().to_string(),
             display_name: None,
-            broadcast_mode: false,
+            broadcast_mode: true,
             broadcast_port: DEFAULT_BROADCAST_PORT,
             network_interface: None, // Auto (all interfaces)
         }

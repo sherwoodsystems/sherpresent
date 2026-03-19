@@ -8,35 +8,34 @@ import socket
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 
-from constants import VALID_CHANNELS, VALID_MODES, DEFAULT_BROADCAST_PORT, DEFAULT_SATELLITE_PORT
+from constants import VALID_MODES, DEFAULT_SATELLITE_PORT, DEFAULT_FEEDBACK_PORT
 
 
 @dataclass
 class DeviceTarget:
-    """Configuration for a single registered device with channel assignment."""
+    """Configuration for a single registered device with target assignment."""
     slot: str           # "usb_1", "usb_2", etc.
     label: str          # User-friendly name like "USB 1"
     usb_phys: str       # USB physical path for identification
-    channel: str        # Broadcast channel (e.g., "main", "backup")
+    target: dict | None  # {host, port, instance_id?, name?} or None (no target)
 
 
 class MultiDeviceConfig:
     """
-    Configuration management with per-device channel support (v4 format).
-    Backward compatible with v1/v2/v3 configs via migration.
-    Supports broadcast mode (OSC) and satellite mode (Companion).
+    Configuration management with per-device target support (v5 format).
+    Backward compatible with v1/v2/v3/v4 configs via migration.
+    Supports direct mode (OSC unicast) and satellite mode (Companion).
     """
-    CONFIG_VERSION = 4
+    CONFIG_VERSION = 5
     DEVICE_SLOTS = ["usb_1", "usb_2", "usb_3"]
 
     def __init__(self, config_path: str = "/etc/rpi-osc-bridge/config.json"):
         self.config_path = config_path
         self.version = self.CONFIG_VERSION
         self.log_level = "INFO"
-        self.feedback_port = DEFAULT_BROADCAST_PORT
-        self.broadcast_port = DEFAULT_BROADCAST_PORT
+        self.feedback_port = DEFAULT_FEEDBACK_PORT
 
-        self.mode = "broadcast"
+        self.mode = "direct"
         self.satellite_host: Optional[str] = None
         self.satellite_port: int = DEFAULT_SATELLITE_PORT
 
@@ -62,7 +61,7 @@ class MultiDeviceConfig:
             self.save()
 
     def load(self):
-        """Load configuration, handling v1, v2, and v3 formats."""
+        """Load configuration, handling v1-v5 formats."""
         if not os.path.exists(self.config_path):
             logging.warning(f"Config file not found: {self.config_path}, using defaults")
             return
@@ -74,7 +73,9 @@ class MultiDeviceConfig:
 
             version = data.get("version", 1)
 
-            if version >= 4:
+            if version >= 5:
+                self._load_v5(data)
+            elif version >= 4:
                 self._load_v4(data)
             elif version >= 3:
                 self._load_v3(data)
@@ -95,16 +96,11 @@ class MultiDeviceConfig:
         logging.info("Loaded v1 config - devices need to be registered via web UI")
 
     def _load_v2(self, data: Dict):
-        """Load v2 config and migrate to v3 format."""
+        """Load v2 config and migrate."""
         self.log_level = data.get("log_level", self.log_level)
         self.feedback_port = data.get("feedback_port", self.feedback_port)
-        self.broadcast_port = data.get("broadcast_port", self.broadcast_port)
         self.bridge_id = data.get("bridge_id", "")
         self.bridge_name = data.get("bridge_name", "")
-
-        global_channel = data.get("channel", "main")
-        if global_channel not in VALID_CHANNELS:
-            global_channel = "main"
 
         devices_data = data.get("devices", {})
         for slot in self.DEVICE_SLOTS:
@@ -114,27 +110,29 @@ class MultiDeviceConfig:
                     slot=slot,
                     label=device_data.get("label", slot),
                     usb_phys=device_data.get("usb_phys", ""),
-                    channel=device_data.get("channel", global_channel)
+                    target=None  # No target in v2
                 )
             else:
                 self.devices[slot] = None
 
-        logging.info(f"Migrated v2 config to v3 format (default channel: {global_channel})")
+        logging.info("Migrated v2 config to v5 format")
 
     def _load_v3(self, data: Dict):
-        """Load v3 per-device channel config (auto-migrates to v4)."""
-        self._load_devices_and_common(data)
-        # v3 has no mode/satellite fields — defaults are fine
-        logging.info("Migrated v3 config to v4 format (mode=broadcast)")
+        """Load v3 per-device channel config (migrate to v5)."""
+        self._load_legacy_devices_and_common(data)
+        logging.info("Migrated v3 config to v5 format")
 
     def _load_v4(self, data: Dict):
-        """Load v4 config with mode and satellite support."""
-        self._load_devices_and_common(data)
+        """Load v4 config with mode and satellite support (migrate to v5)."""
+        self._load_legacy_devices_and_common(data)
 
         mode = data.get("mode", "broadcast")
+        # Migrate broadcast -> direct
+        if mode == "broadcast":
+            mode = "direct"
         if mode not in VALID_MODES:
-            logging.warning(f"Invalid mode '{mode}', defaulting to 'broadcast'")
-            mode = "broadcast"
+            logging.warning(f"Invalid mode '{mode}', defaulting to 'direct'")
+            mode = "direct"
         self.mode = mode
 
         satellite = data.get("satellite", {})
@@ -142,12 +140,12 @@ class MultiDeviceConfig:
             self.satellite_host = satellite.get("host")
             self.satellite_port = satellite.get("port", DEFAULT_SATELLITE_PORT)
 
-    def _load_devices_and_common(self, data: Dict):
-        """Load common fields and device registrations (shared by v3/v4)."""
-        self.version = data.get("version", self.CONFIG_VERSION)
+        logging.info("Migrated v4 config to v5 format")
+
+    def _load_legacy_devices_and_common(self, data: Dict):
+        """Load common fields and device registrations from v3/v4 (channel-based)."""
         self.log_level = data.get("log_level", self.log_level)
         self.feedback_port = data.get("feedback_port", self.feedback_port)
-        self.broadcast_port = data.get("broadcast_port", self.broadcast_port)
         self.bridge_id = data.get("bridge_id", "")
         self.bridge_name = data.get("bridge_name", "")
 
@@ -155,16 +153,44 @@ class MultiDeviceConfig:
         for slot in self.DEVICE_SLOTS:
             device_data = devices_data.get(slot)
             if device_data and isinstance(device_data, dict):
-                channel = device_data.get("channel", "main")
-                if channel not in VALID_CHANNELS:
-                    logging.warning(f"Invalid channel '{channel}' for {slot}, defaulting to 'main'")
-                    channel = "main"
-
                 self.devices[slot] = DeviceTarget(
                     slot=slot,
                     label=device_data.get("label", slot),
                     usb_phys=device_data.get("usb_phys", ""),
-                    channel=channel
+                    target=None  # Channel-based devices get no target; must be reassigned
+                )
+            else:
+                self.devices[slot] = None
+
+    def _load_v5(self, data: Dict):
+        """Load v5 config with per-device targets."""
+        self.version = data.get("version", self.CONFIG_VERSION)
+        self.log_level = data.get("log_level", self.log_level)
+        self.feedback_port = data.get("feedback_port", self.feedback_port)
+        self.bridge_id = data.get("bridge_id", "")
+        self.bridge_name = data.get("bridge_name", "")
+
+        mode = data.get("mode", "direct")
+        if mode not in VALID_MODES:
+            logging.warning(f"Invalid mode '{mode}', defaulting to 'direct'")
+            mode = "direct"
+        self.mode = mode
+
+        satellite = data.get("satellite", {})
+        if isinstance(satellite, dict):
+            self.satellite_host = satellite.get("host")
+            self.satellite_port = satellite.get("port", DEFAULT_SATELLITE_PORT)
+
+        devices_data = data.get("devices", {})
+        for slot in self.DEVICE_SLOTS:
+            device_data = devices_data.get(slot)
+            if device_data and isinstance(device_data, dict):
+                target_data = device_data.get("target")
+                self.devices[slot] = DeviceTarget(
+                    slot=slot,
+                    label=device_data.get("label", slot),
+                    usb_phys=device_data.get("usb_phys", ""),
+                    target=target_data  # {host, port, name?, instance_id?} or None
                 )
             else:
                 self.devices[slot] = None
@@ -180,32 +206,28 @@ class MultiDeviceConfig:
         """Get list of all registered devices."""
         return [t for t in self.devices.values() if t is not None]
 
-    def register_device(self, slot: str, usb_phys: str, channel: str,
-                       label: str) -> bool:
-        """Register a device to a slot with its broadcast channel."""
+    def register_device(self, slot: str, usb_phys: str, label: str,
+                       target: dict | None = None) -> bool:
+        """Register a device to a slot with an optional target."""
         if slot not in self.DEVICE_SLOTS:
             logging.error(f"Invalid slot: {slot}")
-            return False
-
-        if channel not in VALID_CHANNELS:
-            logging.error(f"Invalid channel: {channel}")
             return False
 
         self.devices[slot] = DeviceTarget(
             slot=slot,
             label=label,
             usb_phys=usb_phys,
-            channel=channel
+            target=target
         )
 
         return self.save()
 
-    def update_device_channel(self, slot: str, channel: str) -> bool:
-        """Update the channel for an already-registered device."""
+    def update_device_target(self, slot: str, target: dict | None) -> bool:
+        """Update the target for an already-registered device."""
         device = self.devices.get(slot)
         if device is None:
             return False
-        device.channel = channel
+        device.target = target
         return self.save()
 
     def unregister_device(self, slot: str) -> bool:
@@ -218,12 +240,11 @@ class MultiDeviceConfig:
         return self.save()
 
     def save(self) -> bool:
-        """Save configuration to file in v4 format."""
+        """Save configuration to file in v5 format."""
         try:
             data = {
                 "version": self.CONFIG_VERSION,
                 "mode": self.mode,
-                "broadcast_port": self.broadcast_port,
                 "feedback_port": self.feedback_port,
                 "log_level": self.log_level,
                 "bridge_id": self.bridge_id,
@@ -235,12 +256,12 @@ class MultiDeviceConfig:
                 "devices": {}
             }
 
-            for slot, target in self.devices.items():
-                if target:
+            for slot, device in self.devices.items():
+                if device:
                     data["devices"][slot] = {
-                        "label": target.label,
-                        "usb_phys": target.usb_phys,
-                        "channel": target.channel
+                        "label": device.label,
+                        "usb_phys": device.usb_phys,
+                        "target": device.target
                     }
                 else:
                     data["devices"][slot] = None

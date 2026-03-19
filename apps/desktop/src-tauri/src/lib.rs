@@ -150,6 +150,10 @@ pub fn run() {
                 let (peer_tx, mut peer_rx) = tokio::sync::mpsc::channel::<CommandSourcePeer>(32);
 
                 // Create state manager
+                let canva_adapter = {
+                    let state = app_handle.state::<AppState>();
+                    state.canva_adapter.clone()
+                };
                 let state_manager = Arc::new(StateManager::new(
                     adapter,
                     presentation_name,
@@ -159,6 +163,7 @@ pub fn run() {
                     Some(app_handle.clone()),
                     last_command_at,
                     Some(status_broadcast),
+                    Some(canva_adapter),
                 ));
 
                 // Initial state fetch

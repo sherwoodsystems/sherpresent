@@ -663,6 +663,12 @@ impl OscServer {
                     OscCommand::ChannelCmdGoto { slide, .. } => {
                         state_manager.goto_slide(slide, CommandSource::OscBroadcast);
                     }
+                    OscCommand::ZoomIn => state_manager.zoom_in(),
+                    OscCommand::ZoomOut => state_manager.zoom_out(),
+                    OscCommand::Zoom => {
+                        let state = state_manager.get_state();
+                        Self::send_feedback_to_all(&state, feedback_socket, feedback_addrs).await;
+                    }
                     OscCommand::ScrollUp => {
                         if let Some(tx) = scroll_tx {
                             let _ = tx.send(ScrollDirection::Up);

@@ -1,8 +1,7 @@
 {
-  "version": 4,
-  "mode": "broadcast",
-  "broadcast_port": 9002,
-  "feedback_port": 9002,
+  "version": 5,
+  "mode": "direct",
+  "feedback_port": 9001,
   "log_level": "INFO",
   "satellite": {
     "host": null,
