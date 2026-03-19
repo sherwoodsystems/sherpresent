@@ -11,7 +11,8 @@ mod commands;
 mod webserver;
 
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewUrl};
+use tauri::webview::WebviewWindowBuilder;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use crate::state::AppState;
@@ -24,7 +25,10 @@ pub fn run() {
     // This helps with debugging OSC server issues
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    let port = 9527;
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_localhost::Builder::new(port).build())
         .plugin(tauri_plugin_opener::init())
         // Note: We removed tauri_plugin_shell since we no longer use a sidecar
         .manage(AppState::default())
@@ -93,7 +97,15 @@ pub fn run() {
             commands::debug::get_latency_events,
             commands::debug::clear_latency_events,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            // Create the main window programmatically to use the localhost URL
+            // This bypasses issues some Windows systems have with the custom tauri:// protocol
+            let url = format!("http://localhost:{}", port).parse().unwrap();
+            let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+                .title("SherPresent")
+                .inner_size(500.0, 650.0)
+                .build()?;
+
             // Load config on startup (or create default)
             let config = config::load_config(app.handle()).unwrap_or_default();
 
@@ -331,41 +343,7 @@ pub fn run() {
             }
 
             // System tray setup
-            let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let tray_menu = MenuBuilder::new(app)
-                .item(&show_item)
-                .separator()
-                .item(&quit_item)
-                .build()?;
-
-            TrayIconBuilder::new()
-                .icon(tauri::image::Image::from_path("icons/32x32.png").map_err(|e| e.to_string())?)
-                .menu(&tray_menu)
-                .on_menu_event(|app_handle, event| {
-                    match event.id().as_ref() {
-                        "show" => {
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
-                        "quit" => {
-                            app_handle.exit(0);
-                        }
-                        _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                        let app_handle = tray.app_handle();
-                        if let Some(window) = app_handle.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
+            setup_tray(app)?;
 
             Ok(())
         })
@@ -379,4 +357,45 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Simplified tray icon and menu setup for production
+fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let show_i = MenuItemBuilder::with_id("show", "Show").build(app)?;
+    let quit_i = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .item(&show_i)
+        .separator()
+        .item(&quit_i)
+        .build()?;
+
+    let icon = app.default_window_icon()
+        .cloned()
+        .ok_or("Failed to get default window icon")?;
+
+    let _tray = TrayIconBuilder::new()
+        .icon(icon)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::Click { .. } = event {
+                if let Some(window) = tray.app_handle().get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        })
+        .build(app)?;
+
+    Ok(())
 }

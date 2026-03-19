@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sher-present",
+  "productName": "SherPresent",
   "version": "0.2.0",
-  "identifier": "com.cdslipp.sher-present",
+  "identifier": "com.cdslipp.SherPresent",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -10,13 +10,7 @@
     "frontendDist": "../build"
   },
   "app": {
-    "windows": [
-      {
-        "title": "sher-present",
-        "width": 500,
-        "height": 650
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
