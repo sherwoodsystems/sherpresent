@@ -370,7 +370,7 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
         let current = Self::variant_to_i32(&pos_var)?;
 
-        Ok(SlideInfo { current, total })
+        Ok(SlideInfo { current, total, transition_duration: None })
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -394,6 +394,7 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
             return Ok(SlideInfo {
                 current: current_pos,
                 total,
+                transition_duration: None,
             });
         }
 
@@ -407,6 +408,7 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         Ok(SlideInfo {
             current: new_pos,
             total,
+            transition_duration: None,
         })
     }
 
@@ -431,6 +433,7 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
             return Ok(SlideInfo {
                 current: current_pos,
                 total,
+                transition_duration: None,
             });
         }
 
@@ -444,6 +447,7 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         Ok(SlideInfo {
             current: new_pos,
             total,
+            transition_duration: None,
         })
     }
 

@@ -15,6 +15,8 @@ use crate::config::AdapterConfig;
 pub struct SlideInfo {
     pub current: i32,
     pub total: i32,
+    /// Transition duration in seconds (Keynote only). None for other adapters.
+    pub transition_duration: Option<f64>,
 }
 
 /// State of a presentation
@@ -116,6 +118,7 @@ pub trait PresentationAdapter: Send + Sync {
         let slide_info = self.get_slide_info(name).unwrap_or(SlideInfo {
             current: 0,
             total: 0,
+            transition_duration: None,
         });
 
         let zoom_level = self.get_notes_zoom().ok().flatten();
@@ -373,13 +376,13 @@ mod tests {
                 Ok(PresentationState { is_open: false, is_presenting: false })
             }
             fn get_slide_info(&self, _: &str) -> Result<SlideInfo, String> {
-                Ok(SlideInfo { current: 0, total: 0 })
+                Ok(SlideInfo { current: 0, total: 0, transition_duration: None })
             }
             fn next_slide(&self, _: &str) -> Result<SlideInfo, String> {
-                Ok(SlideInfo { current: 0, total: 0 })
+                Ok(SlideInfo { current: 0, total: 0, transition_duration: None })
             }
             fn prev_slide(&self, _: &str) -> Result<SlideInfo, String> {
-                Ok(SlideInfo { current: 0, total: 0 })
+                Ok(SlideInfo { current: 0, total: 0, transition_duration: None })
             }
         }
         let adapter = DummyAdapter;
