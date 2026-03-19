@@ -78,7 +78,7 @@ impl PresentationAdapter for KeynoteAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total })
+        Ok(SlideInfo { current, total, transition_duration: None })
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -87,12 +87,18 @@ impl PresentationAdapter for KeynoteAdapter {
                 tell document "{}"
                     set oldPos to slide number of current slide
                     set totalSlides to count (every slide whose skipped is false)
+                    -- Read outgoing slide's transition duration BEFORE advancing
+                    set tDur to 0.0
+                    try
+                        set tDur to transition duration of transition properties of current slide
+                    end try
                     if oldPos >= totalSlides then
-                        return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
+                        return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text) & "," & (tDur as text)
                     end if
                     show next
+                    -- Read immediately — may still be old value during transition, frontend handles it
                     set newPos to slide number of current slide
-                    return "OK," & (newPos as text) & "," & (totalSlides as text)
+                    return "OK," & (newPos as text) & "," & (totalSlides as text) & "," & (tDur as text)
                 end tell
             end tell"#,
             name
@@ -101,7 +107,7 @@ impl PresentationAdapter for KeynoteAdapter {
         let result = run_applescript(&script)?;
         let parts: Vec<&str> = result.split(',').collect();
 
-        if parts.len() != 3 {
+        if parts.len() != 4 {
             return Err("Unexpected response format".to_string());
         }
 
@@ -113,8 +119,13 @@ impl PresentationAdapter for KeynoteAdapter {
             .trim()
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
+        let transition_duration = parts[3]
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|&d| d > 0.0);
 
-        Ok(SlideInfo { current, total })
+        Ok(SlideInfo { current, total, transition_duration })
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -127,6 +138,7 @@ impl PresentationAdapter for KeynoteAdapter {
                         return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
                     end if
                     show previous
+                    -- Read immediately — reverse transitions are fast
                     set newPos to slide number of current slide
                     return "OK," & (newPos as text) & "," & (totalSlides as text)
                 end tell
@@ -150,7 +162,48 @@ impl PresentationAdapter for KeynoteAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total })
+        Ok(SlideInfo { current, total, transition_duration: None })
+    }
+
+    fn goto_slide(&self, name: &str, slide: i32) -> Result<SlideInfo, String> {
+        let script = format!(
+            r#"tell application "Keynote"
+                tell document "{}"
+                    set totalSlides to count (every slide whose skipped is false)
+                    if {slide} < 1 or {slide} > totalSlides then
+                        return "BOUNDARY," & (slide number of current slide as text) & "," & (totalSlides as text)
+                    end if
+                    set matchingSlides to (every slide whose slide number is {slide})
+                    if (count matchingSlides) = 0 then
+                        return "BOUNDARY," & (slide number of current slide as text) & "," & (totalSlides as text)
+                    end if
+                    set current slide to item 1 of matchingSlides
+                    -- Read immediately — goto jumps have no transition
+                    set newPos to slide number of current slide
+                    return "OK," & (newPos as text) & "," & (totalSlides as text)
+                end tell
+            end tell"#,
+            name,
+            slide = slide
+        );
+
+        let result = run_applescript(&script)?;
+        let parts: Vec<&str> = result.split(',').collect();
+
+        if parts.len() != 3 {
+            return Err("Unexpected response format".to_string());
+        }
+
+        let current = parts[1]
+            .trim()
+            .parse()
+            .map_err(|_| "Failed to parse current slide")?;
+        let total = parts[2]
+            .trim()
+            .parse()
+            .map_err(|_| "Failed to parse total slides")?;
+
+        Ok(SlideInfo { current, total, transition_duration: None })
     }
 
     // Keynote doesn't support notes zoom control

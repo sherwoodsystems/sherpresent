@@ -76,8 +76,10 @@ pub async fn start_osc_server(
             &config.channel,
             peer_tx,
         )
+        .with_scroll_broadcast(state.scroll_broadcast.clone())
     } else {
         OscServer::new(config.osc.clone(), state_manager)
+            .with_scroll_broadcast(state.scroll_broadcast.clone())
     };
 
     let handle = osc_server

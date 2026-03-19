@@ -2,7 +2,7 @@ use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
 use crate::config::AdapterConfig;
 use crate::discovery::{DiscoveredPeer, DiscoveryService};
-use crate::osc::{LatencyStore, OscServerHandle};
+use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -67,6 +67,9 @@ pub struct AppState {
     /// Timestamp (Unix ms) of the last UI/OSC slide command.
     /// Used by polling to skip cycles during active use, avoiding IPC contention.
     pub last_command_at: Arc<Mutex<u64>>,
+
+    /// Broadcast channel for scroll commands (consumed by web server WebSocket)
+    pub scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default
@@ -87,6 +90,7 @@ impl Default for AppState {
             web_server_handle: Mutex::new(None),
             latency_store: Arc::new(LatencyStore::new(50)),
             last_command_at: Arc::new(Mutex::new(0)),
+            scroll_broadcast: tokio::sync::broadcast::channel(16).0,
         }
     }
 }

@@ -38,7 +38,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
 use super::latency::CommandSource;
-use super::messages::{OscCommand, OscFeedback};
+use super::messages::{OscCommand, OscFeedback, ScrollDirection};
 use super::state_manager::{CachedState, StateManager};
 use super::CommandSourcePeer;
 use crate::config::{ChannelConfig, OscConfig};
@@ -164,6 +164,9 @@ pub struct OscServer {
 
     /// Channel to send discovered command source peers
     peer_tx: Option<mpsc::Sender<CommandSourcePeer>>,
+
+    /// Broadcast channel for scroll commands (forwarded to web server)
+    scroll_broadcast: Option<tokio::sync::broadcast::Sender<ScrollDirection>>,
 }
 
 impl OscServer {
@@ -179,7 +182,14 @@ impl OscServer {
             state_manager,
             broadcast_config: None,
             peer_tx: None,
+            scroll_broadcast: None,
         }
+    }
+
+    /// Set the scroll broadcast channel for forwarding scroll commands to the web server.
+    pub fn with_scroll_broadcast(mut self, tx: tokio::sync::broadcast::Sender<ScrollDirection>) -> Self {
+        self.scroll_broadcast = Some(tx);
+        self
     }
 
     /// Create a new OSC server with broadcast mode and peer tracking.
@@ -210,6 +220,7 @@ impl OscServer {
             state_manager,
             broadcast_config,
             peer_tx: Some(peer_tx),
+            scroll_broadcast: None,
         }
     }
 
@@ -327,6 +338,7 @@ impl OscServer {
         let state_manager = self.state_manager.clone();
         let broadcast_config = self.broadcast_config.clone();
         let peer_tx = self.peer_tx.clone();
+        let scroll_broadcast = self.scroll_broadcast.clone();
 
         let task_handle = tokio::spawn(async move {
             // Buffer for incoming UDP packets
@@ -372,6 +384,7 @@ impl OscServer {
                                             &feedback_socket,
                                             &feedback_addrs,
                                             None, // No channel filtering for direct mode
+                                            scroll_broadcast.as_ref(),
                                         ).await;
                                     }
                                     Err(e) => {
@@ -450,6 +463,7 @@ impl OscServer {
                                         &feedback_socket,
                                         &feedback_addrs,
                                         broadcast_config.as_ref().map(|c| c.channel_name.as_str()),
+                                        scroll_broadcast.as_ref(),
                                     ).await;
                                 }
                                 Err(e) => {
@@ -516,7 +530,9 @@ impl OscServer {
                         || addr.contains("/prev")
                         || addr.contains("/goto")
                         || addr.contains("/status")
-                        || addr.contains("/refresh"))
+                        || addr.contains("/refresh")
+                        || addr.contains("/scrollUp")
+                        || addr.contains("/scrollDown"))
             }
             OscPacket::Bundle(bundle) => {
                 // If any message in the bundle is a command, consider it a command packet
@@ -579,10 +595,11 @@ impl OscServer {
         feedback_socket: &UdpSocket,
         feedback_addrs: &[SocketAddr],
         channel_filter: Option<&str>,
+        scroll_tx: Option<&tokio::sync::broadcast::Sender<ScrollDirection>>,
     ) {
         match packet {
             OscPacket::Message(msg) => {
-                Self::handle_message(&msg, state_manager, feedback_socket, feedback_addrs, channel_filter)
+                Self::handle_message(&msg, state_manager, feedback_socket, feedback_addrs, channel_filter, scroll_tx)
                     .await;
             }
             OscPacket::Bundle(bundle) => {
@@ -595,6 +612,7 @@ impl OscServer {
                         feedback_socket,
                         feedback_addrs,
                         channel_filter,
+                        scroll_tx,
                     ))
                     .await;
                 }
@@ -612,6 +630,7 @@ impl OscServer {
         feedback_socket: &UdpSocket,
         feedback_addrs: &[SocketAddr],
         channel_filter: Option<&str>,
+        scroll_tx: Option<&tokio::sync::broadcast::Sender<ScrollDirection>>,
     ) {
         // If we have a channel filter, try to parse as a channel command first
         if let Some(filter_channel) = channel_filter {
@@ -643,6 +662,16 @@ impl OscServer {
                     OscCommand::Refresh => state_manager.refresh_state(),
                     OscCommand::ChannelCmdGoto { slide, .. } => {
                         state_manager.goto_slide(slide, CommandSource::OscBroadcast);
+                    }
+                    OscCommand::ScrollUp => {
+                        if let Some(tx) = scroll_tx {
+                            let _ = tx.send(ScrollDirection::Up);
+                        }
+                    }
+                    OscCommand::ScrollDown => {
+                        if let Some(tx) = scroll_tx {
+                            let _ = tx.send(ScrollDirection::Down);
+                        }
                     }
                     _ => {}
                 }
@@ -700,6 +729,18 @@ impl OscServer {
             OscCommand::Refresh => {
                 // Force a state refresh (will trigger feedback when done)
                 state_manager.refresh_state();
+            }
+
+            OscCommand::ScrollUp => {
+                if let Some(tx) = scroll_tx {
+                    let _ = tx.send(ScrollDirection::Up);
+                }
+            }
+
+            OscCommand::ScrollDown => {
+                if let Some(tx) = scroll_tx {
+                    let _ = tx.send(ScrollDirection::Down);
+                }
             }
 
             // Channel commands - handled separately when channel sync is enabled
