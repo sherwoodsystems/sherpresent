@@ -2,189 +2,275 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import type {
+    Presentation,
+    RecentEntry,
+    ImportProgress,
+  } from "$lib/types";
+  import SlideRenderer from "$lib/components/SlideRenderer.svelte";
+  import SlideStrip from "$lib/components/SlideStrip.svelte";
 
-  interface Stats {
-    totalEntries: number;
-    categories: Record<string, number>;
-    logFile: string;
-    canvaOpen?: boolean;
-  }
+  type View = "home" | "importing" | "viewer";
 
-  interface CaptureFile {
-    name: string;
-    path: string;
-    size: number;
-  }
-
-  let stats = $state<Stats>({ totalEntries: 0, categories: {}, logFile: "" });
-  let canvaOpen = $state(false);
-  let logFilePath = $state("");
-  let captures = $state<CaptureFile[]>([]);
-  let logDir = $state("");
+  let view = $state<View>("home");
   let canvaUrl = $state("");
+  let recentList = $state<RecentEntry[]>([]);
+  let importProgress = $state<ImportProgress | null>(null);
+  let importError = $state<string | null>(null);
 
-  let sortedCategories = $derived(
-    Object.entries(stats.categories).sort((a, b) => b[1] - a[1])
+  // Viewer state
+  let currentPresentation = $state<Presentation | null>(null);
+  let currentSlideIndex = $state(0);
+  let viewerScale = $state(0.5);
+
+  let currentSlide = $derived(
+    currentPresentation?.slides[currentSlideIndex] ?? null
   );
 
-  async function openCanva() {
+  async function loadRecent() {
+    recentList = await invoke<RecentEntry[]>("list_presentations");
+  }
+
+  async function startImport() {
+    const url = canvaUrl.trim();
+    if (!url) return;
+
+    view = "importing";
+    importError = null;
+    importProgress = { stage: "Fetching", detail: "Starting import..." };
+
     try {
-      const url = canvaUrl.trim() || undefined;
-      logFilePath = await invoke<string>("open_canva", { url });
-      canvaOpen = true;
-      stats = { totalEntries: 0, categories: {}, logFile: logFilePath };
+      const presentation = await invoke<Presentation>(
+        "import_presentation",
+        { url }
+      );
+      console.log("[CANVA] Imported presentation:", presentation.title);
+      console.log("[CANVA] Slides:", presentation.slides.length);
+      console.log("[CANVA] Fonts:", presentation.fonts.length);
+      for (const [i, slide] of presentation.slides.entries()) {
+        console.log(`[CANVA] Slide ${i}: ${slide.elements.length} elements, thumbnail: ${slide.thumbnail_url?.slice(0, 60) ?? "none"}`);
+        for (const [j, elem] of slide.elements.entries()) {
+          console.log(`[CANVA]   elem[${j}]:`, elem);
+        }
+      }
+      currentPresentation = presentation;
+      currentSlideIndex = 0;
+      view = "viewer";
+      canvaUrl = "";
+      await loadRecent();
     } catch (e) {
-      console.error("Failed to open Canva:", e);
+      importError = String(e);
+      importProgress = { stage: "Failed", detail: String(e) };
     }
   }
 
-  async function closeCanva() {
+  async function openPresentation(id: string) {
     try {
-      await invoke("close_canva");
-      canvaOpen = false;
-      await refreshCaptures();
+      currentPresentation = await invoke<Presentation>(
+        "get_presentation",
+        { id }
+      );
+      currentSlideIndex = 0;
+      view = "viewer";
     } catch (e) {
-      console.error("Failed to close Canva:", e);
+      console.error("Failed to load presentation:", e);
     }
   }
 
-  async function refreshCaptures() {
-    captures = await invoke<CaptureFile[]>("list_captures");
+  async function deletePresentation(id: string) {
+    try {
+      await invoke("delete_presentation", { id });
+      await loadRecent();
+    } catch (e) {
+      console.error("Failed to delete:", e);
+    }
   }
 
-  async function refreshStats() {
-    const s = await invoke<Stats>("get_stats");
-    stats = s;
-    canvaOpen = s.canvaOpen ?? false;
-    logFilePath = s.logFile;
+  function goHome() {
+    view = "home";
+    currentPresentation = null;
+    importProgress = null;
+    importError = null;
   }
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  function handleKeydown(e: KeyboardEvent) {
+    if (view !== "viewer" || !currentPresentation) return;
+    if (e.key === "ArrowRight" || e.key === " ") {
+      e.preventDefault();
+      if (currentSlideIndex < currentPresentation.slides.length - 1) {
+        currentSlideIndex++;
+      }
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      if (currentSlideIndex > 0) {
+        currentSlideIndex--;
+      }
+    } else if (e.key === "Escape") {
+      goHome();
+    }
   }
 
-  function categoryColor(cat: string): string {
-    if (cat.startsWith("WS")) return "#4fc3f7";
-    if (cat.startsWith("FETCH")) return "#81c784";
-    if (cat.startsWith("XHR")) return "#aed581";
-    if (cat.startsWith("CONSOLE_ERROR")) return "#e57373";
-    if (cat.startsWith("CONSOLE_WARN")) return "#ffb74d";
-    if (cat.startsWith("CONSOLE")) return "#bdbdbd";
-    if (cat.startsWith("ANIMATION") || cat.startsWith("TRANSITION")) return "#ce93d8";
-    if (cat.startsWith("DOM")) return "#ffab91";
-    if (cat.startsWith("CANVAS")) return "#f06292";
-    if (cat.startsWith("NET_RECORD")) return "#66bb6a";
-    if (cat.startsWith("SLIDE_CHANGE")) return "#ffca28";
-    if (cat.startsWith("PAGE_")) return "#ab47bc";
-    if (cat.startsWith("INLINE_SCRIPT")) return "#7e57c2";
-    if (cat.startsWith("WINDOW_GLOBAL") || cat.startsWith("GLOBALS")) return "#5c6bc0";
-    if (cat.startsWith("BEACON")) return "#26a69a";
-    if (cat.startsWith("SW_")) return "#ef5350";
-    if (cat.startsWith("STATE")) return "#fff176";
-    return "#90a4ae";
+  function calculateScale(): number {
+    const maxW = window.innerWidth - 80;
+    const maxH = window.innerHeight - 200;
+    return Math.min(maxW / 1920, maxH / 1080, 1);
   }
 
-  onMount(async () => {
-    logDir = await invoke<string>("get_log_dir");
-    await refreshStats();
-    await refreshCaptures();
+  onMount(() => {
+    loadRecent();
+    viewerScale = calculateScale();
 
-    const unlisten = listen<Stats>("canva-stats", (event) => {
-      stats = event.payload;
+    const unlisten = listen<ImportProgress>("import-progress", (event) => {
+      importProgress = event.payload;
     });
 
-    // Poll stats every 2s as a fallback (the event only fires every 50 entries)
-    const interval = setInterval(refreshStats, 2000);
+    const handleResize = () => {
+      viewerScale = calculateScale();
+    };
+    window.addEventListener("resize", handleResize);
 
     return () => {
       unlisten.then((fn) => fn());
-      clearInterval(interval);
+      window.removeEventListener("resize", handleResize);
     };
   });
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <main>
   <header>
-    <h1>Canva Analyzer</h1>
-    <div class="controls">
-      {#if canvaOpen}
-        <button class="btn close" onclick={closeCanva}>Close Canva</button>
+    <h1>
+      {#if view === "viewer" && currentPresentation}
+        <button class="back-btn" onclick={goHome}>&larr;</button>
+        {currentPresentation.title}
       {:else}
-        <button class="btn open" onclick={openCanva}>Open Canva</button>
+        Canva Importer
       {/if}
-    </div>
+    </h1>
+    {#if view === "viewer" && currentPresentation}
+      <span class="slide-counter">
+        {currentSlideIndex + 1} / {currentPresentation.slides.length}
+      </span>
+    {/if}
   </header>
 
-  {#if canvaOpen}
-    <section class="stats-panel">
-      <div class="stat-big">
-        <span class="stat-number">{stats.totalEntries.toLocaleString()}</span>
-        <span class="stat-label">events captured</span>
-      </div>
-
-      <div class="stat-file">
-        Writing to: <code>{logFilePath}</code>
-      </div>
-
-      {#if sortedCategories.length > 0}
-        <div class="category-grid">
-          {#each sortedCategories as [cat, count]}
-            <div class="category-row">
-              <span class="cat-name" style="color: {categoryColor(cat)}">{cat}</span>
-              <span class="cat-bar-wrap">
-                <span
-                  class="cat-bar"
-                  style="width: {Math.min(100, (count / stats.totalEntries) * 100)}%; background: {categoryColor(cat)}"
-                ></span>
-              </span>
-              <span class="cat-count">{count.toLocaleString()}</span>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <p class="hint">Waiting for events... browse Canva, open a presentation, hit Present.</p>
-      {/if}
-    </section>
-  {:else}
+  {#if view === "home"}
     <section class="welcome">
       <div class="url-input-group">
         <input
           type="text"
           bind:value={canvaUrl}
-          placeholder="Paste Canva public view link (optional)..."
+          placeholder="Paste Canva public view link..."
           class="url-input"
-          onkeydown={(e) => { if (e.key === 'Enter') openCanva(); }}
+          onkeydown={(e) => {
+            if (e.key === "Enter") startImport();
+          }}
         />
-        <button class="btn open" onclick={openCanva}>Analyze</button>
+        <button
+          class="btn primary"
+          onclick={startImport}
+          disabled={!canvaUrl.trim()}
+        >
+          Import
+        </button>
       </div>
-      <p class="hint">Paste a public view URL to capture a specific presentation, or leave blank to browse Canva.</p>
-      <p class="hint">All network traffic, console output, animations, DOM mutations, and canvas usage will be captured to a JSONL file for offline analysis.</p>
+      <p class="hint">
+        Paste a public Canva presentation URL to import slides for offline
+        viewing.
+      </p>
+    </section>
+
+    {#if recentList.length > 0}
+      <section class="recent">
+        <h2>Recent Presentations</h2>
+        <div class="recent-grid">
+          {#each recentList as entry}
+            <div class="recent-card">
+              <button
+                class="card-body"
+                onclick={() => openPresentation(entry.id)}
+              >
+                <div class="card-thumb">
+                  <span class="card-count">{entry.slide_count} slides</span>
+                </div>
+                <div class="card-info">
+                  <span class="card-title">{entry.title}</span>
+                  <span class="card-date">
+                    {new Date(entry.imported_at).toLocaleDateString()}
+                  </span>
+                </div>
+              </button>
+              <button
+                class="card-delete"
+                onclick={() => deletePresentation(entry.id)}
+                title="Delete"
+              >
+                &times;
+              </button>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
+  {:else if view === "importing"}
+    <section class="import-progress">
+      {#if importError}
+        <div class="progress-error">
+          <p>Import failed</p>
+          <p class="error-detail">{importError}</p>
+          <button class="btn" onclick={goHome}>Back</button>
+        </div>
+      {:else if importProgress}
+        <div class="progress-indicator">
+          <div class="progress-stage">{importProgress.stage}</div>
+          <div class="progress-detail">{importProgress.detail}</div>
+          <div class="progress-dots">
+            <span
+              class="dot"
+              class:active={importProgress.stage === "Fetching"}
+              class:done={["Parsing", "Downloading", "Complete"].includes(
+                importProgress.stage
+              )}
+            ></span>
+            <span
+              class="dot"
+              class:active={importProgress.stage === "Parsing"}
+              class:done={["Downloading", "Complete"].includes(
+                importProgress.stage
+              )}
+            ></span>
+            <span
+              class="dot"
+              class:active={importProgress.stage === "Downloading"}
+              class:done={importProgress.stage === "Complete"}
+            ></span>
+            <span
+              class="dot"
+              class:active={importProgress.stage === "Complete"}
+            ></span>
+          </div>
+        </div>
+      {/if}
+    </section>
+  {:else if view === "viewer" && currentPresentation && currentSlide}
+    <section class="viewer">
+      <div class="slide-area">
+        <SlideRenderer
+          slide={currentSlide}
+          fonts={currentPresentation.fonts}
+          scale={viewerScale}
+        />
+      </div>
+      <div class="slide-nav">
+        <SlideStrip
+          slides={currentPresentation.slides}
+          currentIndex={currentSlideIndex}
+          onselect={(i) => (currentSlideIndex = i)}
+        />
+      </div>
     </section>
   {/if}
-
-  <section class="captures">
-    <h2>
-      Past Captures
-      <button class="btn-small" onclick={refreshCaptures}>Refresh</button>
-    </h2>
-    {#if logDir}
-      <p class="hint">Stored in: <code>{logDir}</code></p>
-    {/if}
-    {#if captures.length === 0}
-      <p class="hint">No captures yet.</p>
-    {:else}
-      <div class="capture-list">
-        {#each captures as cap}
-          <div class="capture-row">
-            <span class="capture-name">{cap.name}</span>
-            <span class="capture-size">{formatBytes(cap.size)}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </section>
 </main>
 
 <style>
@@ -199,9 +285,7 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
-    padding: 0;
-    margin: 0;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   header {
@@ -211,6 +295,7 @@
     padding: 12px 20px;
     background: #16213e;
     border-bottom: 1px solid #0f3460;
+    flex-shrink: 0;
   }
 
   h1 {
@@ -218,18 +303,35 @@
     margin: 0;
     font-weight: 600;
     color: #e94560;
-  }
-
-  h2 {
-    font-size: 13px;
-    margin: 0 0 8px 0;
-    color: #90a4ae;
     display: flex;
     align-items: center;
     gap: 10px;
   }
 
-  .controls { display: flex; gap: 10px; }
+  h2 {
+    font-size: 13px;
+    margin: 0 0 12px 0;
+    color: #90a4ae;
+  }
+
+  .back-btn {
+    background: none;
+    border: 1px solid #0f3460;
+    color: #4fc3f7;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .back-btn:hover {
+    background: #0f3460;
+  }
+
+  .slide-counter {
+    color: #546e7a;
+    font-size: 14px;
+  }
 
   .btn {
     padding: 6px 16px;
@@ -241,81 +343,26 @@
     font-size: 12px;
     font-family: inherit;
   }
-  .btn:hover { background: #0f3460; }
-  .btn.open { border-color: #4fc3f7; color: #4fc3f7; }
-  .btn.close { border-color: #e57373; color: #e57373; }
-
-  .btn-small {
-    padding: 2px 8px;
-    border: 1px solid #333;
-    border-radius: 3px;
-    background: transparent;
-    color: #546e7a;
-    cursor: pointer;
-    font-size: 11px;
-    font-family: inherit;
+  .btn:hover {
+    background: #0f3460;
   }
-  .btn-small:hover { color: #90a4ae; }
-
-  section { padding: 16px 20px; }
-
-  .stats-panel { border-bottom: 1px solid #0f3460; }
-
-  .stat-big {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 8px;
+  .btn.primary {
+    border-color: #4fc3f7;
+    color: #4fc3f7;
   }
-  .stat-number { font-size: 36px; font-weight: 700; color: #4fc3f7; }
-  .stat-label { font-size: 14px; color: #546e7a; }
-
-  .stat-file { font-size: 11px; color: #546e7a; margin-bottom: 16px; }
-  .stat-file code { color: #90a4ae; }
-
-  .category-grid { display: flex; flex-direction: column; gap: 3px; }
-
-  .category-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  .btn.primary:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
-  .cat-name {
-    font-size: 11px;
-    font-weight: 600;
-    min-width: 160px;
-    text-align: right;
-  }
-
-  .cat-bar-wrap {
-    flex: 1;
-    height: 14px;
-    background: #111;
-    border-radius: 2px;
-    overflow: hidden;
-  }
-
-  .cat-bar {
-    display: block;
-    height: 100%;
-    border-radius: 2px;
-    transition: width 0.3s ease;
-    opacity: 0.7;
-  }
-
-  .cat-count {
-    font-size: 11px;
-    color: #90a4ae;
-    min-width: 60px;
-    text-align: right;
+  section {
+    padding: 16px 20px;
   }
 
   .welcome {
     text-align: center;
-    padding: 60px 20px;
+    padding: 60px 20px 30px;
   }
-  .welcome p { margin: 8px 0; }
 
   .url-input-group {
     display: flex;
@@ -335,24 +382,199 @@
     font-family: inherit;
     outline: none;
   }
-  .url-input:focus { border-color: #4fc3f7; }
-  .url-input::placeholder { color: #546e7a; }
+  .url-input:focus {
+    border-color: #4fc3f7;
+  }
+  .url-input::placeholder {
+    color: #546e7a;
+  }
 
-  .hint { font-size: 12px; color: #546e7a; }
-  .hint code { color: #90a4ae; }
+  .hint {
+    font-size: 12px;
+    color: #546e7a;
+  }
 
-  .captures { border-top: 1px solid #0f3460; }
+  .recent {
+    border-top: 1px solid #0f3460;
+    flex: 1;
+    overflow-y: auto;
+  }
 
-  .capture-list { display: flex; flex-direction: column; gap: 2px; }
+  .recent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
 
-  .capture-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 4px 8px;
+  .recent-card {
+    position: relative;
     background: #16213e;
-    border-radius: 3px;
+    border-radius: 6px;
+    border: 1px solid #0f3460;
+    overflow: hidden;
+  }
+
+  .card-body {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+  }
+  .card-body:hover {
+    background: #1c2a4a;
+  }
+
+  .card-thumb {
+    height: 100px;
+    background: #111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .card-count {
+    color: #546e7a;
     font-size: 12px;
   }
-  .capture-name { color: #b0bec5; }
-  .capture-size { color: #546e7a; }
+
+  .card-info {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .card-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #e0e0e0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-date {
+    font-size: 11px;
+    color: #546e7a;
+  }
+
+  .card-delete {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    color: #e57373;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .recent-card:hover .card-delete {
+    opacity: 1;
+  }
+
+  .import-progress {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .progress-indicator {
+    text-align: center;
+  }
+
+  .progress-stage {
+    font-size: 20px;
+    font-weight: 600;
+    color: #4fc3f7;
+    margin-bottom: 8px;
+  }
+
+  .progress-detail {
+    color: #90a4ae;
+    margin-bottom: 20px;
+  }
+
+  .progress-dots {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #333;
+    transition: background 0.3s;
+  }
+  .dot.active {
+    background: #4fc3f7;
+    animation: pulse 1s infinite;
+  }
+  .dot.done {
+    background: #81c784;
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .progress-error {
+    text-align: center;
+    color: #e57373;
+  }
+
+  .error-detail {
+    font-size: 12px;
+    color: #90a4ae;
+    max-width: 400px;
+    margin: 8px auto 16px;
+    word-break: break-word;
+  }
+
+  .viewer {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .slide-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    overflow: hidden;
+  }
+
+  .slide-nav {
+    padding: 8px 16px;
+    border-top: 1px solid #0f3460;
+    background: #16213e;
+    flex-shrink: 0;
+  }
 </style>

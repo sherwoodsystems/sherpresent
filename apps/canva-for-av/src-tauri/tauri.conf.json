@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Canva Analyzer",
+        "title": "Canva Importer",
         "label": "main",
         "width": 900,
         "height": 700
