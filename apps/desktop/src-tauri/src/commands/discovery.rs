@@ -4,23 +4,12 @@ use crate::discovery::{DiscoveredPeer, DiscoveryService};
 
 #[tauri::command]
 pub fn get_discovered_peers(state: tauri::State<AppState>) -> Vec<DiscoveredPeer> {
-    let mut peers = Vec::new();
-
-    // Get mDNS discovered peers
-    {
-        let discovery = state.discovery_service.lock().unwrap();
-        if let Some(service) = &*discovery {
-            peers.extend(service.get_peers());
-        }
+    let discovery = state.discovery_service.lock().unwrap();
+    if let Some(service) = &*discovery {
+        service.get_peers()
+    } else {
+        Vec::new()
     }
-
-    // Get command source peers (rpi-osc-bridge devices)
-    {
-        let command_peers = state.command_source_peers.lock().unwrap();
-        peers.extend(command_peers.values().cloned());
-    }
-
-    peers
 }
 
 #[tauri::command]
@@ -29,7 +18,6 @@ pub async fn start_discovery(
     state: tauri::State<'_, AppState>,
     instance_id: String,
     display_name: Option<String>,
-    channel_name: String,
     osc_port: u16,
     network_interface: Option<String>,
 ) -> Result<(), String> {
@@ -42,17 +30,16 @@ pub async fn start_discovery(
     }
 
     log::info!(
-        "Starting discovery service (instance: {}, name: {:?}, channel: '{}')",
+        "Starting discovery service (instance: {}, name: {:?})",
         instance_id,
         display_name,
-        channel_name
     );
 
     // Create channel for peer updates
     let (peer_tx, mut peer_rx) = tokio::sync::mpsc::channel::<Vec<DiscoveredPeer>>(32);
 
     // Create and start the discovery service
-    let mut service = DiscoveryService::new(instance_id, display_name, channel_name, osc_port, peer_tx, network_interface)?;
+    let mut service = DiscoveryService::new(instance_id, display_name, osc_port, peer_tx, network_interface)?;
 
     service.register()?;
     let _browse_handle = service.start_browsing()?;

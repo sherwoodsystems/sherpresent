@@ -101,8 +101,6 @@ pub struct DiscoveredPeer {
     /// Auto-assigned numeric ID for easy reference (1, 2, 3...)
     #[serde(rename = "displayId")]
     pub display_id: u8,
-    /// Channel name the peer belongs to
-    pub channel: String,
     /// IP address of the peer
     pub host: String,
     /// OSC port of the peer
@@ -129,8 +127,6 @@ pub struct DiscoveryService {
     instance_id: String,
     /// Our display name (human-readable)
     display_name: Option<String>,
-    /// Our channel name
-    channel_name: String,
     /// Our OSC port
     osc_port: u16,
     /// Our assigned display ID
@@ -154,14 +150,12 @@ impl DiscoveryService {
     ///
     /// - `instance_id` - Unique identifier for this instance (UUID)
     /// - `display_name` - Human-readable name for this instance (optional)
-    /// - `channel_name` - Name of the channel to join (empty string means "show all")
     /// - `osc_port` - Port where this instance's OSC server listens
     /// - `peer_tx` - Channel to send peer list updates
     /// - `network_interface` - Network interface to advertise on (None = all interfaces)
     pub fn new(
         instance_id: String,
         display_name: Option<String>,
-        channel_name: String,
         osc_port: u16,
         peer_tx: mpsc::Sender<Vec<DiscoveredPeer>>,
         network_interface: Option<String>,
@@ -202,7 +196,6 @@ impl DiscoveryService {
             daemon,
             instance_id,
             display_name,
-            channel_name,
             osc_port,
             our_display_id,
             peers: Arc::new(Mutex::new(HashMap::new())),
@@ -245,8 +238,15 @@ impl DiscoveryService {
         // Format hostname for mDNS (must end with .local.)
         let mdns_hostname = format!("{}.local.", host_name);
 
-        // Use instance_id as the service name (must be unique)
-        let service_name = &self.instance_id;
+        // Use display_name or hostname as the service name for human-readable
+        // mDNS discovery (e.g., in Companion's device dropdown).
+        // Append a short instance suffix to ensure uniqueness across instances.
+        let short_id = &self.instance_id[..8.min(self.instance_id.len())];
+        let base_name = self
+            .display_name
+            .clone()
+            .unwrap_or_else(|| host_name.clone());
+        let service_name = format!("{} ({})", base_name, short_id);
 
         // Create TXT record properties
         // Use display_name if set, otherwise hostname as fallback
@@ -256,7 +256,6 @@ impl DiscoveryService {
             .unwrap_or_else(|| host_name.clone());
 
         let properties = [
-            ("channel", self.channel_name.as_str()),
             ("version", PROTOCOL_VERSION),
             ("instance", self.instance_id.as_str()),
             ("name", name_value.as_str()),
@@ -268,7 +267,7 @@ impl DiscoveryService {
 
         let service_info = ServiceInfo::new(
             SERVICE_TYPE,
-            service_name,
+            &service_name,
             &mdns_hostname,
             local_ip.as_deref().unwrap_or(""),  // Explicit IP address
             self.osc_port,
@@ -291,10 +290,9 @@ impl DiscoveryService {
         self.is_registered = true;
 
         log::info!(
-            "Registered mDNS service: {} (name: {}, channel: {}, port: {}, addr_auto: true)",
+            "Registered mDNS service: {} (name: {}, port: {}, addr_auto: true)",
             service_name,
             name_value,
-            self.channel_name,
             self.osc_port
         );
 
@@ -380,10 +378,6 @@ impl DiscoveryService {
                     .get_property_val_str("instance")
                     .unwrap_or_default()
                     .to_string();
-                let channel = properties
-                    .get_property_val_str("channel")
-                    .unwrap_or_default()
-                    .to_string();
                 let version = properties
                     .get_property_val_str("version")
                     .unwrap_or(PROTOCOL_VERSION)
@@ -426,7 +420,6 @@ impl DiscoveryService {
                     instance_id: instance_id.clone(),
                     display_name,
                     display_id,
-                    channel,
                     host,
                     port,
                     version,
@@ -435,13 +428,12 @@ impl DiscoveryService {
                 };
 
                 log::info!(
-                    "Discovered peer: #{} {} ({}) at {}:{} (channel: {})",
+                    "Discovered peer: #{} {} ({}) at {}:{}",
                     peer.display_id,
                     peer.display_name.as_deref().unwrap_or("unnamed"),
                     peer.instance_id,
                     peer.host,
                     peer.port,
-                    peer.channel
                 );
 
                 // Add to peers
@@ -520,7 +512,6 @@ impl DiscoveryService {
                     .ok()
             }),
             display_id: our_display_id,
-            channel: self.channel_name.clone(),
             host: get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string()),
             port: self.osc_port,
             version: PROTOCOL_VERSION.to_string(),
@@ -548,26 +539,6 @@ impl DiscoveryService {
             self.unregister()?;
             self.register()?;
         }
-
-        Ok(())
-    }
-
-    /// Update the channel name and re-register.
-    #[allow(dead_code)]
-    pub fn update_channel(&mut self, new_channel: String) -> Result<(), String> {
-        if self.channel_name == new_channel {
-            return Ok(());
-        }
-
-        self.channel_name = new_channel;
-
-        // Re-register with new channel if we were registered
-        if self.is_registered {
-            self.unregister()?;
-            self.register()?;
-        }
-
-        // Note: We no longer clear peers since we show all peers regardless of channel
 
         Ok(())
     }

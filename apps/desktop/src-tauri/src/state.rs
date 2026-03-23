@@ -1,8 +1,8 @@
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
 use crate::config::AdapterConfig;
-use crate::discovery::{DiscoveredPeer, DiscoveryService};
-use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection};
+use crate::discovery::DiscoveryService;
+use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -19,25 +19,15 @@ pub struct AppState {
     pub polling_active: Arc<Mutex<bool>>,
 
     /// Handle to the running OSC server (if any)
-    ///
-    /// We store the handle so we can stop the server later.
-    /// `Option` because the server might not be running.
     pub osc_server: Mutex<Option<OscServerHandle>>,
+
+    /// Shared StateManager for presentation control (used by OSC server and WebSocket)
+    pub state_manager: Arc<Mutex<Option<Arc<StateManager>>>>,
 
     /// Discovery service for mDNS peer discovery
     ///
     /// Active when channel sync is enabled.
     pub discovery_service: Mutex<Option<DiscoveryService>>,
-
-    /// Peers discovered via OSC command sources (e.g., rpi-osc-bridge devices)
-    ///
-    /// Tracks devices by their source IP when they send OSC commands.
-    /// Key is the source address string (e.g., "192.168.1.100:9002")
-    /// Wrapped in Arc for sharing across async tasks.
-    pub command_source_peers: Arc<Mutex<HashMap<String, DiscoveredPeer>>>,
-
-    /// Counter for assigning display IDs to command source peers
-    pub next_peer_display_id: Arc<Mutex<u8>>,
 
     /// Per-adapter network configuration
     pub adapter_config: Arc<Mutex<AdapterConfig>>,
@@ -78,9 +68,8 @@ impl Default for AppState {
         Self {
             polling_active: Arc::new(Mutex::new(false)),
             osc_server: Mutex::new(None),
+            state_manager: Arc::new(Mutex::new(None)),
             discovery_service: Mutex::new(None),
-            command_source_peers: Arc::new(Mutex::new(HashMap::new())),
-            next_peer_display_id: Arc::new(Mutex::new(100)), // Start at 100 for command source peers
             adapter_config: Arc::new(Mutex::new(AdapterConfig::default())),
             canva_adapter: Arc::new(Mutex::new(None)),
             notes_cache: Arc::new(Mutex::new(HashMap::new())),

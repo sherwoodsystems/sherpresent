@@ -66,7 +66,6 @@
             </div>
             <div class="bridge-meta">
               <span class="bridge-host">{bridge.host}</span>
-              <span class="bridge-channel">ch: {bridge.channel}</span>
             </div>
           </button>
           <button

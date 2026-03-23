@@ -8,7 +8,7 @@ import {
   type NotesCache,
   type ConnectionStatus,
   type OscConfig,
-  type ChannelConfig,
+  type DiscoveryConfig,
   type WebServerConfig,
   type DiscoveredPeer,
   type SlideInfo,
@@ -49,9 +49,7 @@ class AppStore {
       }
       
       // Check discovery state on init
-      if (savedConfig.channel.enabled) {
-        // We can't easily check if discovery is running without an API,
-        // but we can try to start it if enabled
+      if (savedConfig.discovery.enabled) {
         await this.startDiscovery();
       }
 
@@ -170,28 +168,27 @@ class AppStore {
     this.scheduleConfigSave();
   }
 
-  async updateChannelConfig(channelConfig: ChannelConfig) {
-    const wasEnabled = this.config.channel.enabled;
-    this.config = { ...this.config, channel: channelConfig };
+  async updateDiscoveryConfig(discoveryConfig: DiscoveryConfig) {
+    const wasEnabled = this.config.discovery.enabled;
+    this.config = { ...this.config, discovery: discoveryConfig };
     this.scheduleConfigSave();
 
-    if (channelConfig.enabled && !wasEnabled && channelConfig.channelName) {
+    if (discoveryConfig.enabled && !wasEnabled) {
       await this.startDiscovery();
-    } else if (!channelConfig.enabled && wasEnabled) {
+    } else if (!discoveryConfig.enabled && wasEnabled) {
       await this.stopDiscovery();
     }
   }
 
   async startDiscovery() {
-    if (!this.config.channel.enabled || !this.config.channel.channelName) return;
+    if (!this.config.discovery.enabled) return;
 
     try {
       await invoke('start_discovery', {
-        instanceId: this.config.channel.instanceId,
-        displayName: this.config.channel.displayName,
-        channelName: this.config.channel.channelName,
+        instanceId: this.config.discovery.instanceId,
+        displayName: this.config.discovery.displayName,
         oscPort: this.config.osc.receivePort,
-        networkInterface: this.config.channel.networkInterface
+        networkInterface: this.config.discovery.networkInterface
       });
       this.discoveryRunning = true;
     } catch (e) {

@@ -1,7 +1,6 @@
 mod adapters;
 mod applescript;
 mod bridge;
-mod channel;
 mod config;
 mod discovery;
 mod generated_constants;
@@ -15,19 +14,17 @@ use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use crate::state::AppState;
-use crate::osc::{OscServer, StateManager, CommandSourcePeer};
+use crate::osc::{OscServer, StateManager};
 use crate::discovery::{DiscoveryService, DiscoveredPeer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging (will use RUST_LOG env var, defaults to info)
-    // This helps with debugging OSC server issues
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        // Note: We removed tauri_plugin_shell since we no longer use a sidecar
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             // Config
@@ -66,7 +63,7 @@ pub fn run() {
             commands::canva::get_canva_connection_status,
             commands::canva::update_canva_state,
             commands::canva::update_canva_batch_notes,
-            // Channel Discovery
+            // Discovery
             commands::discovery::get_discovered_peers,
             commands::discovery::start_discovery,
             commands::discovery::stop_discovery,
@@ -101,13 +98,11 @@ pub fn run() {
             // Load config on startup (or create default)
             let config = config::load_config(app.handle()).unwrap_or_default();
 
-            // Log startup info
             log::info!(
                 "Sher Present Settings starting with adapter: {}",
                 config.adapter
             );
 
-            // Auto-start OSC server
             // Store adapter config in AppState
             {
                 let state = app.state::<AppState>();
@@ -119,7 +114,6 @@ pub fn run() {
             let osc_config = config.osc.clone();
             let adapter = config.adapter.clone();
             let presentation_name = config.presentation_name.clone();
-            let channel_config = config.channel.clone();
             let adapter_config = config.adapter_config.clone();
 
             let latency_store = {
@@ -139,15 +133,13 @@ pub fn run() {
                 state.scroll_broadcast.clone()
             };
 
+            // Auto-start OSC server
             tauri::async_runtime::spawn(async move {
                 log::info!("Auto-starting OSC server on port {}", osc_config.receive_port);
 
                 // Create state change channel
                 let (state_change_tx, state_change_rx) =
                     tokio::sync::mpsc::channel::<osc::CachedState>(32);
-
-                // Create peer tracking channel for broadcast mode
-                let (peer_tx, mut peer_rx) = tokio::sync::mpsc::channel::<CommandSourcePeer>(32);
 
                 // Create state manager
                 let canva_adapter = {
@@ -175,82 +167,22 @@ pub fn run() {
                     initial_state.total_slides
                 );
 
-                // Start OSC server with broadcast mode if enabled
-                let osc_server = if channel_config.enabled && channel_config.broadcast_mode {
-                    log::info!(
-                        "Broadcast mode enabled for channel '{}' on port {}",
-                        channel_config.channel_name,
-                        channel_config.broadcast_port
-                    );
-                    OscServer::with_broadcast_and_peer_tracking(
-                        osc_config,
-                        state_manager,
-                        &channel_config,
-                        peer_tx,
-                    )
-                    .with_scroll_broadcast(scroll_broadcast.clone())
-                } else {
-                    OscServer::new(osc_config, state_manager)
-                        .with_scroll_broadcast(scroll_broadcast.clone())
-                };
+                // Store state manager in AppState for webserver access
+                {
+                    let state = app_handle.state::<AppState>();
+                    let mut sm = state.state_manager.lock().unwrap();
+                    *sm = Some(state_manager.clone());
+                }
+
+                // Start OSC server (direct mode only)
+                let osc_server = OscServer::new(osc_config, state_manager)
+                    .with_scroll_broadcast(scroll_broadcast.clone());
 
                 match osc_server.start(state_change_rx).await {
                     Ok(handle) => {
-                        // Store the handle
                         let state = app_handle.state::<AppState>();
                         let mut server_slot = state.osc_server.lock().unwrap();
                         *server_slot = Some(handle);
-
-                        // Spawn peer tracking task
-                        let peer_app = app_handle.clone();
-                        let peer_state = app_handle.state::<AppState>().inner().command_source_peers.clone();
-                        let peer_id_counter = app_handle.state::<AppState>().inner().next_peer_display_id.clone();
-
-                        tokio::spawn(async move {
-                            while let Some(peer) = peer_rx.recv().await {
-                                let key = peer.address.to_string();
-                                let display_name = format!("Device @ {}", peer.address.ip());
-
-                                // Check if this is a new peer and get/assign display ID
-                                let (is_new, display_id) = {
-                                    let peers = peer_state.lock().unwrap();
-                                    if let Some(existing) = peers.get(&key) {
-                                        (false, existing.display_id)
-                                    } else {
-                                        let mut id = peer_id_counter.lock().unwrap();
-                                        let new_id = *id;
-                                        *id = id.wrapping_add(1);
-                                        (true, new_id)
-                                    }
-                                };
-
-                                let discovered = DiscoveredPeer {
-                                    instance_id: key.clone(),
-                                    display_name: Some(display_name),
-                                    display_id,
-                                    host: peer.address.ip().to_string(),
-                                    port: peer.address.port(),
-                                    channel: peer.channel,
-                                    version: "bridge".to_string(),
-                                    is_self: false,
-                                    config_port: None,
-                                };
-
-                                {
-                                    let mut peers = peer_state.lock().unwrap();
-                                    peers.insert(key.clone(), discovered);
-                                }
-
-                                if is_new {
-                                    log::info!("Discovered command source peer: {}", key);
-                                    let peers_list: Vec<DiscoveredPeer> = {
-                                        let p = peer_state.lock().unwrap();
-                                        p.values().cloned().collect()
-                                    };
-                                    let _ = peer_app.emit("channel-peers-updated", &peers_list);
-                                }
-                            }
-                        });
 
                         let _ = app_handle.emit("osc-server-started", ());
                         log::info!("OSC server auto-started successfully");
@@ -263,7 +195,7 @@ pub fn run() {
 
             // Auto-start discovery service for peer discovery
             let app_handle2 = app.handle().clone();
-            let discovery_config = config.channel.clone();
+            let discovery_config = config.discovery.clone();
             let osc_port = config.osc.receive_port;
 
             tauri::async_runtime::spawn(async move {
@@ -273,11 +205,9 @@ pub fn run() {
                 let (peer_tx, mut peer_rx) = tokio::sync::mpsc::channel::<Vec<DiscoveredPeer>>(32);
 
                 // Create discovery service
-                // Use empty channel_name to show all peers regardless of channel
                 match DiscoveryService::new(
                     discovery_config.instance_id.clone(),
                     discovery_config.display_name.clone(),
-                    discovery_config.channel_name.clone(),
                     osc_port,
                     peer_tx,
                     discovery_config.network_interface.clone(),
@@ -293,7 +223,6 @@ pub fn run() {
                             return;
                         }
 
-                        // Store the service in a separate scope to release lock
                         {
                             let state = app_handle2.state::<AppState>();
                             let mut discovery_slot = state.discovery_service.lock().unwrap();
@@ -301,7 +230,7 @@ pub fn run() {
                             log::info!("Discovery service auto-started successfully");
                         }
 
-                        // Forward peer updates to frontend (lock is released)
+                        // Forward peer updates to frontend
                         while let Some(peers) = peer_rx.recv().await {
                             let _ = app_handle2.emit("peers-updated", &peers);
                         }
@@ -325,6 +254,7 @@ pub fn run() {
                     let status_broadcast = state.status_broadcast.clone();
                     let notes_broadcast = state.notes_broadcast.clone();
                     let scroll_broadcast = state.scroll_broadcast.clone();
+                    let state_manager = state.state_manager.lock().unwrap().clone();
 
                     match webserver::start(
                         web_server_config,
@@ -332,6 +262,7 @@ pub fn run() {
                         status_broadcast,
                         notes_broadcast,
                         scroll_broadcast,
+                        state_manager,
                     )
                     .await
                     {

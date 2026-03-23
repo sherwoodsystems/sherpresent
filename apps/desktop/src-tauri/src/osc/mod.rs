@@ -47,17 +47,3 @@ pub use latency::{LatencyEvent, LatencyStore};
 pub use messages::ScrollDirection;
 pub use server::{OscServer, OscServerHandle};
 pub use state_manager::{CachedState, StateManager};
-
-use std::net::SocketAddr;
-
-/// Represents a device discovered via OSC command source.
-///
-/// When a device sends an OSC command (like `/clicker/main/next`),
-/// we track its source address to show in the UI.
-#[derive(Debug, Clone)]
-pub struct CommandSourcePeer {
-    /// Source address of the device
-    pub address: SocketAddr,
-    /// Channel the command was sent on
-    pub channel: String,
-}

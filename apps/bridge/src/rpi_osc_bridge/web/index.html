@@ -32,6 +32,13 @@
   .manual-inputs input.port { max-width: 80px; }
   .feedback { font-size: 0.85em; color: #aaa; }
   .feedback .slide { font-size: 1.4em; color: #fff; font-weight: 700; }
+  .presenting-badge { display: inline-block; font-size: 0.85em; padding: 4px 12px; border-radius: 999px; font-weight: 600; letter-spacing: 0.03em; }
+  .presenting-badge.live { background: #22c55e; color: #000; }
+  .presenting-badge.idle { background: #3a3d45; color: #999; }
+  .desktop-status { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .desktop-status .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .desktop-status .dot.connected { background: #4caf50; }
+  .desktop-status .dot.disconnected { background: #666; }
   .register-msg { background: #1e3a5f; border: 1px solid #2a5bd7; border-radius: 6px; padding: 10px; margin-bottom: 8px; font-size: 0.9em; }
   .log-area { background: #111; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 0.75em; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: #aaa; }
   .section-toggle { cursor: pointer; user-select: none; }
@@ -57,8 +64,17 @@
 <!-- Feedback -->
 <div class="card" id="feedback-card">
   <div class="feedback">
-    <span class="slide" id="fb-slide">--</span>
-    <span id="fb-presenting" style="margin-left:8px;"></span>
+    <div class="desktop-status">
+      <span class="dot disconnected" id="desktop-dot"></span>
+      <span id="desktop-text">No desktop connected</span>
+    </div>
+    <div id="fb-presenting-row" style="margin-bottom:6px; display:none;">
+      <span class="presenting-badge idle" id="fb-presenting-badge">Not Presenting</span>
+    </div>
+    <div id="fb-slide-row" style="display:none;">
+      <span class="slide" id="fb-slide">--</span>
+      <span id="fb-open" style="margin-left:8px; font-size:0.8em; color:#888;"></span>
+    </div>
     <div style="margin-top:4px;">
       <span id="fb-last-cmd"></span>
     </div>
@@ -195,13 +211,51 @@ async function loadStatus() {
 async function loadFeedback() {
   try {
     const data = await api('GET', '/feedback');
-    const slideEl = document.getElementById('fb-slide');
-    if (data.current_slide > 0) {
-      slideEl.textContent = data.current_slide + (data.total_slides ? '/' + data.total_slides : '');
-    } else {
-      slideEl.textContent = '--';
+
+    // Determine if desktop is connected (received feedback within 15s)
+    let connected = false;
+    if (data.last_updated) {
+      const age = (Date.now() - new Date(data.last_updated).getTime()) / 1000;
+      connected = age < 15;
     }
-    document.getElementById('fb-presenting').textContent = data.presenting ? 'Presenting' : '';
+
+    const dot = document.getElementById('desktop-dot');
+    const text = document.getElementById('desktop-text');
+    const presRow = document.getElementById('fb-presenting-row');
+    const badge = document.getElementById('fb-presenting-badge');
+    const slideRow = document.getElementById('fb-slide-row');
+    const slideEl = document.getElementById('fb-slide');
+    const openEl = document.getElementById('fb-open');
+
+    if (connected) {
+      dot.className = 'dot connected';
+      text.textContent = 'Desktop connected';
+      presRow.style.display = '';
+
+      if (data.presenting) {
+        badge.className = 'presenting-badge live';
+        badge.textContent = 'PRESENTING';
+      } else {
+        badge.className = 'presenting-badge idle';
+        badge.textContent = 'Not Presenting';
+      }
+
+      if (data.current_slide > 0) {
+        slideRow.style.display = '';
+        slideEl.textContent = data.current_slide + (data.total_slides ? '/' + data.total_slides : '');
+      } else {
+        slideRow.style.display = 'none';
+      }
+
+      openEl.textContent = data.open ? 'File open' : '';
+    } else {
+      dot.className = 'dot disconnected';
+      text.textContent = 'No desktop connected';
+      presRow.style.display = 'none';
+      slideRow.style.display = 'none';
+      openEl.textContent = '';
+    }
+
     if (data.last_command) {
       const cmd = data.last_command.split('/').pop();
       document.getElementById('fb-last-cmd').textContent = 'Last: ' + cmd;

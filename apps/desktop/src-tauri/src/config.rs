@@ -99,64 +99,32 @@ impl Default for OscConfig {
 }
 
 // =============================================================================
-// CHANNEL CONFIG
+// DISCOVERY CONFIG
 // =============================================================================
 
-// Re-export from generated constants (source of truth: spec/protocol-constants.json)
-pub use crate::generated_constants::{VALID_CHANNELS, DEFAULT_BROADCAST_PORT};
-
-/// Configuration for peer-to-peer channel synchronization
+/// Configuration for mDNS peer discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelConfig {
-    /// Whether channel sync is enabled
+pub struct DiscoveryConfig {
+    /// Whether discovery is enabled
     pub enabled: bool,
-    /// Name of the channel to join (e.g., "main", "backup", "keynote1")
-    #[serde(rename = "channelName")]
-    pub channel_name: String,
     /// Unique instance identifier (auto-generated UUID)
     #[serde(rename = "instanceId")]
     pub instance_id: String,
     /// Human-readable display name for this instance (e.g., "Chris's Laptop")
     #[serde(rename = "displayName", default)]
     pub display_name: Option<String>,
-    /// Whether to use UDP broadcast mode (vs direct IP)
-    #[serde(rename = "broadcastMode", default)]
-    pub broadcast_mode: bool,
-    /// Port for broadcast communication (default: 9002)
-    #[serde(rename = "broadcastPort", default = "default_broadcast_port")]
-    pub broadcast_port: u16,
     /// Network interface to advertise mDNS on (None = "auto" = all interfaces)
     #[serde(rename = "networkInterface", default)]
     pub network_interface: Option<String>,
 }
 
-fn default_broadcast_port() -> u16 {
-    DEFAULT_BROADCAST_PORT
-}
-
-impl ChannelConfig {
-    /// Validate that a channel name is one of the allowed values
-    pub fn is_valid_channel_name(name: &str) -> bool {
-        VALID_CHANNELS.contains(&name)
-    }
-
-    /// Get the OSC address prefix for this channel
-    #[allow(dead_code)]
-    pub fn osc_prefix(&self) -> String {
-        format!("/clicker/{}", self.channel_name)
-    }
-}
-
-impl Default for ChannelConfig {
+impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            channel_name: "main".to_string(),
             instance_id: Uuid::new_v4().to_string(),
             display_name: None,
-            broadcast_mode: true,
-            broadcast_port: DEFAULT_BROADCAST_PORT,
-            network_interface: None, // Auto (all interfaces)
+            network_interface: None,
         }
     }
 }
@@ -218,9 +186,9 @@ pub struct AppConfig {
     #[serde(rename = "presentationName")]
     pub presentation_name: String,
     pub logging: LoggingConfig,
-    /// Channel synchronization settings
-    #[serde(default)]
-    pub channel: ChannelConfig,
+    /// Peer discovery settings
+    #[serde(default, alias = "channel")]
+    pub discovery: DiscoveryConfig,
     /// Per-adapter network configuration
     #[serde(rename = "adapterConfig", default)]
     pub adapter_config: AdapterConfig,
@@ -242,7 +210,7 @@ impl Default for AppConfig {
             adapter: default_adapter,
             presentation_name: String::new(),
             logging: LoggingConfig::default(),
-            channel: ChannelConfig::default(),
+            discovery: DiscoveryConfig::default(),
             adapter_config: AdapterConfig::default(),
             web_server: WebServerConfig::default(),
         }
