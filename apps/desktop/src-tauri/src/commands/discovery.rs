@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Emitter};
+use sherpresent_core::{DiscoveredPeer, DiscoveryService};
 use crate::state::AppState;
-use crate::discovery::{DiscoveredPeer, DiscoveryService};
 
 #[tauri::command]
 pub fn get_discovered_peers(state: tauri::State<AppState>) -> Vec<DiscoveredPeer> {

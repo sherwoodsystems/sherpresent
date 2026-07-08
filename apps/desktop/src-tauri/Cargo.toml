@@ -25,6 +25,9 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Shared mDNS discovery, peer types, and (eventually) OSC schema.
+sherpresent-core = { workspace = true }
+
 # OSC Server Dependencies
 # ========================
 # rosc: Open Sound Control protocol parsing/encoding
@@ -45,17 +48,6 @@ log = "0.4"
 
 # uuid: Generate unique instance identifiers for channel membership
 uuid = { version = "1", features = ["v4"] }
-
-# mdns-sd: mDNS service discovery for automatic peer discovery
-#   - Allows sher-present instances to find each other on LAN
-#   - Uses system mDNS (Bonjour on macOS, Avahi on Linux)
-mdns-sd = "0.15"
-
-# hostname: Get the local machine's hostname for mDNS registration
-hostname = "0.4"
-
-# if-addrs: Get network interface addresses for subnet broadcast calculation
-if-addrs = "0.13"
 
 # reqwest: HTTP client for communicating with bridge REST APIs
 reqwest = { version = "0.12", features = ["json"] }

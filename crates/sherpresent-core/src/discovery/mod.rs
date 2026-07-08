@@ -12,4 +12,4 @@
 
 pub mod mdns_service;
 
-pub use mdns_service::{get_network_interfaces, DiscoveredPeer, DiscoveryService, NetworkInterface};
+pub use mdns_service::{get_local_ip, get_network_interfaces, DiscoveredPeer, DiscoveryService, NetworkInterface};

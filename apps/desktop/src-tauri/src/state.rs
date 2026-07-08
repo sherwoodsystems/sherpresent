@@ -1,7 +1,7 @@
+use sherpresent_core::DiscoveryService;
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
 use crate::config::AdapterConfig;
-use crate::discovery::DiscoveryService;
 use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

@@ -2,7 +2,6 @@ mod adapters;
 mod applescript;
 mod bridge;
 mod config;
-mod discovery;
 mod generated_constants;
 mod osc;
 mod state;
@@ -13,9 +12,9 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
+use sherpresent_core::{DiscoveryService, DiscoveredPeer};
 use crate::state::AppState;
 use crate::osc::{OscServer, StateManager};
-use crate::discovery::{DiscoveryService, DiscoveredPeer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

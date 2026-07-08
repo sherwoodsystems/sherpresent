@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "apps/desktop/src-tauri",
+    "apps/bridge/src-tauri",
+    "crates/sherpresent-core",
+]
+exclude = [
+    "apps/canva-for-av/src-tauri",
+    "ref",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+authors = ["SherPresent"]
+license = "MIT"
+
+[workspace.dependencies]
+sherpresent-core = { path = "crates/sherpresent-core", version = "0.1.0" }

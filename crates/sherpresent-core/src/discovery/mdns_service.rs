@@ -10,25 +10,46 @@
 //!
 //! ## TXT Records
 //!
-//! Each service advertises:
-//! - `channel=<name>` - The channel this instance belongs to
-//! - `version=1` - Protocol version for compatibility
+//! Each service advertises a baseline set of properties:
+//! - `version=<value>` - Protocol version or role (`"1"` for desktops, `"bridge"` for bridges)
 //! - `instance=<uuid>` - Unique instance identifier
 //! - `name=<display_name>` - Human-readable display name
+//!
+//! Bridges additionally advertise `config_port` (the HTTP config API port)
+//! so desktops can deep-link into the bridge's web config UI.
+//!
+//! ## Builder API
+//!
+//! Desktop instances use the default protocol version `"1"` and advertise
+//! no extra properties:
+//!
+//! ```ignore
+//! let service = DiscoveryService::new(instance_id, display_name, osc_port, peer_tx, iface)?;
+//! service.register()?;
+//! ```
+//!
+//! Bridge instances override the version and add extra TXT properties:
+//!
+//! ```ignore
+//! let mut service = DiscoveryService::new(instance_id, bridge_name, feedback_port, peer_tx, iface)?
+//!     .with_version("bridge")
+//!     .with_property("config_port", "8080");
+//! service.register()?;
+//! ```
 
 use mdns_sd::{IfKind, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-/// The mDNS service type for sher-present
-const SERVICE_TYPE: &str = "_sher-present._udp.local.";
+/// The mDNS service type for sher-present.
+pub const SERVICE_TYPE: &str = "_sher-present._udp.local.";
 
-/// Protocol version for compatibility checking
-const PROTOCOL_VERSION: &str = "1";
+/// Default protocol version advertised by desktop instances.
+const DEFAULT_PROTOCOL_VERSION: &str = "1";
 
 /// Get the local LAN IP address of this machine.
-fn get_local_ip() -> Option<String> {
+pub fn get_local_ip() -> Option<String> {
     use std::net::UdpSocket;
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
@@ -105,12 +126,12 @@ pub struct DiscoveredPeer {
     pub host: String,
     /// OSC port of the peer
     pub port: u16,
-    /// Protocol version
+    /// Protocol version (e.g., `"1"` for desktops, `"bridge"` for bridges)
     pub version: String,
     /// Whether this is our own instance
     #[serde(rename = "isSelf")]
     pub is_self: bool,
-    /// Config API port (bridges only)
+    /// Config API port (bridges only). `None` for desktop peers.
     #[serde(rename = "configPort")]
     pub config_port: Option<u16>,
 }
@@ -129,6 +150,10 @@ pub struct DiscoveryService {
     display_name: Option<String>,
     /// Our OSC port
     osc_port: u16,
+    /// Protocol version advertised in TXT records (e.g., `"1"` or `"bridge"`)
+    version: String,
+    /// Extra TXT properties to advertise (e.g., `config_port=8080` for bridges)
+    extra_properties: Vec<(String, String)>,
     /// Our assigned display ID
     our_display_id: Arc<Mutex<u8>>,
     /// Discovered peers (keyed by instance_id)
@@ -144,7 +169,11 @@ pub struct DiscoveryService {
 }
 
 impl DiscoveryService {
-    /// Create a new discovery service.
+    /// Create a new discovery service with the default desktop protocol version (`"1"`)
+    /// and no extra TXT properties.
+    ///
+    /// Use [`DiscoveryService::with_version`] and [`DiscoveryService::with_property`]
+    /// to customise the TXT records (e.g., for bridges).
     ///
     /// ## Parameters
     ///
@@ -163,18 +192,16 @@ impl DiscoveryService {
         let daemon = ServiceDaemon::new()
             .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
-        // Enable network interfaces for mDNS advertisement
-        // By default, mdns-sd only enables loopback interfaces
+        // Enable network interfaces for mDNS advertisement.
+        // By default, mdns-sd only enables loopback interfaces.
         match &network_interface {
             Some(iface_name) if iface_name != "auto" => {
-                // User selected a specific interface
                 daemon
                     .enable_interface(IfKind::Name(iface_name.clone()))
                     .map_err(|e| format!("Failed to enable interface '{}': {}", iface_name, e))?;
                 log::info!("mDNS daemon created, enabled interface: {}", iface_name);
             }
             _ => {
-                // Auto mode: enable all interfaces
                 daemon
                     .enable_interface(IfKind::All)
                     .map_err(|e| format!("Failed to enable all network interfaces: {}", e))?;
@@ -197,6 +224,8 @@ impl DiscoveryService {
             instance_id,
             display_name,
             osc_port,
+            version: DEFAULT_PROTOCOL_VERSION.to_string(),
+            extra_properties: Vec::new(),
             our_display_id,
             peers: Arc::new(Mutex::new(HashMap::new())),
             display_id_map,
@@ -204,6 +233,29 @@ impl DiscoveryService {
             is_registered: false,
             service_fullname: None,
         })
+    }
+
+    /// Override the protocol version advertised in mDNS TXT records.
+    ///
+    /// Default is `"1"`. Bridge instances should set this to `"bridge"` so
+    /// desktops can distinguish bridges from other desktops and surface them
+    /// in the bridges page.
+    #[must_use]
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = version.into();
+        self
+    }
+
+    /// Add an extra TXT property to be advertised alongside the baseline set
+    /// (`version`, `instance`, `name`).
+    ///
+    /// Bridges use this to advertise `config_port` so desktops can deep-link
+    /// into the bridge's HTTP config UI. Duplicate keys replace prior values
+    /// at registration time.
+    #[must_use]
+    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.extra_properties.push((key.into(), value.into()));
+        self
     }
 
     /// Assign the next available display ID
@@ -248,18 +300,24 @@ impl DiscoveryService {
             .unwrap_or_else(|| host_name.clone());
         let service_name = format!("{} ({})", base_name, short_id);
 
-        // Create TXT record properties
-        // Use display_name if set, otherwise hostname as fallback
+        // Create TXT record properties.
+        // Baseline set: version, instance, name. Then any extras (config_port, etc.).
         let name_value = self
             .display_name
             .clone()
             .unwrap_or_else(|| host_name.clone());
 
-        let properties = [
-            ("version", PROTOCOL_VERSION),
-            ("instance", self.instance_id.as_str()),
-            ("name", name_value.as_str()),
-        ];
+        let mut properties: Vec<(String, String)> = Vec::with_capacity(3 + self.extra_properties.len());
+        properties.push(("version".to_string(), self.version.clone()));
+        properties.push(("instance".to_string(), self.instance_id.clone()));
+        properties.push(("name".to_string(), name_value.clone()));
+        properties.extend(self.extra_properties.iter().cloned());
+
+        // Convert to &[(String, String)] for mdns-sd's IntoProperties impl.
+        let properties_ref: Vec<(&str, &str)> = properties
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
         // Get our local IP address explicitly (addr_auto doesn't work reliably on Windows)
         let local_ip = get_local_ip();
@@ -271,7 +329,7 @@ impl DiscoveryService {
             &mdns_hostname,
             local_ip.as_deref().unwrap_or(""),  // Explicit IP address
             self.osc_port,
-            &properties[..],
+            &properties_ref[..],
         )
         .map_err(|e| format!("Failed to create service info: {}", e))?
         .enable_addr_auto();  // Still enable auto for additional interfaces
@@ -281,7 +339,11 @@ impl DiscoveryService {
 
         // Log the addresses the service will advertise
         let addrs: Vec<_> = service_info.get_addresses().iter().map(|a| a.to_string()).collect();
-        log::info!("mDNS service will advertise on addresses: {:?} (addr_auto enabled)", addrs);
+        log::info!(
+            "mDNS service will advertise on addresses: {:?} (addr_auto enabled), properties: {:?}",
+            addrs,
+            properties
+        );
 
         self.daemon
             .register(service_info)
@@ -290,10 +352,11 @@ impl DiscoveryService {
         self.is_registered = true;
 
         log::info!(
-            "Registered mDNS service: {} (name: {}, port: {}, addr_auto: true)",
+            "Registered mDNS service: {} (name: {}, port: {}, version: {}, addr_auto: true)",
             service_name,
             name_value,
-            self.osc_port
+            self.osc_port,
+            self.version
         );
 
         Ok(())
@@ -380,7 +443,7 @@ impl DiscoveryService {
                     .to_string();
                 let version = properties
                     .get_property_val_str("version")
-                    .unwrap_or(PROTOCOL_VERSION)
+                    .unwrap_or(DEFAULT_PROTOCOL_VERSION)
                     .to_string();
                 let display_name = properties
                     .get_property_val_str("name")
@@ -395,7 +458,9 @@ impl DiscoveryService {
                     return;
                 }
 
-                // NOTE: We no longer filter by channel - show ALL peers on the network
+                // NOTE: We do not filter by version - show ALL peers on the network.
+                // Desktops surface bridges (version="bridge") on the Bridges page;
+                // bridges can use the same browser to find desktops (version="1").
 
                 // Get the first IP address (prefer IPv4)
                 let host = info
@@ -428,12 +493,14 @@ impl DiscoveryService {
                 };
 
                 log::info!(
-                    "Discovered peer: #{} {} ({}) at {}:{}",
+                    "Discovered peer: #{} {} ({}) at {}:{} (version={}, config_port={:?})",
                     peer.display_id,
                     peer.display_name.as_deref().unwrap_or("unnamed"),
                     peer.instance_id,
                     peer.host,
                     peer.port,
+                    peer.version,
+                    peer.config_port,
                 );
 
                 // Add to peers
@@ -514,8 +581,12 @@ impl DiscoveryService {
             display_id: our_display_id,
             host: get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string()),
             port: self.osc_port,
-            version: PROTOCOL_VERSION.to_string(),
+            version: self.version.clone(),
             is_self: true,
+            // We don't surface config_port for ourselves; the desktop doesn't run a config API.
+            // Bridges that want to advertise their config_port should rely on the
+            // `with_property("config_port", ...)` builder; the field here is for the
+            // viewer-facing peer list, not for self-description.
             config_port: None,
         };
         peer_list.push(our_peer);
@@ -573,5 +644,10 @@ mod tests {
     fn test_service_type() {
         assert!(SERVICE_TYPE.ends_with(".local."));
         assert!(SERVICE_TYPE.contains("_sher-present"));
+    }
+
+    #[test]
+    fn test_default_version_is_desktop() {
+        assert_eq!(DEFAULT_PROTOCOL_VERSION, "1");
     }
 }

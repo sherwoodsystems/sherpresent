@@ -1,4 +1,4 @@
-use crate::discovery::{get_network_interfaces, NetworkInterface};
+use sherpresent_core::{get_network_interfaces, NetworkInterface};
 
 /// Internal helper to get the local LAN IP address.
 pub fn get_local_ip_internal() -> String {
