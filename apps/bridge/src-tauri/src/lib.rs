@@ -47,11 +47,14 @@ pub fn run() {
             // Feedback + OSC test
             commands::feedback::get_feedback_state,
             commands::feedback::send_test_osc,
-            // USB clickers
+            // USB devices
             commands::usb::get_usb_devices,
+            commands::usb::get_usb_permission_status,
+            commands::usb::install_udev_rules,
             commands::usb::start_usb_registration,
             commands::usb::cancel_usb_registration,
-            commands::usb::confirm_usb_registration,
+            commands::usb::confirm_usb_binding,
+            commands::usb::remove_usb_binding,
             commands::usb::set_device_target,
         ])
         .setup(|app| {
@@ -115,7 +118,7 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             {
                 let state = app.state::<BridgeState>();
-                match UsbManager::new() {
+                match UsbManager::new(state.config.clone()) {
                     Ok(manager) => {
                         let mut usb_slot = state.usb_manager.lock().unwrap();
                         *usb_slot = Some(manager);
@@ -146,45 +149,50 @@ pub fn run() {
                                     log::info!("USB disconnected: {device_id}");
                                     let _ = app_handle_coord.emit("usb-disconnected", &device_id);
                                 }
+                                UsbEvent::AccessDenied { count } => {
+                                    let _ = app_handle_coord.emit("usb-access-denied", count);
+                                }
                                 UsbEvent::KeyUp { device_id, key } => {
-                                    // Registration mode: any clicker key-up from an
-                                    // unregistered device triggers registration detection.
-                                    if let Some(slot) = registration_mode.lock().await.clone() {
+                                    // Registration mode: any key-up from any device is
+                                    // offered as the key to bind to the pending action.
+                                    if let Some(action) = registration_mode.lock().await.clone() {
                                         let _ = app_handle_coord.emit(
                                             "usb-registration-detected",
-                                            &serde_json::json!({"deviceId": device_id, "slot": slot, "key": key }),
+                                            &serde_json::json!({"deviceId": device_id, "action": action, "key": key }),
                                         );
                                         continue;
                                     }
 
-                                    // Normal mode: send OSC if the device is registered.
-                                    let target = {
+                                    // Normal mode: look up this device's binding for the
+                                    // pressed key and fire OSC to its target.
+                                    let resolved = {
                                         let cfg = config.lock().unwrap();
                                         cfg.devices
                                             .get(&device_id)
                                             .and_then(|d| d.as_ref())
-                                            .and_then(|d| d.target.clone())
+                                            .and_then(|d| {
+                                                let action = d.bindings.get(&key).copied()?;
+                                                let target = d.target.clone()?;
+                                                Some((action, target))
+                                            })
                                     };
-                                    if let Some(target) = target {
-                                        let next = matches!(key.as_str(), "KEY_RIGHT" | "KEY_PAGEDOWN");
-                                        let prev = matches!(key.as_str(), "KEY_LEFT" | "KEY_PAGEUP");
-                                        if next || prev {
-                                            let device_id_log = device_id.clone();
-                                            tokio::spawn(async move {
-                                                match OscSender::new(&target.host, target.port) {
-                                                    Ok(sender) => {
-                                                        if next {
-                                                            sender.send_next().await;
-                                                        } else {
-                                                            sender.send_prev().await;
-                                                        }
+                                    if let Some((action, target)) = resolved {
+                                        let device_id_log = device_id.clone();
+                                        tokio::spawn(async move {
+                                            match OscSender::new(&target.host, target.port) {
+                                                Ok(sender) => match action {
+                                                    crate::config::KeyAction::Next => {
+                                                        sender.send_next().await;
                                                     }
-                                                    Err(e) => {
-                                                        log::warn!("OSC send failed for {device_id_log}: {e}");
+                                                    crate::config::KeyAction::Prev => {
+                                                        sender.send_prev().await;
                                                     }
+                                                },
+                                                Err(e) => {
+                                                    log::warn!("OSC send failed for {device_id_log}: {e}");
                                                 }
-                                            });
-                                        }
+                                            }
+                                        });
                                     }
                                 }
                             }

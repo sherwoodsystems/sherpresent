@@ -42,8 +42,8 @@ pub struct BridgeState {
     /// USB clicker manager (Linux only; None on other platforms or if init failed).
     pub usb_manager: Arc<Mutex<Option<UsbManager>>>,
 
-    /// When `Some(slot)`, the next key-up from an unregistered clicker should
-    /// be offered for registration into that device slot.
+    /// When `Some(action)` (`"next"`/`"prev"`), the next key-up from any device
+    /// is offered for binding to that action.
     pub usb_registration_mode: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 

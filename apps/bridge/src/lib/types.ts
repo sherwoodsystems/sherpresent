@@ -51,11 +51,16 @@ export interface DeviceTarget {
   instance_id?: string | null;
 }
 
+export type KeyAction = 'next' | 'prev';
+
 export interface DeviceConfig {
   label: string;
   /** Stable USB physical path used for hot-plug matching. */
   usb_phys: string;
   target?: DeviceTarget | null;
+  /** evdev key name (e.g. "KEY_RIGHT") → action. A device is "registered"
+   *  once it has at least one binding. */
+  bindings: Record<string, KeyAction>;
 }
 
 export interface SatelliteConfig {
@@ -110,8 +115,14 @@ export interface UsbDeviceInfo {
 
 export interface UsbRegistrationDetected {
   deviceId: string;
-  slot: string;
+  action: KeyAction;
   key: string;
+}
+
+/** Whether the app can read USB input devices (Linux permissions). */
+export interface UsbPermissionStatus {
+  accessDenied: boolean;
+  count: number;
 }
 
 // =============================================================================

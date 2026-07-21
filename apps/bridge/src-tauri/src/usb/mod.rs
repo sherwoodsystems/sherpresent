@@ -1,11 +1,13 @@
 //! USB HID clicker detection and event routing.
 //!
 //! This module wraps the platform-specific implementation. On Linux it uses the
-//! kernel `evdev` subsystem to enumerate input devices, filter for presentation
-//! clickers, grab them for exclusive access, and emit key-up events.
+//! kernel `evdev` subsystem to enumerate USB input devices (any key-capable
+//! device — clickers, keyboards, …), grab registered devices for exclusive
+//! access, and emit key-up events.
 
+use crate::config::BridgeConfig;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 #[cfg(target_os = "linux")]
@@ -48,6 +50,10 @@ pub enum UsbEvent {
     Disconnected { device_id: String },
     /// A key was released on a clicker.
     KeyUp { device_id: String, key: String },
+    /// One or more USB key-capable input devices exist but could not be opened
+    /// because the app lacks permission to read `/dev/input/event*`. `count` is
+    /// the number of inaccessible USB devices (0 = access is fine).
+    AccessDenied { count: usize },
 }
 
 /// Shared USB manager state.
@@ -66,9 +72,13 @@ pub struct UsbManager {
 
 impl UsbManager {
     /// Spawn the USB device scanner and event readers.
-    pub fn new() -> std::io::Result<Self> {
+    ///
+    /// `config` is shared with the rest of the app so the scanner can decide
+    /// which devices to grab exclusively — only devices that have at least one
+    /// key binding are grabbed; everything else stays usable by the OS.
+    pub fn new(config: Arc<Mutex<BridgeConfig>>) -> std::io::Result<Self> {
         let (tx, _rx) = broadcast::channel::<UsbEvent>(256);
-        let inner = Arc::new(UsbManagerImpl::new(tx.clone())?);
+        let inner = Arc::new(UsbManagerImpl::new(tx.clone(), config)?);
         Ok(Self { inner, events: tx })
     }
 
@@ -81,16 +91,13 @@ impl UsbManager {
     pub async fn devices(&self) -> Vec<UsbDeviceInfo> {
         self.inner.devices().await
     }
-}
 
-/// Key codes we treat as "presentation clicker" buttons.
-#[cfg(target_os = "linux")]
-pub(crate) const CLICKER_KEYS: &[evdev::Key] = &[
-    evdev::Key::KEY_RIGHT,
-    evdev::Key::KEY_PAGEDOWN,
-    evdev::Key::KEY_LEFT,
-    evdev::Key::KEY_PAGEUP,
-];
+    /// Number of USB key-capable input devices that exist but can't be opened
+    /// due to missing permissions on `/dev/input/event*`. 0 means access is OK.
+    pub fn access_denied_count(&self) -> usize {
+        self.inner.access_denied_count()
+    }
+}
 
 /// True if the device name looks like a DSan Perfect Cue.
 pub fn is_perfect_cue(name: &str) -> bool {

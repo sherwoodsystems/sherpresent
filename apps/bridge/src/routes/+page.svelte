@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { openUrl } from '@tauri-apps/plugin-opener';
-import type { BridgeInfo, BridgeConfig, DiscoveredPeer, BridgeMode, FeedbackState, UsbDeviceInfo, UsbRegistrationDetected } from '$lib/types';
+import type { BridgeInfo, BridgeConfig, DeviceConfig, DiscoveredPeer, BridgeMode, FeedbackState, UsbDeviceInfo, UsbRegistrationDetected, UsbPermissionStatus, KeyAction } from '$lib/types';
 import { usePeers } from '$lib/usePeers.svelte';
 
   // --- reactive state -------------------------------------------------------
@@ -30,10 +30,14 @@ import { usePeers } from '$lib/usePeers.svelte';
 
   // USB clicker state
   let usbDevices = $state<UsbDeviceInfo[]>([]);
+  let usbAccessDenied = $state(false);
+  let installingPerms = $state(false);
+  let permsInstalled = $state(false);
   let unlistenUsbConnected: UnlistenFn | null = null;
   let unlistenUsbDisconnected: UnlistenFn | null = null;
   let unlistenUsbRegistration: UnlistenFn | null = null;
-  let registrationSlot = $state<string | null>(null);
+  let unlistenUsbAccessDenied: UnlistenFn | null = null;
+  let bindingAction = $state<KeyAction | null>(null);
   let pendingRegistration = $state<UsbRegistrationDetected | null>(null);
   let confirmingRegistration = $state(false);
 
@@ -41,6 +45,16 @@ import { usePeers } from '$lib/usePeers.svelte';
   // whole `sher-present` namespace and will see other bridges too.
   let desktopPeers = $derived(peers.peers.filter((p) => p.version === '1'));
   let bridgePeers = $derived(peers.peers.filter((p) => p.version === 'bridge'));
+
+  // Registered devices (≥1 binding) that aren't currently connected.
+  let registeredOffline = $derived(
+    (config ? Object.entries(config.devices) : []).filter(
+      (e): e is [string, DeviceConfig] =>
+        !!e[1] &&
+        Object.keys(e[1].bindings).length > 0 &&
+        !usbDevices.some((d) => d.id === e[0]),
+    ),
+  );
 
   // --- lifecycle -----------------------------------------------------------
   onMount(async () => {
@@ -56,6 +70,9 @@ import { usePeers } from '$lib/usePeers.svelte';
     });
     unlistenUsbRegistration = await listen<UsbRegistrationDetected>('usb-registration-detected', (event) => {
       pendingRegistration = event.payload;
+    });
+    unlistenUsbAccessDenied = await listen<number>('usb-access-denied', (event) => {
+      usbAccessDenied = event.payload > 0;
     });
     await refreshAll();
   });
@@ -78,6 +95,10 @@ import { usePeers } from '$lib/usePeers.svelte';
       if (unlistenUsbRegistration) {
         unlistenUsbRegistration();
         unlistenUsbRegistration = null;
+      }
+      if (unlistenUsbAccessDenied) {
+        unlistenUsbAccessDenied();
+        unlistenUsbAccessDenied = null;
       }
     };
   });
@@ -107,14 +128,33 @@ import { usePeers } from '$lib/usePeers.svelte';
     } catch (e) {
       console.error('Failed to refresh USB devices:', e);
     }
+    try {
+      const status = await invoke<UsbPermissionStatus>('get_usb_permission_status');
+      usbAccessDenied = status.accessDenied;
+    } catch (e) {
+      console.error('Failed to get USB permission status:', e);
+    }
   }
 
-  async function startRegistration(slot: string) {
+  async function fixUsbPermissions() {
+    installingPerms = true;
     try {
-      await invoke('start_usb_registration', { slot });
-      registrationSlot = slot;
+      await invoke('install_udev_rules');
+      permsInstalled = true;
+      flashToast('ok', 'Permissions installed — now unplug and replug your clicker.');
+    } catch (e) {
+      flashToast('err', String(e));
+    } finally {
+      installingPerms = false;
+    }
+  }
+
+  async function startBinding(action: KeyAction) {
+    try {
+      await invoke('start_usb_registration', { action });
+      bindingAction = action;
       pendingRegistration = null;
-      flashToast('ok', `Press a button on the clicker you want to register as "${slot}"`);
+      flashToast('ok', `Press any key on any device to bind as ${action === 'next' ? 'Next' : 'Prev'}`);
     } catch (e) {
       flashToast('err', String(e));
     }
@@ -123,31 +163,54 @@ import { usePeers } from '$lib/usePeers.svelte';
   async function cancelRegistration() {
     try {
       await invoke('cancel_usb_registration');
-      registrationSlot = null;
+      bindingAction = null;
       pendingRegistration = null;
     } catch (e) {
       flashToast('err', String(e));
     }
   }
 
-  async function confirmRegistration() {
+  async function confirmBinding() {
     if (!pendingRegistration) return;
     confirmingRegistration = true;
     try {
       const device = usbDevices.find((d) => d.id === pendingRegistration!.deviceId);
-      await invoke('confirm_usb_registration', {
-        slot: pendingRegistration.slot,
+      await invoke('confirm_usb_binding', {
         deviceId: pendingRegistration.deviceId,
         deviceName: device?.name ?? pendingRegistration.deviceId,
+        key: pendingRegistration.key,
+        action: pendingRegistration.action,
       });
-      registrationSlot = null;
+      bindingAction = null;
       pendingRegistration = null;
       await refreshAll();
-      flashToast('ok', 'Clicker registered');
+      flashToast('ok', 'Key bound');
     } catch (e) {
       flashToast('err', String(e));
     } finally {
       confirmingRegistration = false;
+    }
+  }
+
+  async function removeBinding(deviceId: string, key: string) {
+    try {
+      await invoke('remove_usb_binding', { deviceId, key });
+      await refreshAll();
+      flashToast('ok', 'Binding removed');
+    } catch (e) {
+      flashToast('err', String(e));
+    }
+  }
+
+  async function forgetDevice(deviceId: string, device: DeviceConfig) {
+    try {
+      for (const key of Object.keys(device.bindings)) {
+        await invoke('remove_usb_binding', { deviceId, key });
+      }
+      await refreshAll();
+      flashToast('ok', 'Device forgotten');
+    } catch (e) {
+      flashToast('err', String(e));
     }
   }
 
@@ -437,13 +500,14 @@ import { usePeers } from '$lib/usePeers.svelte';
 
   <!-- ============= Settings ============= -->
   {#if config && settingsDraft}
-    <section class="card">
+    <section class="card collapsible">
       <button class="collapse-header" onclick={() => (settingsOpen = !settingsOpen)}>
         <h2>Settings</h2>
         <span class="chev" class:open={settingsOpen} aria-hidden="true">▾</span>
       </button>
 
       {#if settingsOpen}
+        <div class="collapse-body">
         <div class="settings">
           <label>
             <span>Mode</span>
@@ -515,6 +579,7 @@ import { usePeers } from '$lib/usePeers.svelte';
             for the OSC listener and HTTP API.
           </p>
         </div>
+        </div>
       {/if}
     </section>
   {/if}
@@ -523,44 +588,88 @@ import { usePeers } from '$lib/usePeers.svelte';
   <section class="card">
     <h2>USB Devices <span class="count">{usbDevices.length}</span></h2>
 
+    {#if usbAccessDenied}
+      <div class="perms-banner">
+        <div class="perms-head">
+          <strong>⚠ No access to USB input devices</strong>
+          <span class="muted small">
+            The bridge found USB devices it can't read. On Linux it needs
+            permission for <code>/dev/input/event*</code>.
+          </span>
+        </div>
+        <div class="perms-actions">
+          <button class="btn-primary" onclick={fixUsbPermissions} disabled={installingPerms}>
+            {installingPerms ? 'Installing…' : 'Fix permissions'}
+          </button>
+        </div>
+        {#if permsInstalled}
+          <p class="muted small">Now unplug and replug your clicker for the change to take effect.</p>
+        {/if}
+        <details class="perms-manual">
+          <summary class="muted small">Or run manually</summary>
+          <pre class="perms-cmd">echo 'SUBSYSTEM=="input", SUBSYSTEMS=="usb", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-sherpresent-clicker.rules
+sudo udevadm control --reload &amp;&amp; sudo udevadm trigger</pre>
+          <span class="muted small">Then unplug and replug the device.</span>
+        </details>
+      </div>
+    {/if}
+
     {#if pendingRegistration}
+      {@const pr = pendingRegistration}
       <div class="registration-banner">
-        <strong>New clicker detected!</strong>
+        <strong>Key detected!</strong>
         <span class="muted">
-          {usbDevices.find((d) => d.id === pendingRegistration!.deviceId)?.name ?? pendingRegistration.deviceId}
-          sent {pendingRegistration.key}.
+          {usbDevices.find((d) => d.id === pr.deviceId)?.name ?? pr.deviceId}
+          sent {pr.key}.
         </span>
         <div class="registration-actions">
-          <button class="btn-primary" onclick={confirmRegistration} disabled={confirmingRegistration}>
-            {confirmingRegistration ? 'Saving…' : `Register as ${pendingRegistration.slot}`}
+          <button class="btn-primary" onclick={confirmBinding} disabled={confirmingRegistration}>
+            {confirmingRegistration ? 'Saving…' : `Bind as ${pr.action === 'next' ? 'Next' : 'Prev'}`}
           </button>
           <button class="btn-ghost" onclick={cancelRegistration}>Cancel</button>
         </div>
       </div>
-    {:else if registrationSlot}
+    {:else if bindingAction}
       <div class="registration-banner">
-        <span>Waiting for a button press on the clicker to register as <strong>{registrationSlot}</strong>…</span>
+        <span>Press any key on any device to bind as <strong>{bindingAction === 'next' ? 'Next' : 'Prev'}</strong>…</span>
         <button class="btn-ghost" onclick={cancelRegistration}>Cancel</button>
       </div>
     {/if}
 
     {#if usbDevices.length === 0}
-      <p class="empty">No USB clickers detected. Plug one in and it will appear here.</p>
+      <p class="empty">No USB devices detected. Plug one in and it will appear here.</p>
     {:else}
       <ul class="peer-list device-list">
         {#each usbDevices as device (device.id)}
-          {@const registered = config?.devices?.[device.id]}
-          <li class="peer device-row">
-            <span class="peer-dot" class:muted-dot={!registered} aria-hidden="true"></span>
-            <span class="peer-name">
-              {device.name}
-              {#if device.is_perfect_cue}
-                <span class="chip chip-green">Perfect Cue</span>
-              {/if}
-            </span>
-            <span class="peer-id">{registered ? registered.label : 'unregistered'}</span>
-            <div class="peer-actions">
-              {#if registered}
+          {@const registered = config?.devices?.[device.id] ?? null}
+          {@const bindings = registered ? Object.entries(registered.bindings) : []}
+          <li class="usb-device">
+            <div class="usb-device-head">
+              <span class="peer-dot" class:muted-dot={bindings.length === 0} aria-hidden="true"></span>
+              <span class="peer-name">
+                {device.name}
+                {#if device.is_perfect_cue}
+                  <span class="chip chip-green">Perfect Cue</span>
+                {/if}
+              </span>
+              <div class="usb-device-actions">
+                <button class="btn-tiny" onclick={() => startBinding('next')} disabled={!!bindingAction}>Bind Next</button>
+                <button class="btn-tiny" onclick={() => startBinding('prev')} disabled={!!bindingAction}>Bind Prev</button>
+              </div>
+            </div>
+
+            {#if bindings.length > 0}
+              <div class="usb-bindings">
+                {#each bindings as [key, action] (key)}
+                  <span class="binding-chip">
+                    {key} → {action === 'next' ? 'Next' : 'Prev'}
+                    <button class="binding-x" title="Remove binding" onclick={() => removeBinding(device.id, key)}>×</button>
+                  </span>
+                {/each}
+              </div>
+
+              <label class="usb-target">
+                <span class="muted small">Target</span>
                 <select
                   class="target-select"
                   onchange={(e) => {
@@ -568,38 +677,31 @@ import { usePeers } from '$lib/usePeers.svelte';
                     const peer = desktopPeers.find((p) => p.instanceId === id) ?? null;
                     setDeviceTarget(device.id, peer);
                   }}
-                  value={registered.target?.instance_id ?? ''}
+                  value={registered?.target?.instance_id ?? ''}
                 >
                   <option value="">No target</option>
                   {#each desktopPeers as peer (peer.instanceId)}
                     <option value={peer.instanceId}>{peer.displayName ?? peer.host}:{peer.port}</option>
                   {/each}
                 </select>
-              {:else}
-                <button class="btn-tiny" onclick={() => startRegistration(device.name || device.id)}>
-                  Register
-                </button>
-              {/if}
-            </div>
+              </label>
+            {/if}
           </li>
         {/each}
       </ul>
     {/if}
 
-    {#if config && Object.keys(config.devices).length > 0}
+    {#if registeredOffline.length > 0}
       <div class="registered-summary">
-        <h3>Registered slots</h3>
+        <h3>Registered (not connected)</h3>
         <ul class="peer-list">
-          {#each Object.entries(config.devices) as [deviceId, device] (deviceId)}
-            {#if device}
-              {@const present = usbDevices.some((d) => d.id === deviceId)}
-              <li class="peer">
-                <span class="peer-dot" class:muted-dot={!present} aria-hidden="true"></span>
-                <span class="peer-name">{device.label}</span>
-                <span class="peer-host">{device.target ? `${device.target.host}:${device.target.port}` : 'no target'}</span>
-                <button class="btn-tiny" onclick={() => setDeviceTarget(deviceId, null)}>Clear target</button>
-              </li>
-            {/if}
+          {#each registeredOffline as [deviceId, device] (deviceId)}
+            <li class="peer">
+              <span class="peer-dot muted-dot" aria-hidden="true"></span>
+              <span class="peer-name">{device.label}</span>
+              <span class="peer-host">{device.target ? `${device.target.host}:${device.target.port}` : 'no target'}</span>
+              <button class="btn-tiny" onclick={() => forgetDevice(deviceId, device)}>Forget</button>
+            </li>
           {/each}
         </ul>
       </div>

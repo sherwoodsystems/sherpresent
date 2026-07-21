@@ -62,16 +62,28 @@ pub struct DeviceTarget {
     pub instance_id: Option<String>,
 }
 
-/// A registered USB device slot.
+/// The presentation function a bound key triggers.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyAction {
+    Next,
+    Prev,
+}
+
+/// A registered USB device. A device is "registered" once it has at least one
+/// key binding; any USB input device (clicker, keyboard, …) can be registered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
     /// User-visible label, e.g. "Perfect Cue Micro".
     pub label: String,
     /// USB physical path — the unique stable identifier for hot-plugging.
     pub usb_phys: String,
-    /// Optional OSC target; `None` means the slot is registered but untargeted.
+    /// Optional OSC target; `None` means the device is registered but untargeted.
     #[serde(default)]
     pub target: Option<DeviceTarget>,
+    /// Per-key action bindings, keyed by evdev key name (e.g. `"KEY_RIGHT"`).
+    #[serde(default)]
+    pub bindings: BTreeMap<String, KeyAction>,
 }
 
 /// Companion Satellite connection config (satellite mode).
@@ -147,11 +159,9 @@ fn auto_bridge_name() -> String {
 }
 
 fn default_device_slots() -> BTreeMap<String, Option<DeviceConfig>> {
-    let mut slots = BTreeMap::new();
-    slots.insert("usb_1".to_string(), None);
-    slots.insert("usb_2".to_string(), None);
-    slots.insert("usb_3".to_string(), None);
-    slots
+    // Devices are keyed by their USB physical path and added on registration;
+    // there are no pre-seeded slots.
+    BTreeMap::new()
 }
 
 /// `serde_with` helper to serialize the UUID as a string.
@@ -264,9 +274,8 @@ mod tests {
         assert!(json.contains("\"mode\": \"direct\""));
         assert!(json.contains("\"feedback_port\": 9001"));
         assert!(json.contains("\"config_port\": 8080"));
-        assert!(json.contains("\"usb_1\""));
-        assert!(json.contains("\"usb_2\""));
-        assert!(json.contains("\"usb_3\""));
+        // No devices are pre-seeded; they're added on registration.
+        assert!(config.devices.is_empty());
     }
 
     #[test]
@@ -277,8 +286,7 @@ mod tests {
         assert_eq!(restored.feedback_port, config.feedback_port);
         assert_eq!(restored.config_port, config.config_port);
         assert_eq!(restored.bridge_id, config.bridge_id);
-        assert!(restored.devices.contains_key("usb_1"));
-        assert!(restored.devices.contains_key("usb_3"));
+        assert!(restored.devices.is_empty());
     }
 
     #[test]
