@@ -22,7 +22,6 @@ SOURCE = os.path.join(ROOT_DIR, "spec", "protocol-constants.json")
 TARGETS = {
     "rust": os.path.join(ROOT_DIR, "apps", "desktop", "src-tauri", "src", "generated_constants.rs"),
     "ts": os.path.join(ROOT_DIR, "apps", "desktop", "src", "lib", "generated-constants.ts"),
-    "py": os.path.join(ROOT_DIR, "apps", "bridge", "src", "rpi_osc_bridge", "generated_constants.py"),
 }
 
 HEADER = "DO NOT EDIT — generated from spec/protocol-constants.json by scripts/generate-constants.py"
@@ -79,7 +78,6 @@ def main() -> None:
     generators = {
         "rust": generate_rust,
         "ts": generate_ts,
-        "py": generate_py,
     }
 
     for lang, path in TARGETS.items():
@@ -89,7 +87,7 @@ def main() -> None:
             f.write(content)
         print(f"  wrote {os.path.relpath(path, ROOT_DIR)}")
 
-    print("Done.")
+    print("Done. No Python bridge output; the Python bridge has been removed.")
 
 
 if __name__ == "__main__":

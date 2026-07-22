@@ -46,13 +46,24 @@ await listen('event-name', (event) => { /* handle */ });
 
 ## Bridge
 
-**Scope**: `apps/bridge/`
+The bridge has two entry points sharing `crates/sherpresent-bridge-core/`:
 
-**Key Files**:
-- `src/rpi_osc_bridge/bridge.py` - Main bridge logic, device detection, OSC sending
-- `src/rpi_osc_bridge/config_server.py` - Web config UI server
-- `config/config.example.json` - Config template
-- `scripts/install.sh` - Deployment installer
-- `scripts/build-installer.sh` - Self-extracting installer builder
+**Tauri GUI**: `apps/bridge/`
+- `src-tauri/src/lib.rs` - Tauri setup, event forwarding
+- `src-tauri/src/commands/` - Thin Tauri command wrappers
+- `src/routes/+page.svelte` - Svelte configuration UI
 
-**Build**: `cd apps/bridge/scripts && ./build-installer.sh`
+**Headless binary**: `apps/bridge-headless/`
+- `src/main.rs` - CLI entry point, signal handling
+- `sherpresent-bridge.service` - systemd service file
+
+**Shared core**: `crates/sherpresent-bridge-core/`
+- `src/lib.rs` - `BridgeCore` coordinator
+- `src/usb/linux.rs` - Passive `evdev` input capture (no grab, no udev rules)
+- `src/osc/` - OSC sender and feedback listener
+- `src/http/` - HTTP config API (axum)
+- `src/config.rs` - Config persistence via `dirs`
+
+**Build**:
+- Tauri GUI: `cd apps/bridge && bun tauri dev`
+- Headless: `cd apps/bridge-headless && cargo build --release`

@@ -31,15 +31,12 @@ import { usePeers } from '$lib/usePeers.svelte';
   // USB clicker state
   let usbDevices = $state<UsbDeviceInfo[]>([]);
   let usbAccessDenied = $state(false);
-  let installingPerms = $state(false);
-  let permsInstalled = $state(false);
+  let usbFixCommand = $state('sudo usermod -aG input $USER');
   let unlistenUsbConnected: UnlistenFn | null = null;
   let unlistenUsbDisconnected: UnlistenFn | null = null;
   let unlistenUsbRegistration: UnlistenFn | null = null;
   let unlistenUsbAccessDenied: UnlistenFn | null = null;
   let bindingAction = $state<KeyAction | null>(null);
-  let pendingRegistration = $state<UsbRegistrationDetected | null>(null);
-  let confirmingRegistration = $state(false);
 
   // Derived: just desktop peers (version === '1') — the bridge browses the
   // whole `sher-present` namespace and will see other bridges too.
@@ -69,7 +66,7 @@ import { usePeers } from '$lib/usePeers.svelte';
       usbDevices = usbDevices.filter((d) => d.id !== event.payload);
     });
     unlistenUsbRegistration = await listen<UsbRegistrationDetected>('usb-registration-detected', (event) => {
-      pendingRegistration = event.payload;
+      autoBind(event.payload);
     });
     unlistenUsbAccessDenied = await listen<number>('usb-access-denied', (event) => {
       usbAccessDenied = event.payload > 0;
@@ -131,21 +128,20 @@ import { usePeers } from '$lib/usePeers.svelte';
     try {
       const status = await invoke<UsbPermissionStatus>('get_usb_permission_status');
       usbAccessDenied = status.accessDenied;
+      if (status.fixCommand) {
+        usbFixCommand = status.fixCommand;
+      }
     } catch (e) {
       console.error('Failed to get USB permission status:', e);
     }
   }
 
-  async function fixUsbPermissions() {
-    installingPerms = true;
+  async function copyFixCommand() {
     try {
-      await invoke('install_udev_rules');
-      permsInstalled = true;
-      flashToast('ok', 'Permissions installed — now unplug and replug your clicker.');
-    } catch (e) {
-      flashToast('err', String(e));
-    } finally {
-      installingPerms = false;
+      await navigator.clipboard.writeText(usbFixCommand);
+      flashToast('ok', 'Command copied. Run it in a terminal, then log out and back in.');
+    } catch {
+      flashToast('err', 'Could not copy to clipboard.');
     }
   }
 
@@ -153,7 +149,6 @@ import { usePeers } from '$lib/usePeers.svelte';
     try {
       await invoke('start_usb_registration', { action });
       bindingAction = action;
-      pendingRegistration = null;
       flashToast('ok', `Press any key on any device to bind as ${action === 'next' ? 'Next' : 'Prev'}`);
     } catch (e) {
       flashToast('err', String(e));
@@ -164,31 +159,25 @@ import { usePeers } from '$lib/usePeers.svelte';
     try {
       await invoke('cancel_usb_registration');
       bindingAction = null;
-      pendingRegistration = null;
     } catch (e) {
       flashToast('err', String(e));
     }
   }
 
-  async function confirmBinding() {
-    if (!pendingRegistration) return;
-    confirmingRegistration = true;
+  async function autoBind(registration: UsbRegistrationDetected) {
     try {
-      const device = usbDevices.find((d) => d.id === pendingRegistration!.deviceId);
+      const device = usbDevices.find((d) => d.id === registration.deviceId);
       await invoke('confirm_usb_binding', {
-        deviceId: pendingRegistration.deviceId,
-        deviceName: device?.name ?? pendingRegistration.deviceId,
-        key: pendingRegistration.key,
-        action: pendingRegistration.action,
+        deviceId: registration.deviceId,
+        deviceName: device?.name ?? registration.deviceId,
+        key: registration.key,
+        action: registration.action,
       });
       bindingAction = null;
-      pendingRegistration = null;
       await refreshAll();
-      flashToast('ok', 'Key bound');
+      flashToast('ok', `Bound ${registration.key} as ${registration.action === 'next' ? 'Next' : 'Prev'}`);
     } catch (e) {
       flashToast('err', String(e));
-    } finally {
-      confirmingRegistration = false;
     }
   }
 
@@ -593,43 +582,26 @@ import { usePeers } from '$lib/usePeers.svelte';
         <div class="perms-head">
           <strong>⚠ No access to USB input devices</strong>
           <span class="muted small">
-            The bridge found USB devices it can't read. On Linux it needs
-            permission for <code>/dev/input/event*</code>.
+            The bridge found USB devices it can't read. On Linux your user needs
+            to be in the <code>input</code> group to read <code>/dev/input/event*</code>.
+            On Raspberry Pi OS this is already the default; on other distros run the
+            command below, then log out and back in.
           </span>
         </div>
         <div class="perms-actions">
-          <button class="btn-primary" onclick={fixUsbPermissions} disabled={installingPerms}>
-            {installingPerms ? 'Installing…' : 'Fix permissions'}
+          <button class="btn-primary" onclick={copyFixCommand}>
+            Copy fix command
           </button>
         </div>
-        {#if permsInstalled}
-          <p class="muted small">Now unplug and replug your clicker for the change to take effect.</p>
-        {/if}
-        <details class="perms-manual">
-          <summary class="muted small">Or run manually</summary>
-          <pre class="perms-cmd">echo 'SUBSYSTEM=="input", SUBSYSTEMS=="usb", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-sherpresent-clicker.rules
-sudo udevadm control --reload &amp;&amp; sudo udevadm trigger</pre>
-          <span class="muted small">Then unplug and replug the device.</span>
+        <details class="perms-manual" open>
+          <summary class="muted small">Fix command</summary>
+          <pre class="perms-cmd">{usbFixCommand}</pre>
+          <span class="muted small">Run in a terminal, then log out and back in.</span>
         </details>
       </div>
     {/if}
 
-    {#if pendingRegistration}
-      {@const pr = pendingRegistration}
-      <div class="registration-banner">
-        <strong>Key detected!</strong>
-        <span class="muted">
-          {usbDevices.find((d) => d.id === pr.deviceId)?.name ?? pr.deviceId}
-          sent {pr.key}.
-        </span>
-        <div class="registration-actions">
-          <button class="btn-primary" onclick={confirmBinding} disabled={confirmingRegistration}>
-            {confirmingRegistration ? 'Saving…' : `Bind as ${pr.action === 'next' ? 'Next' : 'Prev'}`}
-          </button>
-          <button class="btn-ghost" onclick={cancelRegistration}>Cancel</button>
-        </div>
-      </div>
-    {:else if bindingAction}
+    {#if bindingAction}
       <div class="registration-banner">
         <span>Press any key on any device to bind as <strong>{bindingAction === 'next' ? 'Next' : 'Prev'}</strong>…</span>
         <button class="btn-ghost" onclick={cancelRegistration}>Cancel</button>
@@ -653,8 +625,8 @@ sudo udevadm control --reload &amp;&amp; sudo udevadm trigger</pre>
                 {/if}
               </span>
               <div class="usb-device-actions">
-                <button class="btn-tiny" onclick={() => startBinding('next')} disabled={!!bindingAction}>Bind Next</button>
                 <button class="btn-tiny" onclick={() => startBinding('prev')} disabled={!!bindingAction}>Bind Prev</button>
+                <button class="btn-tiny" onclick={() => startBinding('next')} disabled={!!bindingAction}>Bind Next</button>
               </div>
             </div>
 

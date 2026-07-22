@@ -1,0 +1,28 @@
+[Unit]
+Description=SherPresent Bridge — USB clicker to OSC bridge
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/sherpresent-bridge
+ExecStart=/opt/sherpresent-bridge/bridge-headless
+Restart=always
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Runtime directory for state files.
+RuntimeDirectory=sherpresent-bridge
+RuntimeDirectoryMode=0755
+
+# Security hardening.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,24 +1,18 @@
 //! # Config commands
 
-use tauri::AppHandle;
-use crate::config::BridgeConfig;
 use crate::state::BridgeState;
 
-/// Return the current bridge config (bridges load + persist on first run).
+/// Return the current bridge config.
 #[tauri::command]
-pub fn get_config(state: tauri::State<BridgeState>) -> BridgeConfig {
-    state.config.lock().unwrap().clone()
+pub fn get_config(state: tauri::State<BridgeState>) -> Result<sherpresent_bridge_core::config::BridgeConfig, String> {
+    Ok(state.core()?.config())
 }
 
-/// Save the bridge config and update the in-memory state.
+/// Save the bridge config.
 #[tauri::command]
 pub fn save_config(
-    app: AppHandle,
     state: tauri::State<BridgeState>,
-    config: BridgeConfig,
+    config: sherpresent_bridge_core::config::BridgeConfig,
 ) -> Result<(), String> {
-    crate::config::save_config(&app, &config)?;
-    let mut slot = state.config.lock().unwrap();
-    *slot = config;
-    Ok(())
+    state.core()?.save_config(&config)
 }

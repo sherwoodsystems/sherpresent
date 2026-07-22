@@ -6,7 +6,7 @@ SherPresent's unique value is the **cross-platform bridge**: turning dumb USB pr
 
 **Core thesis**: SherPresent becomes "OSCPoint for macOS (and LibreOffice/Canva)" while the bridge remains the universal glue that connects clickers to either OSCPoint (Windows) or SherPresent desktop (macOS/Linux).
 
-**Bridge strategy**: A Tauri-based cross-platform bridge replaces the Linux-only Python bridge. It runs on Raspberry Pi, Windows stick PCs, Mac minis, or the presenter's own laptop — dramatically expanding the addressable market beyond RPi owners. Shared Rust code with the desktop app eliminates duplication and maintenance burden. The Python bridge will be deprecated and removed once the Tauri bridge is stable.
+**Bridge strategy**: A Tauri-based cross-platform bridge replaces the Linux-only Python bridge. It runs on Raspberry Pi, Windows stick PCs, Mac minis, or the presenter's own laptop. The bridge core (`crates/sherpresent-bridge-core/`) is shared between a Tauri GUI app (`apps/bridge/`) and a headless binary (`apps/bridge-headless/`) for Raspberry Pi / server deployments. The Python bridge has been removed.
 
 ---
 
@@ -58,9 +58,9 @@ SherPresent's unique value is the **cross-platform bridge**: turning dumb USB pr
 
 ### 1c: Linux-First Rollout and Python Bridge Deprecation
 
-- **Linux first**: get the Tauri bridge working on Raspberry Pi as the primary target to reach parity with the Python bridge
+- **Linux first**: get the Tauri bridge working on Raspberry Pi as the primary target
 - **Then expand**: add Windows and macOS support once Linux is solid
-- **Python bridge**: freeze the Python bridge, do not add new features; deprecate it once the Tauri bridge is stable on Linux, then remove it
+- **Headless binary**: `apps/bridge-headless/` runs as a systemd service on Raspberry Pi OS without a GUI
 
 ### 1d: Testing and Documentation
 
@@ -124,7 +124,7 @@ Avoid reinventing the wheel. OSCPoint already owns these for Windows PowerPoint:
 | `/clicker/{channel}/...` broadcast addressing | oscpoint doesn't use it; direct addressing is enough |
 | Canva adapter expansion | Low priority; stage view export already covers notes use case |
 | P2P networking layer (Iroh, QUIC, DHT, relay) | OSC-over-UDP on a single subnet is sufficient; revisit only if WAN or multi-subnet becomes a requirement |
-| Python bridge maintenance after Tauri bridge parity | Deprecate and remove to eliminate duplicated effort |
+| Python bridge maintenance | Removed — replaced by Rust bridge core + headless binary |
 
 ---
 
@@ -135,4 +135,4 @@ Avoid reinventing the wheel. OSCPoint already owns these for Windows PowerPoint:
 3. Should the Tauri bridge ship a one-button "pair with discovered target" flow, or keep per-slot manual assignment?
 4. Do we keep the `/clicker/` Companion module brand name or rename it to `/oscpoint/` to match the schema?
 5. Should the shared code live in a workspace-level `sherpresent-core` crate, or stay co-located in the desktop app's `src-tauri/` until the bridge needs it?
-6. What's the deprecation timeline for the Python bridge: remove immediately after Linux parity, or keep one release as an escape hatch?
+6. ~~What's the deprecation timeline for the Python bridge: remove immediately after Linux parity, or keep one release as an escape hatch?~~ (Done: removed.)

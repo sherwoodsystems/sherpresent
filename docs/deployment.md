@@ -2,64 +2,87 @@
 
 ## Bridge Deployment to Raspberry Pi
 
-### Option 1: Self-Extracting Installer (Recommended)
+The bridge is a single Rust binary (`bridge-headless`) built from `apps/bridge-headless/`.
+It runs as an unprivileged systemd service under the `pi` user, which is already in the
+`input` group on Raspberry Pi OS.
 
-Build the installer on your dev machine:
+### Prerequisites (on the Pi)
+
+- Raspberry Pi OS (Lite or Desktop)
+- The default `pi` user is in the `input` group (default on Raspberry Pi OS)
+
+### Build the binary
+
+From your dev machine (or cross-compile for `aarch64-unknown-linux-gnu`):
 
 ```bash
-cd apps/bridge/scripts
-./build-installer.sh
+cd apps/bridge-headless
+cargo build --release
 ```
 
-Deploy to the Pi:
+For cross-compilation to a Pi, you can also use:
 
 ```bash
-scp rpi-osc-bridge-installer.run pi@<PI_IP>:/tmp/
-ssh pi@<PI_IP> 'sudo bash /tmp/rpi-osc-bridge-installer.run'
+cargo build --release --target aarch64-unknown-linux-gnu
 ```
 
-### Option 2: Direct Install
-
-Copy the bridge directory to the Pi and run the install script:
+### Deploy
 
 ```bash
-scp -r apps/bridge pi@<PI_IP>:/tmp/bridge
-ssh pi@<PI_IP> 'sudo bash /tmp/bridge/scripts/install.sh'
+# Copy the binary and service file to the Pi
+scp target/release/bridge-headless pi@<PI_IP>:/tmp/
+scp apps/bridge-headless/sherpresent-bridge.service pi@<PI_IP>:/tmp/
+
+# Install and start on the Pi
+ssh pi@<PI_IP> '
+  sudo mkdir -p /opt/sherpresent-bridge
+  sudo mv /tmp/bridge-headless /opt/sherpresent-bridge/
+  sudo mv /tmp/sherpresent-bridge.service /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now sherpresent-bridge
+'
 ```
 
 ### Installed Layout
 
-The installer deploys a flat structure to `/opt/rpi-osc-bridge/`:
-
 ```
-/opt/rpi-osc-bridge/
-├── bridge.py
-├── config-server.py
-├── config.example.json
-└── web/
-    └── index.html
+/opt/sherpresent-bridge/
+└── bridge-headless
 
-/etc/rpi-osc-bridge/
+~/.config/systems.sherwood.presenter-bridge/
 └── config.json
 
 /etc/systemd/system/
-├── rpi-osc-bridge.service
-└── config-server.service
+└── sherpresent-bridge.service
 ```
 
 ### Service Management
 
 ```bash
-sudo systemctl start rpi-osc-bridge
-sudo systemctl enable rpi-osc-bridge   # Start on boot
-sudo systemctl status rpi-osc-bridge
-sudo journalctl -u rpi-osc-bridge -f   # View logs
+sudo systemctl start sherpresent-bridge
+sudo systemctl enable sherpresent-bridge   # Start on boot
+sudo systemctl status sherpresent-bridge
+sudo journalctl -u sherpresent-bridge -f   # View logs
 ```
+
+### Configuration
+
+The bridge is configured through the same config file used by the desktop bridge UI:
+
+```bash
+# On the Pi, as the pi user:
+nano ~/.config/systems.sherwood.presenter-bridge/config.json
+sudo systemctl restart sherpresent-bridge
+```
+
+Or configure remotely from the desktop app's Bridges page, which will connect to the
+bridge's HTTP API on port 8080.
 
 ### Uninstalling
 
 ```bash
-sudo bash /opt/rpi-osc-bridge/uninstall.sh
-# Or from the repo:
-sudo bash apps/bridge/scripts/uninstall.sh
+sudo systemctl stop sherpresent-bridge
+sudo systemctl disable sherpresent-bridge
+sudo rm /etc/systemd/system/sherpresent-bridge.service
+sudo rm -rf /opt/sherpresent-bridge
 ```

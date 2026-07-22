@@ -1,9 +1,0 @@
-# Self-extracting installer output
-*.run
-
-# Python cache
-__pycache__/
-*.pyc
-
-# Runtime files (these live on the Pi, not in repo)
-/var/

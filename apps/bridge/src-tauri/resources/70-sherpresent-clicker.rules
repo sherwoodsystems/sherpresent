@@ -1,5 +1,0 @@
-# SherPresent bridge: grant the active local session ACL access to USB input
-# devices (clickers, keyboards) so the unprivileged bridge app can read key
-# events via /dev/input/event*. Scoped to USB only, so internal i2c/isa
-# keyboards and touchpads are untouched.
-SUBSYSTEM=="input", SUBSYSTEMS=="usb", TAG+="uaccess"

@@ -123,6 +123,7 @@ export interface UsbRegistrationDetected {
 export interface UsbPermissionStatus {
   accessDenied: boolean;
   count: number;
+  fixCommand: string;
 }
 
 // =============================================================================
