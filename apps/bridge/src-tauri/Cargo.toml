@@ -23,16 +23,35 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Bridge core logic (USB, OSC, mDNS, HTTP config API).
-sherpresent-bridge-core = { workspace = true }
-
 # Shared mDNS discovery helpers (local IP, peer types).
 sherpresent-core = { workspace = true }
 
-# tokio: used by Tauri commands that bridge into the core runtime.
-tokio = { version = "1", features = ["sync"] }
+# tokio: async runtime for OSC + mDNS and the Tauri command bridge.
+tokio = { version = "1", features = ["net", "time", "sync", "rt-multi-thread", "macros"] }
 
 # log + env_logger: logging (RUST_LOG env var).
 log = "0.4"
 env_logger = "0.11"
+
+# uuid: generate bridge_id on first run.
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# rosc: OSC protocol parsing/encoding (matches desktop app).
+rosc = "0.10"
+
+# chrono: ISO-8601 timestamps for feedback state snapshots.
+chrono = { version = "0.4", features = ["serde"] }
+
+# if-addrs: network interface enumeration.
+if-addrs = "0.13"
+
+# dirs: cross-platform config directory resolution.
+dirs = "5"
+
+# Linux-specific: USB HID via evdev.
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = { version = "0.12", features = ["tokio"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
 

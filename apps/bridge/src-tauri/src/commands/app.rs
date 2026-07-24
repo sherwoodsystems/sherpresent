@@ -31,8 +31,8 @@ pub fn get_bridge_info(state: tauri::State<BridgeState>) -> Result<BridgeInfo, S
         None => format!("http://localhost:{}/", cfg.config_port),
     };
     let mode = match cfg.mode {
-        sherpresent_bridge_core::config::BridgeMode::Direct => "direct".to_string(),
-        sherpresent_bridge_core::config::BridgeMode::Satellite => "satellite".to_string(),
+        crate::bridge::config::BridgeMode::Direct => "direct".to_string(),
+        crate::bridge::config::BridgeMode::Satellite => "satellite".to_string(),
     };
     Ok(BridgeInfo {
         bridge_id: cfg.bridge_id.to_string(),

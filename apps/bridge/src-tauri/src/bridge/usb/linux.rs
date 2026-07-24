@@ -6,7 +6,7 @@
 //! distros as long as the user is in the `input` group) and keeps the bridge
 //! deployable as an unprivileged service on Raspberry Pi OS.
 
-use crate::usb::{is_perfect_cue, UsbDeviceInfo, UsbEvent};
+use crate::bridge::usb::{is_perfect_cue, UsbDeviceInfo, UsbEvent};
 use evdev::{Device, EventType, InputEventKind};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

@@ -3,7 +3,7 @@
 //! Tauri application state. Holds the shared `BridgeCore` instance so Tauri
 //! commands can access it.
 
-use sherpresent_bridge_core::BridgeCore;
+use crate::bridge::BridgeCore;
 use std::sync::Mutex;
 
 pub struct BridgeState {

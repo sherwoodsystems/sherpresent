@@ -9,7 +9,7 @@ use crate::state::BridgeState;
 #[tauri::command]
 pub fn get_feedback_state(
     state: tauri::State<BridgeState>,
-) -> Result<sherpresent_bridge_core::osc::feedback::FeedbackState, String> {
+) -> Result<crate::bridge::osc::feedback::FeedbackState, String> {
     Ok(state.core()?.feedback_state())
 }
 
@@ -23,11 +23,7 @@ pub async fn send_test_osc(
     _slide: Option<i32>,
 ) -> Result<(), String> {
     let core = state.core()?;
-    let action = match command.as_str() {
-        "next" => sherpresent_bridge_core::config::KeyAction::Next,
-        "prev" | "previous" => sherpresent_bridge_core::config::KeyAction::Prev,
-        other => return Err(format!("Unknown test command: {other}")),
-    };
+    let action: crate::bridge::config::KeyAction = command.parse()?;
     core.send_test_osc(host, port, action).await;
     sleep(Duration::from_millis(20)).await;
     Ok(())

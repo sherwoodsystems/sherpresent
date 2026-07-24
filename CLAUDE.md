@@ -9,9 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **sher-present** is a cross-platform desktop application for remotely controlling presentation software (PowerPoint, Keynote, LibreOffice Impress) via OSC (Open Sound Control) protocol. Built with Tauri v2, SvelteKit, and Rust.
 
 - Desktop app: `apps/desktop/`
-- Tauri bridge (GUI): `apps/bridge/`
-- Headless bridge (RPi/service): `apps/bridge-headless/`
-- Shared bridge core: `crates/sherpresent-bridge-core/`
+- Bridge (single Tauri app; core engine in `src-tauri/src/bridge/`): `apps/bridge/`
 - Shared discovery/OSC core: `crates/sherpresent-core/`
 - Companion module: `apps/companion-module/` (git submodule)
 - Specifications: `spec/`
@@ -86,9 +84,9 @@ Feedback: `/clicker/<channel>/state/presenting`, `/clicker/<channel>/state/slide
 
 ### Bridge
 
-USB presentation clicker → OSC bridge. The core logic lives in `crates/sherpresent-bridge-core/`
-and is consumed by both the Tauri GUI (`apps/bridge/`) and the headless binary
-(`apps/bridge-headless/`) for Raspberry Pi / server deployments.
+USB presentation clicker → OSC bridge. It's a single Tauri app (`apps/bridge/`);
+the core engine (USB capture, OSC, mDNS discovery, config) lives in-crate under
+`apps/bridge/src-tauri/src/bridge/`.
 
 The Linux backend uses passive `evdev` input capture: devices are read without exclusive
 `grab()`, so no root privileges or udev rules are required as long as the user is in the

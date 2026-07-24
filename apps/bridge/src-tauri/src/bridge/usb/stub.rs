@@ -6,7 +6,7 @@
 //! bound. The rest of the app (config schema, bindings, coordinator, UI) is
 //! platform-agnostic.
 
-use crate::usb::{UsbDeviceInfo, UsbEvent};
+use crate::bridge::usb::{UsbDeviceInfo, UsbEvent};
 use tokio::sync::broadcast;
 
 pub struct UsbManagerImpl;

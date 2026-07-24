@@ -79,7 +79,9 @@ export interface BridgeConfig {
   bridge_id: string;
   bridge_name: string;
   satellite: SatelliteConfig;
-  devices: Record<string, DeviceConfig | null>;
+  /** Registered USB devices keyed by device id. Legacy `null` slots are
+   *  dropped by the backend on load, so values are always present. */
+  devices: Record<string, DeviceConfig>;
 }
 
 // =============================================================================

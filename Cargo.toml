@@ -2,9 +2,7 @@
 members = [
     "apps/desktop/src-tauri",
     "apps/bridge/src-tauri",
-    "apps/bridge-headless",
     "crates/sherpresent-core",
-    "crates/sherpresent-bridge-core",
 ]
 exclude = [
     "apps/canva-for-av/src-tauri",
@@ -19,4 +17,3 @@ license = "MIT"
 
 [workspace.dependencies]
 sherpresent-core = { path = "crates/sherpresent-core", version = "0.1.0" }
-sherpresent-bridge-core = { path = "crates/sherpresent-bridge-core", version = "0.1.0" }

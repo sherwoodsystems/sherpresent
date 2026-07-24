@@ -1,12 +1,14 @@
 //! # SherPresent Bridge — Tauri GUI entry point
 //!
-//! Thin wrapper around `sherpresent-bridge-core` that adds a native webview
-//! UI via Tauri. The same core runs in the headless binary.
+//! Single-crate bridge app. The core engine (USB clicker capture, OSC
+//! sending/receiving, mDNS discovery, config) lives in the `bridge` module;
+//! this file adds the native webview UI and event forwarding via Tauri.
 
+mod bridge;
 mod commands;
 mod state;
 
-use sherpresent_bridge_core::BridgeCore;
+use crate::bridge::BridgeCore;
 use tauri::{Emitter, Manager};
 
 use crate::state::BridgeState;
@@ -66,18 +68,18 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     while let Ok(event) = events.recv().await {
                         match event {
-                            sherpresent_bridge_core::BridgeEvent::UsbConnected(info) => {
+                            crate::bridge::BridgeEvent::UsbConnected(info) => {
                                 let _ = app_handle_events.emit("usb-connected", &info);
                             }
-                            sherpresent_bridge_core::BridgeEvent::UsbDisconnected {
+                            crate::bridge::BridgeEvent::UsbDisconnected {
                                 device_id,
                             } => {
                                 let _ = app_handle_events.emit("usb-disconnected", &device_id);
                             }
-                            sherpresent_bridge_core::BridgeEvent::UsbAccessDenied { count } => {
+                            crate::bridge::BridgeEvent::UsbAccessDenied { count } => {
                                 let _ = app_handle_events.emit("usb-access-denied", count);
                             }
-                            sherpresent_bridge_core::BridgeEvent::RegistrationDetected {
+                            crate::bridge::BridgeEvent::RegistrationDetected {
                                 device_id,
                                 action,
                                 key,

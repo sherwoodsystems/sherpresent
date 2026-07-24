@@ -429,26 +429,22 @@ dependencies = [
 name = "bridge"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "dirs 5.0.1",
  "env_logger",
+ "evdev",
+ "if-addrs 0.13.4",
  "log",
+ "rosc",
  "serde",
  "serde_json",
- "sherpresent-bridge-core",
  "sherpresent-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "tokio",
-]
-
-[[package]]
-name = "bridge-headless"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "sherpresent-bridge-core",
- "tokio",
+ "tokio-test",
+ "uuid",
 ]
 
 [[package]]
@@ -3869,26 +3865,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sherpresent-bridge-core"
-version = "0.1.0"
-dependencies = [
- "axum",
- "chrono",
- "dirs 5.0.1",
- "env_logger",
- "evdev",
- "if-addrs 0.13.4",
- "log",
- "rosc",
- "serde",
- "serde_json",
- "sherpresent-core",
- "tokio",
- "tokio-test",
- "uuid",
-]
-
-[[package]]
 name = "sherpresent-core"
 version = "0.1.0"
 dependencies = [
@@ -4632,7 +4608,6 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

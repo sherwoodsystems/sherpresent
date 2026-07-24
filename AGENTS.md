@@ -46,24 +46,24 @@ await listen('event-name', (event) => { /* handle */ });
 
 ## Bridge
 
-The bridge has two entry points sharing `crates/sherpresent-bridge-core/`:
+The bridge is a single Tauri app: `apps/bridge/`. The core engine lives
+in-crate under `src-tauri/src/bridge/` (no separate crate, no headless binary).
 
-**Tauri GUI**: `apps/bridge/`
-- `src-tauri/src/lib.rs` - Tauri setup, event forwarding
-- `src-tauri/src/commands/` - Thin Tauri command wrappers
-- `src/routes/+page.svelte` - Svelte configuration UI
+**Tauri layer**: `apps/bridge/src-tauri/`
+- `src/lib.rs` - Tauri setup, event forwarding
+- `src/commands/` - Thin Tauri command wrappers around `BridgeCore`
+- `src/state.rs` - Tauri-managed `BridgeState`
 
-**Headless binary**: `apps/bridge-headless/`
-- `src/main.rs` - CLI entry point, signal handling
-- `sherpresent-bridge.service` - systemd service file
+**Core engine**: `apps/bridge/src-tauri/src/bridge/`
+- `mod.rs` - `BridgeCore` coordinator, `BridgeEvent`, service startup
+- `state.rs` - `CoreState` shared services
+- `usb/linux.rs` - Passive `evdev` input capture (no grab, no udev rules)
+- `osc/` - OSC sender and feedback listener
+- `config.rs` - Config persistence via `dirs`
 
-**Shared core**: `crates/sherpresent-bridge-core/`
-- `src/lib.rs` - `BridgeCore` coordinator
-- `src/usb/linux.rs` - Passive `evdev` input capture (no grab, no udev rules)
-- `src/osc/` - OSC sender and feedback listener
-- `src/http/` - HTTP config API (axum)
-- `src/config.rs` - Config persistence via `dirs`
+**Frontend**: `apps/bridge/src/`
+- `routes/+page.svelte` - Orchestrator (state, listeners, invoke calls)
+- `lib/components/` - Extracted UI cards
+- `lib/usePeers.svelte.ts` - mDNS peer store
 
-**Build**:
-- Tauri GUI: `cd apps/bridge && bun tauri dev`
-- Headless: `cd apps/bridge-headless && cargo build --release`
+**Build**: `cd apps/bridge && bun tauri dev`

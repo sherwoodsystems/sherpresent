@@ -1,30 +1,27 @@
-//! # SherPresent Bridge Core
+//! # Bridge core
 //!
-//! Shared bridge logic used by both the Tauri GUI app and the headless service.
-//! Contains USB clicker detection, OSC sending/receiving, mDNS discovery,
-//! HTTP config API, and the coordinator that translates key-ups into OSC commands.
+//! The bridge's engine: USB clicker detection, OSC sending/receiving, mDNS
+//! discovery, and the coordinator that translates key-ups into OSC commands.
+//! Driven by the Tauri layer in the parent crate.
 
 pub mod config;
-pub mod http;
 pub mod osc;
 pub mod state;
 pub mod usb;
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use sherpresent_core::{DiscoveredPeer, DiscoveryService};
 use tokio::sync::broadcast;
 
-use crate::config::{
+use crate::bridge::config::{
     load_config, save_config, BridgeConfig, DeviceConfig, DeviceTarget, KeyAction,
 };
-use crate::http::start_http_server;
-use crate::osc::feedback::{start_feedback_listener, FeedbackState, FeedbackUpdate};
-use crate::osc::sender::OscSender;
-use crate::state::{ApiState, CoreState};
-use crate::usb::{UsbDeviceInfo, UsbEvent, UsbManager};
+use crate::bridge::osc::feedback::{start_feedback_listener, FeedbackState, FeedbackUpdate};
+use crate::bridge::osc::sender::OscSender;
+use crate::bridge::state::CoreState;
+use crate::bridge::usb::{UsbDeviceInfo, UsbEvent, UsbManager};
 
 /// Event emitted by the bridge core for UI consumers.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -113,7 +110,7 @@ impl BridgeCore {
     }
 
     /// Start all background services: feedback listener, USB manager (Linux),
-    /// HTTP API, and mDNS discovery. Spawns the coordinator task.
+    /// and mDNS discovery. Spawns the coordinator task.
     pub async fn start(&self) -> Result<(), String> {
         let config = self.config();
 
@@ -123,9 +120,6 @@ impl BridgeCore {
         // Start USB manager and coordinator (Linux only).
         #[cfg(target_os = "linux")]
         self.start_usb_coordinator().await;
-
-        // Start HTTP config API server.
-        self.start_http_server(config.config_port).await;
 
         // Start mDNS discovery service.
         self.start_discovery(config).await;
@@ -165,22 +159,6 @@ impl BridgeCore {
         tokio::spawn(async move {
             while let Ok(event) = usb_rx.recv().await {
                 handle_usb_event(event, &state, &events).await;
-            }
-        });
-    }
-
-    async fn start_http_server(&self, port: u16) {
-        let api_state = Arc::new(ApiState::from_core(&self.state));
-        let state = self.state.clone();
-        tokio::spawn(async move {
-            match start_http_server(port, api_state).await {
-                Ok(handle) => {
-                    *state.http_server.lock().unwrap() = Some(handle);
-                    log::info!("HTTP config API server listening on port {port}");
-                }
-                Err(e) => {
-                    log::error!("Failed to start HTTP config API server on port {port}: {e}");
-                }
             }
         });
     }
@@ -285,33 +263,16 @@ impl BridgeCore {
         key: String,
         action: String,
     ) -> Result<(), String> {
-        let action: KeyAction = match action.as_str() {
-            "next" => KeyAction::Next,
-            "prev" => KeyAction::Prev,
-            other => return Err(format!("unknown action: {other}")),
-        };
+        let action: KeyAction = action.parse()?;
 
         // Clear registration mode first.
         *self.state.usb_registration_mode.lock().await = None;
 
         let mut config = self.config();
-        let entry = config
+        let device = config
             .devices
             .entry(device_id.clone())
-            .or_insert_with(|| {
-                Some(DeviceConfig {
-                    label: device_name.clone(),
-                    usb_phys: device_id.clone(),
-                    target: None,
-                    bindings: BTreeMap::new(),
-                })
-            });
-        let device = entry.get_or_insert_with(|| DeviceConfig {
-            label: device_name.clone(),
-            usb_phys: device_id.clone(),
-            target: None,
-            bindings: BTreeMap::new(),
-        });
+            .or_insert_with(|| DeviceConfig::new(device_name, device_id));
         device.bindings.insert(key, action);
 
         self.save_config(&config)
@@ -320,7 +281,7 @@ impl BridgeCore {
     /// Remove a single key binding from a device.
     pub async fn remove_usb_binding(&self, device_id: String, key: String) -> Result<(), String> {
         let mut config = self.config();
-        if let Some(Some(device)) = config.devices.get_mut(&device_id) {
+        if let Some(device) = config.devices.get_mut(&device_id) {
             device.bindings.remove(&key);
             if device.bindings.is_empty() {
                 config.devices.remove(&device_id);
@@ -336,8 +297,7 @@ impl BridgeCore {
         target: Option<DeviceTarget>,
     ) -> Result<(), String> {
         let mut config = self.config();
-        let entry = config.devices.get_mut(&device_id).ok_or("device not found")?;
-        let device = entry.as_mut().ok_or("device slot is empty")?;
+        let device = config.devices.get_mut(&device_id).ok_or("device not found")?;
         device.target = target;
         self.save_config(&config)
     }
@@ -407,9 +367,6 @@ impl BridgeCore {
         if let Some(handle) = self.state.feedback_listener.lock().unwrap().take() {
             let _ = handle.cancel.send(());
         }
-        if let Some(handle) = self.state.http_server.lock().unwrap().take() {
-            let _ = handle.cancel.send(());
-        }
         if let Some(mut service) = self.state.discovery_service.lock().unwrap().take() {
             if let Err(e) = service.shutdown() {
                 log::warn!("Failed to shut down mDNS discovery service: {e}");
@@ -452,14 +409,11 @@ async fn handle_usb_event(
             // and fire OSC to its target.
             let resolved = {
                 let cfg = state.config.lock().unwrap();
-                cfg.devices
-                    .get(&device_id)
-                    .and_then(|d| d.as_ref())
-                    .and_then(|d| {
-                        let action = d.bindings.get(&key).copied()?;
-                        let target = d.target.clone()?;
-                        Some((action, target))
-                    })
+                cfg.devices.get(&device_id).and_then(|d| {
+                    let action = d.bindings.get(&key).copied()?;
+                    let target = d.target.clone()?;
+                    Some((action, target))
+                })
             };
             if let Some((action, target)) = resolved {
                 let device_id_log = device_id.clone();

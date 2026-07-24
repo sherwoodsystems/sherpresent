@@ -23,7 +23,7 @@ pub struct UsbPermissionStatus {
 #[tauri::command]
 pub async fn get_usb_devices(
     state: State<'_, BridgeState>,
-) -> Result<Vec<sherpresent_bridge_core::usb::UsbDeviceInfo>, String> {
+) -> Result<Vec<crate::bridge::usb::UsbDeviceInfo>, String> {
     Ok(state.core()?.usb_devices().await)
 }
 
@@ -94,7 +94,7 @@ pub async fn set_device_target(
     instance_id: Option<String>,
 ) -> Result<(), String> {
     let target = match (host, port) {
-        (Some(h), Some(p)) => Some(sherpresent_bridge_core::config::DeviceTarget {
+        (Some(h), Some(p)) => Some(crate::bridge::config::DeviceTarget {
             host: h,
             port: p,
             name,

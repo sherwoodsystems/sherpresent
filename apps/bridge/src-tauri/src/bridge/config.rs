@@ -66,6 +66,28 @@ pub enum KeyAction {
     Prev,
 }
 
+impl KeyAction {
+    /// Human-readable label ("Next" / "Prev").
+    pub fn label(&self) -> &'static str {
+        match self {
+            KeyAction::Next => "Next",
+            KeyAction::Prev => "Prev",
+        }
+    }
+}
+
+impl std::str::FromStr for KeyAction {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "next" => Ok(KeyAction::Next),
+            "prev" | "previous" => Ok(KeyAction::Prev),
+            other => Err(format!("Unknown key action: {other}")),
+        }
+    }
+}
+
 /// A registered USB device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
@@ -79,6 +101,18 @@ pub struct DeviceConfig {
     /// Per-key action bindings, keyed by evdev key name (e.g. `"KEY_RIGHT"`).
     #[serde(default)]
     pub bindings: BTreeMap<String, KeyAction>,
+}
+
+impl DeviceConfig {
+    /// Create a freshly registered device with no target and no bindings.
+    pub fn new(label: impl Into<String>, usb_phys: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            usb_phys: usb_phys.into(),
+            target: None,
+            bindings: BTreeMap::new(),
+        }
+    }
 }
 
 /// Companion Satellite connection config (satellite mode).
@@ -129,9 +163,26 @@ pub struct BridgeConfig {
     /// Companion Satellite config (satellite mode).
     #[serde(default)]
     pub satellite: SatelliteConfig,
-    /// Per-slot device registration.
-    #[serde(default = "default_device_slots")]
-    pub devices: BTreeMap<String, Option<DeviceConfig>>,
+    /// Registered USB devices, keyed by device id. Older configs used fixed
+    /// `"usb_N": null` slots; those null entries are dropped on load.
+    #[serde(default, deserialize_with = "deserialize_devices")]
+    pub devices: BTreeMap<String, DeviceConfig>,
+}
+
+/// Deserialize the devices map, tolerating (and discarding) legacy `null`
+/// slot entries from the old fixed-slot config schema.
+fn deserialize_devices<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, DeviceConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: BTreeMap<String, Option<DeviceConfig>> =
+        BTreeMap::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|device| (k, device)))
+        .collect())
 }
 
 fn default_config_version() -> u32 {
@@ -149,10 +200,6 @@ fn default_log_level() -> String {
 fn auto_bridge_name() -> String {
     let id = Uuid::new_v4();
     format!("Bridge {}", &id.to_string()[..6])
-}
-
-fn default_device_slots() -> BTreeMap<String, Option<DeviceConfig>> {
-    BTreeMap::new()
 }
 
 /// `serde_with` helper to serialize the UUID as a string.
@@ -174,7 +221,7 @@ impl Default for BridgeConfig {
                 host: None,
                 port: DEFAULT_SATELLITE_PORT,
             },
-            devices: default_device_slots(),
+            devices: BTreeMap::new(),
         }
     }
 }
@@ -293,5 +340,38 @@ mod tests {
         config.refresh_default_name();
         assert!(config.bridge_name.starts_with("Bridge "));
         assert!(config.bridge_name.len() > "Bridge ".len());
+    }
+
+    #[test]
+    fn legacy_null_device_slots_are_dropped() {
+        // Old fixed-slot configs stored empty slots as `"usb_N": null`.
+        let json = r#"{
+            "version": 5,
+            "devices": {
+                "usb_1": null,
+                "usb_2": null,
+                "phys-abc": {
+                    "label": "Perfect Cue",
+                    "usb_phys": "phys-abc",
+                    "bindings": { "KEY_RIGHT": "next" }
+                }
+            }
+        }"#;
+        let config: BridgeConfig = serde_json::from_str(json).unwrap();
+        // Null slots dropped; only the real device survives.
+        assert_eq!(config.devices.len(), 1);
+        let device = config.devices.get("phys-abc").unwrap();
+        assert_eq!(device.label, "Perfect Cue");
+        assert_eq!(device.bindings.get("KEY_RIGHT"), Some(&KeyAction::Next));
+    }
+
+    #[test]
+    fn key_action_from_str_and_label() {
+        assert_eq!("next".parse::<KeyAction>().unwrap(), KeyAction::Next);
+        assert_eq!("prev".parse::<KeyAction>().unwrap(), KeyAction::Prev);
+        assert_eq!("previous".parse::<KeyAction>().unwrap(), KeyAction::Prev);
+        assert!("bogus".parse::<KeyAction>().is_err());
+        assert_eq!(KeyAction::Next.label(), "Next");
+        assert_eq!(KeyAction::Prev.label(), "Prev");
     }
 }

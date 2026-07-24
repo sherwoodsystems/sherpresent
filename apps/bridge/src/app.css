@@ -153,7 +153,6 @@ option { background: var(--bg-card); color: var(--text); }
 .btn-tiny:hover { color: var(--accent); border-color: var(--accent); }
 
 .device-list { margin-top: 12px; }
-.device-row { grid-template-columns: auto 1fr auto auto; }
 
 /* USB device rows: a header line + optional bindings/target below. */
 .usb-device {
@@ -192,7 +191,6 @@ option { background: var(--bg-card); color: var(--text); }
   padding: 10px 12px; background: var(--accent-bg); border: 1px solid rgba(74, 222, 128, 0.35);
   border-radius: 6px; margin-bottom: 12px;
 }
-.registration-actions { display: flex; gap: 8px; margin-left: auto; }
 
 .perms-banner {
   display: flex; flex-direction: column; gap: 8px;
