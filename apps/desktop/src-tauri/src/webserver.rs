@@ -11,6 +11,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::adapters::LiveStatus;
+use crate::captions::CaptionSinks;
 use crate::config::WebServerConfig;
 use crate::osc::latency::CommandSource;
 use crate::osc::state_manager::StateManager;
@@ -36,6 +37,12 @@ struct WebServerState {
     font_size: u16,
     /// StateManager for handling incoming commands via WebSocket/REST
     state_manager: Option<Arc<StateManager>>,
+    /// Live caption fan-out for the /captions overlay
+    captions: CaptionSinks,
+    /// Overlay defaults, overridable per-URL by query params
+    caption_font_size: u16,
+    caption_max_lines: u8,
+    chroma_color: String,
 }
 
 /// Start the web server on the given port. Returns a handle to stop it later.
@@ -46,6 +53,8 @@ pub async fn start(
     notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
     scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
     state_manager: Option<Arc<StateManager>>,
+    captions: CaptionSinks,
+    captions_config: &crate::config::CaptionsConfig,
 ) -> Result<WebServerHandle, String> {
     let state = WebServerState {
         notes_cache,
@@ -57,6 +66,12 @@ pub async fn start(
         ontime_port: config.ontime_port,
         font_size: config.font_size,
         state_manager,
+        captions,
+        // Baked at startup like `font_size` above. The overlay's query params
+        // are the live-retune path; they do not need a server restart.
+        caption_font_size: captions_config.font_size,
+        caption_max_lines: captions_config.max_lines,
+        chroma_color: captions_config.chroma_color.clone(),
     };
 
     // Spawn a task to keep last_status updated for REST endpoint
@@ -75,6 +90,10 @@ pub async fn start(
         .route("/api/state", get(state_handler))
         .route("/api/ws", get(ws_handler))
         .route("/api/command", post(command_handler))
+        // Separate page and socket from the stage view: the overlay must never
+        // receive slide/notes traffic it would only discard.
+        .route("/captions", get(captions_page_handler))
+        .route("/api/captions/ws", get(captions_ws_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", config.port);
@@ -354,6 +373,143 @@ async fn page_handler(
     let ontime_port = state.ontime_port;
     let font_size = state.font_size;
     Html(build_page_html(&ontime_host, ontime_port, font_size))
+}
+
+// =============================================================================
+// CAPTION OVERLAY
+// =============================================================================
+
+/// Chroma-key caption overlay page.
+///
+/// Kept in a real `.html` file rather than a Rust `format!` literal (see
+/// `build_page_html` below) because this page gets tuned repeatedly against a
+/// live switcher and brace-escaping every CSS rule makes that miserable.
+const CAPTIONS_HTML: &str = include_str!("../assets/captions.html");
+
+/// Normalize a colour into something safe to drop into a CSS declaration.
+///
+/// Only `#rgb` / `#rrggbb` / `transparent` are accepted; anything else falls
+/// back to broadcast green. This is a stylesheet injection guard, since the
+/// value reaches the page from both config and an untrusted query string.
+fn sanitize_chroma(raw: &str) -> String {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("transparent") {
+        return "transparent".to_string();
+    }
+
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    if matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("#{}", hex)
+    } else {
+        "#00B140".to_string()
+    }
+}
+
+async fn captions_page_handler(
+    AxumState(state): AxumState<WebServerState>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> Html<String> {
+    let chroma = params
+        .get("bg")
+        .map(|s| sanitize_chroma(s))
+        .unwrap_or_else(|| sanitize_chroma(&state.chroma_color));
+
+    // Clamped so a typo in a URL can't produce an unreadable or invisible frame.
+    let font_size = params
+        .get("size")
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(state.caption_font_size)
+        .clamp(12, 240);
+
+    let max_lines = params
+        .get("lines")
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or(state.caption_max_lines)
+        .clamp(1, 6);
+
+    // Title-safe inset from the bottom edge, as a percentage of frame height.
+    let safe = params
+        .get("safe")
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(5.0)
+        .clamp(0.0, 40.0);
+
+    let html = CAPTIONS_HTML
+        .replace("{{CHROMA}}", &chroma)
+        .replace("{{FONT_SIZE}}", &font_size.to_string())
+        .replace("{{MAX_LINES}}", &max_lines.to_string())
+        .replace("{{SAFE}}", &format!("{:.2}", safe));
+
+    Html(html)
+}
+
+async fn captions_ws_handler(
+    ws: WebSocketUpgrade,
+    AxumState(state): AxumState<WebServerState>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_captions_ws(socket, state))
+}
+
+async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState) {
+    log::info!("Caption overlay connected");
+
+    // Replay what's on screen right now, so an overlay that reconnects
+    // mid-sentence doesn't go blank until the next turn completes.
+    let (replay, status) = {
+        let buf = state.captions.buffer.lock().unwrap();
+        let status = state.captions.status.lock().unwrap().clone();
+        (buf.iter().cloned().collect::<Vec<_>>(), status)
+    };
+
+    let replay_msg = serde_json::json!({ "type": "replay", "segments": replay });
+    let status_msg = serde_json::json!({ "type": "status", "status": status });
+
+    if socket
+        .send(Message::Text(replay_msg.to_string().into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    if socket
+        .send(Message::Text(status_msg.to_string().into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    let mut rx = state.captions.broadcast.subscribe();
+
+    loop {
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(update) => {
+                        let Ok(text) = serde_json::to_string(&update) else { continue };
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // Lagged: the overlay only ever renders the newest line, so
+                    // dropping the backlog is the correct recovery.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("Caption overlay lagged, skipped {} updates", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            msg = socket.recv() => {
+                // The overlay is receive-only; anything inbound means a close.
+                match msg {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    log::info!("Caption overlay disconnected");
 }
 
 /// Basic HTML attribute escaping to prevent injection via user-configured values

@@ -179,6 +179,86 @@ impl Default for WebServerConfig {
     }
 }
 
+/// API keys for live caption providers.
+///
+/// Stored in plaintext alongside the rest of the config. Fine for a
+/// single-operator production machine; do not sync this file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CaptionApiKeys {
+    #[serde(default)]
+    pub gemini: String,
+    #[serde(default)]
+    pub openai: String,
+}
+
+/// Live caption / translation settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptionsConfig {
+    /// Auto-start captions when the app launches
+    #[serde(default)]
+    pub enabled: bool,
+    /// Provider id: "gemini" (phase 1) or "openai" (phase 2)
+    #[serde(default = "default_caption_provider")]
+    pub provider: String,
+    /// cpal input device name. `None` = system default input.
+    #[serde(rename = "inputDevice", default)]
+    pub input_device: Option<String>,
+    /// BCP-47 source language. `None` = let the provider auto-detect.
+    #[serde(rename = "sourceLanguage", default)]
+    pub source_language: Option<String>,
+    /// BCP-47 target language for the caption output
+    #[serde(rename = "targetLanguage", default = "default_target_language")]
+    pub target_language: String,
+    /// Caption font size in px, relative to a 1080p frame
+    #[serde(rename = "fontSize", default = "default_caption_font_size")]
+    pub font_size: u16,
+    /// How many finalized lines to keep on screen
+    #[serde(rename = "maxLines", default = "default_caption_max_lines")]
+    pub max_lines: u8,
+    /// Overlay background. Hex colour, or "transparent" for OBS browser sources.
+    #[serde(rename = "chromaColor", default = "default_chroma_color")]
+    pub chroma_color: String,
+    #[serde(rename = "apiKeys", default)]
+    pub api_keys: CaptionApiKeys,
+}
+
+fn default_caption_provider() -> String {
+    "gemini".to_string()
+}
+
+fn default_target_language() -> String {
+    "fr".to_string()
+}
+
+fn default_caption_font_size() -> u16 {
+    56
+}
+
+fn default_caption_max_lines() -> u8 {
+    2
+}
+
+fn default_chroma_color() -> String {
+    // Broadcast chroma green
+    "#00B140".to_string()
+}
+
+impl Default for CaptionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_caption_provider(),
+            input_device: None,
+            source_language: None,
+            target_language: default_target_language(),
+            font_size: default_caption_font_size(),
+            max_lines: default_caption_max_lines(),
+            chroma_color: default_chroma_color(),
+            api_keys: CaptionApiKeys::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub osc: OscConfig,
@@ -195,6 +275,9 @@ pub struct AppConfig {
     /// LAN web server settings
     #[serde(rename = "webServer", default)]
     pub web_server: WebServerConfig,
+    /// Live caption / translation settings
+    #[serde(default)]
+    pub captions: CaptionsConfig,
 }
 
 impl Default for AppConfig {
@@ -213,6 +296,7 @@ impl Default for AppConfig {
             discovery: DiscoveryConfig::default(),
             adapter_config: AdapterConfig::default(),
             web_server: WebServerConfig::default(),
+            captions: CaptionsConfig::default(),
         }
     }
 }
@@ -363,5 +447,68 @@ mod tests {
         }"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
         assert!(matches!(config.adapter_config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_captions_config_defaults() {
+        let c = CaptionsConfig::default();
+        assert!(!c.enabled);
+        assert_eq!(c.provider, "gemini");
+        assert_eq!(c.target_language, "fr");
+        assert_eq!(c.max_lines, 2);
+        assert!(c.input_device.is_none());
+        assert!(c.source_language.is_none());
+        assert!(c.api_keys.gemini.is_empty());
+    }
+
+    #[test]
+    fn test_app_config_missing_captions_defaults() {
+        // Config JSON written before captions existed must still load.
+        let json = r#"{
+            "osc": {"receivePort": 9000, "feedbackPort": 9001, "feedbackHost": "127.0.0.1", "host": "0.0.0.0", "feedbackDestinations": []},
+            "adapter": "libreoffice",
+            "presentationName": "",
+            "logging": {"enabled": true, "verbose": false}
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.captions.enabled);
+        assert_eq!(config.captions.target_language, "fr");
+        assert_eq!(config.captions.chroma_color, "#00B140");
+    }
+
+    #[test]
+    fn test_app_config_roundtrip_with_captions() {
+        let mut config = AppConfig::default();
+        config.captions.enabled = true;
+        config.captions.input_device = Some("Scarlett 2i2 USB".to_string());
+        config.captions.source_language = Some("en".to_string());
+        config.captions.target_language = "es".to_string();
+        config.captions.api_keys.gemini = "test-key".to_string();
+
+        let json = serde_json::to_string(&config).unwrap();
+        // camelCase over the wire, matching the rest of AppConfig
+        assert!(json.contains("\"inputDevice\":\"Scarlett 2i2 USB\""));
+        assert!(json.contains("\"targetLanguage\":\"es\""));
+
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(restored.captions.enabled);
+        assert_eq!(
+            restored.captions.input_device.as_deref(),
+            Some("Scarlett 2i2 USB")
+        );
+        assert_eq!(restored.captions.source_language.as_deref(), Some("en"));
+        assert_eq!(restored.captions.target_language, "es");
+        assert_eq!(restored.captions.api_keys.gemini, "test-key");
+    }
+
+    #[test]
+    fn test_captions_partial_json_fills_defaults() {
+        // A captions block written by an older build that only knew some fields.
+        let json = r#"{"enabled": true, "provider": "openai"}"#;
+        let c: CaptionsConfig = serde_json::from_str(json).unwrap();
+        assert!(c.enabled);
+        assert_eq!(c.provider, "openai");
+        assert_eq!(c.target_language, "fr");
+        assert_eq!(c.font_size, 56);
     }
 }

@@ -1,9 +1,12 @@
 use sherpresent_core::DiscoveryService;
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
+use crate::captions::{
+    CaptionEngine, CaptionSegment, CaptionSinks, CaptionStatus, CaptionUpdate,
+};
 use crate::config::AdapterConfig;
 use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 /// Application state
@@ -60,6 +63,29 @@ pub struct AppState {
 
     /// Broadcast channel for scroll commands (consumed by web server WebSocket)
     pub scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
+
+    /// Handle to the running caption engine (if any)
+    pub caption_engine: Mutex<Option<CaptionEngine>>,
+
+    /// Broadcast channel for caption updates (consumed by the overlay page)
+    pub caption_broadcast: tokio::sync::broadcast::Sender<CaptionUpdate>,
+
+    /// Recent finalized caption lines, replayed to late-joining overlays
+    pub caption_buffer: Arc<Mutex<VecDeque<CaptionSegment>>>,
+
+    /// Latest caption engine status, for the REST/initial-WS snapshot
+    pub caption_status: Arc<Mutex<CaptionStatus>>,
+}
+
+impl AppState {
+    /// Bundle the caption publishing handles for the engine.
+    pub fn caption_sinks(&self) -> CaptionSinks {
+        CaptionSinks {
+            broadcast: self.caption_broadcast.clone(),
+            buffer: self.caption_buffer.clone(),
+            status: self.caption_status.clone(),
+        }
+    }
 }
 
 // We need to implement Default manually because OscServerHandle doesn't implement Default
@@ -80,6 +106,10 @@ impl Default for AppState {
             latency_store: Arc::new(LatencyStore::new(50)),
             last_command_at: Arc::new(Mutex::new(0)),
             scroll_broadcast: tokio::sync::broadcast::channel(16).0,
+            caption_engine: Mutex::new(None),
+            caption_broadcast: tokio::sync::broadcast::channel(64).0,
+            caption_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            caption_status: Arc::new(Mutex::new(CaptionStatus::default())),
         }
     }
 }

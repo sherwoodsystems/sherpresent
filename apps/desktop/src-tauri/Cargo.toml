@@ -65,6 +65,30 @@ axum = { version = "0.8", features = ["ws"] }
 # tokio-stream: Stream utilities for SSE (Server-Sent Events)
 tokio-stream = { version = "0.1", features = ["sync"] }
 
+# Live Caption Dependencies
+# =========================
+# cpal: Cross-platform audio input capture
+#   - Enumerates input devices (USB mics, audio interfaces)
+#   - Requires libasound2-dev at build time on Linux (ALSA backend)
+cpal = "0.15"
+
+# rubato: Sample-rate conversion
+#   - Interfaces run at 44.1/48 kHz; the Live API requires exactly 16 kHz
+rubato = "0.16"
+
+# tokio-tungstenite: WebSocket *client* (axum only provides the server side)
+#   - "native-tls" = reuse the platform TLS stack reqwest already links.
+#     Deliberately not rustls: that pulls aws-lc-rs, which needs cmake + NASM
+#     on Windows, whereas native-tls uses schannel with no extra build deps.
+#   - Pinned to 0.29 to match the copy axum's `ws` feature already pulls in
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+
+# futures-util: Sink/Stream combinators for splitting the WebSocket
+futures-util = "0.3"
+
+# base64: Encodes PCM chunks for the provider's JSON audio frames
+base64 = "0.22"
+
 # Windows-specific dependencies
 # =============================
 [target.'cfg(windows)'.dependencies]

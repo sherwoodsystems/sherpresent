@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SherPresent Captions</title>
+<style>
+  :root {
+    --chroma: {{CHROMA}};
+    --size: {{FONT_SIZE}}px;
+    --safe: {{SAFE}}%;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    /* Nothing here is interactive; a stray tap must never scroll or select. */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: none;
+  }
+
+  body.transparent, body.transparent #frame { background: transparent; }
+
+  /* The keyable surface. Sized to fill the viewport while holding 16:9, so
+     the same URL works in a 1920x1080 browser source and in a fullscreen
+     browser on a letterboxed display. */
+  #frame {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    background: var(--chroma);
+    /* Establishes the query container. Note the font-size lives on the
+       children: container units on the container element itself resolve
+       against an *ancestor*, which is not what we want here. */
+    container-type: size;
+  }
+
+  /* Type scales with the frame, not the window, so a 1280-wide preview and a
+     1920 program feed look identical. --size is calibrated at 1920 wide. */
+  #lines, #status {
+    font-size: calc(var(--size) * (100cqw / 1920));
+  }
+
+  @supports not (container-type: size) {
+    /* Fallback: vw-relative. Correct whenever the frame spans the viewport
+       width, which is the common browser-source case. */
+    #lines, #status { font-size: calc(var(--size) * (100vw / 1920)); }
+  }
+
+  #lines {
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    bottom: var(--safe);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.18em;
+  }
+
+  .line {
+    font-size: 1em;
+    line-height: 1.22;
+    font-weight: 650;
+    text-align: center;
+    color: #fff;
+    /* Shadow rather than a filled box: a translucent plate would pick up the
+       chroma colour underneath and key out with the background. A hard shadow
+       keys cleanly and still holds up over a busy source. */
+    text-shadow:
+      0 0 0.09em rgba(0, 0, 0, 0.95),
+      0 0.035em 0.05em rgba(0, 0, 0, 0.9),
+      0 0 0.28em rgba(0, 0, 0, 0.55);
+    text-wrap: balance;
+    /* Latency matters more than polish; no entry animation on the live line. */
+  }
+
+  .line.previous { opacity: 0.62; }
+
+  .line .source {
+    display: block;
+    font-size: 0.62em;
+    font-weight: 500;
+    opacity: 0.8;
+    margin-bottom: 0.1em;
+  }
+
+  /* Connection trouble indicator. Deliberately tiny and in the top-left,
+     outside the caption safe area, so it is easy to crop or ignore on air. */
+  #status {
+    position: absolute;
+    top: 1.5%;
+    left: 1.5%;
+    font-size: 0.22em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 0.4em 0.7em;
+    border-radius: 0.3em;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  #status.show { opacity: 1; }
+  body.clean #status { display: none; }
+</style>
+</head>
+<body>
+  <div id="frame">
+    <div id="lines"></div>
+    <div id="status"></div>
+  </div>
+
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var MAX_LINES = Math.max(1, Math.min(6, parseInt(params.get('lines') || '{{MAX_LINES}}', 10) || 2));
+  var SHOW_SOURCE = params.get('source') === '1' || params.get('text') === 'both';
+  var TEXT_MODE = params.get('text') === 'source' ? 'source' : 'translated';
+
+  if ((params.get('bg') || '').toLowerCase() === 'transparent') {
+    document.body.classList.add('transparent');
+  }
+  if (params.get('clean') === '1') {
+    document.body.classList.add('clean');
+  }
+
+  var linesEl = document.getElementById('lines');
+  var statusEl = document.getElementById('status');
+
+  // Finalized lines, oldest first. The in-progress line is tracked separately
+  // because it is replaced on every delta rather than appended.
+  var finals = [];
+  var live = null;
+
+  function textOf(seg) {
+    if (TEXT_MODE === 'source') return seg.source || '';
+    return seg.translated || seg.source || '';
+  }
+
+  function render() {
+    var shown = finals.slice();
+    if (live && textOf(live).trim()) shown.push(live);
+    shown = shown.slice(-MAX_LINES);
+
+    linesEl.innerHTML = '';
+    shown.forEach(function (seg, i) {
+      var div = document.createElement('div');
+      div.className = 'line' + (i < shown.length - 1 ? ' previous' : '');
+
+      if (SHOW_SOURCE && seg.source && TEXT_MODE !== 'source') {
+        var src = document.createElement('span');
+        src.className = 'source';
+        src.textContent = seg.source;
+        div.appendChild(src);
+      }
+
+      div.appendChild(document.createTextNode(textOf(seg)));
+      linesEl.appendChild(div);
+    });
+  }
+
+  function applySegment(seg) {
+    if (seg.final) {
+      // The live line and the finalized line share an id; replace, never
+      // append, or every completed line shows twice.
+      if (live && live.id === seg.id) live = null;
+      if (!finals.length || finals[finals.length - 1].id !== seg.id) {
+        finals.push(seg);
+      } else {
+        finals[finals.length - 1] = seg;
+      }
+      if (finals.length > MAX_LINES + 2) finals = finals.slice(-(MAX_LINES + 2));
+    } else {
+      live = seg;
+    }
+    render();
+  }
+
+  function showStatus(text) {
+    if (!text) {
+      statusEl.classList.remove('show');
+      return;
+    }
+    statusEl.textContent = text;
+    statusEl.classList.add('show');
+  }
+
+  function applyStatus(status) {
+    var state = status && status.state;
+    if (typeof state === 'object' && state !== null && 'error' in state) {
+      showStatus('error: ' + state.error);
+    } else if (state === 'reconnecting') {
+      showStatus('reconnecting');
+    } else if (state === 'stopped') {
+      showStatus('captions off');
+    } else if (state === 'starting') {
+      showStatus('starting');
+    } else {
+      showStatus(null);
+    }
+  }
+
+  // --- WebSocket with reconnect --------------------------------------------
+  // This page runs unattended for hours on a machine nobody is watching, so
+  // it must recover from the app restarting without anyone touching it.
+  var ws = null;
+  var retry = 500;
+
+  function connect() {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/api/captions/ws');
+
+    ws.onopen = function () {
+      retry = 500;
+      showStatus(null);
+    };
+
+    ws.onmessage = function (ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+      if (msg.type === 'segment' && msg.segment) {
+        applySegment(msg.segment);
+      } else if (msg.type === 'status' && msg.status) {
+        applyStatus(msg.status);
+      } else if (msg.type === 'replay' && Array.isArray(msg.segments)) {
+        finals = msg.segments.slice(-(MAX_LINES + 2));
+        live = null;
+        render();
+      }
+    };
+
+    ws.onclose = function () {
+      showStatus('disconnected');
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 5000);
+    };
+
+    ws.onerror = function () {
+      if (ws) ws.close();
+    };
+  }
+
+  connect();
+})();
+</script>
+</body>
+</html>

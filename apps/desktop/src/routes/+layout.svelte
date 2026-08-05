@@ -29,6 +29,7 @@
   <nav class="nav-bar">
     <a href="/" class="nav-link" class:active={page.url.pathname === '/'}>Control</a>
     <a href="/notes" class="nav-link" class:active={page.url.pathname === '/notes'}>Notes</a>
+    <a href="/captions" class="nav-link" class:active={page.url.pathname === '/captions'}>Captions</a>
     <a href="/bridges" class="nav-link" class:active={page.url.pathname === '/bridges'}>Bridges</a>
     <a href="/settings" class="nav-link" class:active={page.url.pathname === '/settings'}>Settings</a>
   </nav>

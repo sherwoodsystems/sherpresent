@@ -1,6 +1,7 @@
 mod adapters;
 mod applescript;
 mod bridge;
+mod captions;
 mod config;
 mod generated_constants;
 mod osc;
@@ -87,6 +88,13 @@ pub fn run() {
             commands::webserver::start_web_server,
             commands::webserver::is_web_server_running,
             commands::webserver::get_web_server_url,
+            // Captions
+            commands::captions::list_audio_input_devices,
+            commands::captions::start_captions,
+            commands::captions::stop_captions,
+            commands::captions::is_captions_running,
+            commands::captions::get_caption_status,
+            commands::captions::get_captions_url,
             // Debug
             commands::debug::get_latency_events,
             commands::debug::clear_latency_events,
@@ -244,6 +252,7 @@ pub fn run() {
             {
                 let app_handle3 = app.handle().clone();
                 let web_server_config = config.web_server.clone();
+                let captions_config = config.captions.clone();
 
                 tauri::async_runtime::spawn(async move {
                     log::info!("Auto-starting web server on port {}", web_server_config.port);
@@ -254,6 +263,7 @@ pub fn run() {
                     let notes_broadcast = state.notes_broadcast.clone();
                     let scroll_broadcast = state.scroll_broadcast.clone();
                     let state_manager = state.state_manager.lock().unwrap().clone();
+                    let caption_sinks = state.caption_sinks();
 
                     match webserver::start(
                         web_server_config,
@@ -262,6 +272,8 @@ pub fn run() {
                         notes_broadcast,
                         scroll_broadcast,
                         state_manager,
+                        caption_sinks,
+                        &captions_config,
                     )
                     .await
                     {
@@ -272,6 +284,32 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::error!("Failed to auto-start web server: {}", e);
+                        }
+                    }
+                });
+            }
+
+            // Resume captions if they were running when the app last closed.
+            // `enabled` is set by the Start/Stop buttons, so this only fires for
+            // an operator who deliberately left them on — it opens a *billable*
+            // provider session, so it must never be on by default.
+            if config.captions.enabled {
+                let app_handle4 = app.handle().clone();
+                let captions_config = config.captions.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    log::info!("Auto-starting captions ({})", captions_config.provider);
+
+                    let state = app_handle4.state::<AppState>();
+                    let sinks = state.caption_sinks();
+
+                    match captions::start(app_handle4.clone(), &captions_config, sinks) {
+                        Ok(engine) => {
+                            let mut slot = state.caption_engine.lock().unwrap();
+                            *slot = Some(engine);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to auto-start captions: {}", e);
                         }
                     }
                 });

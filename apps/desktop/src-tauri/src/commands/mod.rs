@@ -1,5 +1,6 @@
 pub mod bridge;
 pub mod canva;
+pub mod captions;
 pub mod config;
 pub mod debug;
 pub mod network;

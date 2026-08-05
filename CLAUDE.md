@@ -28,6 +28,9 @@ bun run check      # Type checking
 
 For Rust debugging: `RUST_LOG=debug bun tauri dev`
 
+Linux also needs `libasound2-dev` at build time (cpal's ALSA backend, used by
+live captions).
+
 ## Architecture
 
 ```

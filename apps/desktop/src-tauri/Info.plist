@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required for cpal to open an input device. Without this key macOS
+         terminates the process the moment capture starts, rather than
+         prompting. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>SherPresent listens to the selected audio input to generate live translated captions.</string>
+</dict>
+</plist>

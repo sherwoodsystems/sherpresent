@@ -107,6 +107,35 @@ export interface WebServerConfig {
   fontSize: number;
 }
 
+/** Live caption provider id */
+export type CaptionProviderId = 'gemini' | 'openai';
+
+/** API keys for caption providers. Stored in plaintext in config.json. */
+export interface CaptionApiKeys {
+  gemini: string;
+  openai: string;
+}
+
+/** Live caption / translation configuration */
+export interface CaptionsConfig {
+  /** Auto-start captions on app launch */
+  enabled: boolean;
+  provider: CaptionProviderId;
+  /** cpal input device name; null = system default input */
+  inputDevice: string | null;
+  /** BCP-47 source language; null = provider auto-detects */
+  sourceLanguage: string | null;
+  /** BCP-47 target language for caption output (default: 'fr') */
+  targetLanguage: string;
+  /** Caption font size in px, relative to a 1080p frame */
+  fontSize: number;
+  /** How many finalized lines stay on screen */
+  maxLines: number;
+  /** Overlay background: hex colour, or 'transparent' for OBS */
+  chromaColor: string;
+  apiKeys: CaptionApiKeys;
+}
+
 export interface AppConfig {
   osc: OscConfig;
   adapter: AdapterType;
@@ -118,6 +147,59 @@ export interface AppConfig {
   adapterConfig: AdapterConfig;
   /** LAN web server settings */
   webServer: WebServerConfig;
+  /** Live caption / translation settings */
+  captions: CaptionsConfig;
+}
+
+// =============================================================================
+// CAPTIONS
+// =============================================================================
+
+/** An audio input device reported by cpal */
+export interface AudioDevice {
+  /** Device name, used as the stable identifier in config */
+  name: string;
+  /** Whether this is the system default input */
+  isDefault: boolean;
+  /** Native sample rate in Hz */
+  sampleRate: number;
+  /** Native channel count */
+  channels: number;
+}
+
+/**
+ * One caption line. `interim` segments are replaced as deltas arrive;
+ * they become final on turn completion.
+ */
+export interface CaptionSegment {
+  /** Monotonic id; interim updates reuse the id of the line they replace */
+  id: number;
+  /** Transcript in the speaker's original language */
+  source: string;
+  /** Translation in the configured target language */
+  translated: string;
+  /** False while the provider is still streaming deltas for this line */
+  final: boolean;
+  /** Unix ms when the segment was last updated */
+  timestamp: number;
+}
+
+/** Connection state of the caption engine */
+export type CaptionEngineState =
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'reconnecting'
+  | { error: string };
+
+/** Status snapshot emitted on the `caption-status` event */
+export interface CaptionStatus {
+  state: CaptionEngineState;
+  /** Seconds of audio streamed this session — drives the cost readout */
+  elapsedSeconds: number;
+  /** How many times the provider session has been resumed */
+  reconnects: number;
+  provider: CaptionProviderId;
 }
 
 // =============================================================================
@@ -192,6 +274,17 @@ export const defaultConfig: AppConfig = {
     ontimeHost: '',
     ontimePort: 4001,
     fontSize: 32
+  },
+  captions: {
+    enabled: false,
+    provider: 'gemini',
+    inputDevice: null, // System default input
+    sourceLanguage: null, // Provider auto-detects
+    targetLanguage: 'fr',
+    fontSize: 56,
+    maxLines: 2,
+    chromaColor: '#00B140', // Broadcast green
+    apiKeys: { gemini: '', openai: '' }
   }
 };
 

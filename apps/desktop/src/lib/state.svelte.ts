@@ -13,8 +13,15 @@ import {
   type DiscoveredPeer,
   type SlideInfo,
   type LatencyEvent,
+  type CaptionsConfig,
+  type CaptionSegment,
+  type CaptionStatus,
+  type AudioDevice,
   defaultConfig
 } from '$lib/types';
+
+/** How many caption lines the in-app monitor keeps. */
+const CAPTION_HISTORY = 40;
 
 class AppStore {
   config = $state<AppConfig>(defaultConfig);
@@ -29,12 +36,22 @@ class AppStore {
   notesScanProgress = $state<{ current: number; total: number; status: string } | null>(null);
   latencyEvents = $state<LatencyEvent[]>([]);
 
+  // Captions
+  captionsRunning = $state(false);
+  captionsUrl = $state('');
+  captionStatus = $state<CaptionStatus | null>(null);
+  /** Newest last. The trailing entry may be an interim line still being spoken. */
+  captionSegments = $state<CaptionSegment[]>([]);
+  audioDevices = $state<AudioDevice[]>([]);
+
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
   private unlistenStatus: UnlistenFn | null = null;
   private unlistenCanvaLog: UnlistenFn | null = null;
   private unlistenNotes: UnlistenFn | null = null;
   private unlistenScanProgress: UnlistenFn | null = null;
   private unlistenLatency: UnlistenFn | null = null;
+  private unlistenCaptionSegment: UnlistenFn | null = null;
+  private unlistenCaptionStatus: UnlistenFn | null = null;
   private navigatingUntil = 0;
 
   async init() {
@@ -91,6 +108,28 @@ class AppStore {
       this.latencyEvents = [event.payload, ...this.latencyEvents].slice(0, 50);
     });
 
+    // Listen for caption lines. Interim segments reuse the id of the line they
+    // replace, so match on id rather than appending blindly.
+    this.unlistenCaptionSegment = await listen<CaptionSegment>('caption-segment', (event) => {
+      const seg = event.payload;
+      const existing = this.captionSegments;
+      const last = existing[existing.length - 1];
+
+      if (last && last.id === seg.id) {
+        this.captionSegments = [...existing.slice(0, -1), seg];
+      } else {
+        this.captionSegments = [...existing, seg].slice(-CAPTION_HISTORY);
+      }
+    });
+
+    this.unlistenCaptionStatus = await listen<CaptionStatus>('caption-status', (event) => {
+      this.captionStatus = event.payload;
+      const state = event.payload.state;
+      this.captionsRunning = state === 'running' || state === 'starting' || state === 'reconnecting';
+    });
+
+    await this.refreshCaptionStatus();
+
     // Load any existing latency events
     try {
       const existing = await invoke<LatencyEvent[]>('get_latency_events');
@@ -108,6 +147,8 @@ class AppStore {
     this.unlistenNotes?.();
     this.unlistenScanProgress?.();
     this.unlistenLatency?.();
+    this.unlistenCaptionSegment?.();
+    this.unlistenCaptionStatus?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
@@ -417,6 +458,88 @@ class AppStore {
     } catch {
       this.webServerRunning = false;
     }
+  }
+
+  // ===========================================================================
+  // CAPTIONS
+  // ===========================================================================
+
+  updateCaptionsConfig(captions: CaptionsConfig) {
+    this.config = { ...this.config, captions };
+    this.scheduleConfigSave();
+  }
+
+  async loadAudioDevices() {
+    try {
+      this.audioDevices = await invoke<AudioDevice[]>('list_audio_input_devices');
+    } catch (e) {
+      console.error('Failed to list audio input devices:', e);
+      this.audioDevices = [];
+    }
+  }
+
+  /**
+   * Start captions. Config is read from disk by the backend, so flush any
+   * pending debounced save first or a key typed seconds ago would be missed.
+   */
+  async startCaptions(): Promise<string | null> {
+    try {
+      // `enabled` records the operator's intent so captions come back after a
+      // restart, the same way polling and discovery do.
+      this.config = { ...this.config, captions: { ...this.config.captions, enabled: true } };
+      await this.flushConfigSave();
+      await invoke('start_captions');
+      this.captionSegments = [];
+      this.captionsRunning = true;
+      await this.refreshCaptionsUrl();
+      return null;
+    } catch (e) {
+      console.error('Failed to start captions:', e);
+      this.captionsRunning = false;
+      // Don't let a failed start leave the app auto-starting into the same
+      // failure on every launch.
+      this.config = { ...this.config, captions: { ...this.config.captions, enabled: false } };
+      this.scheduleConfigSave();
+      return String(e);
+    }
+  }
+
+  async stopCaptions() {
+    try {
+      await invoke('stop_captions');
+    } catch (e) {
+      console.error('Failed to stop captions:', e);
+    }
+    this.captionsRunning = false;
+    this.config = { ...this.config, captions: { ...this.config.captions, enabled: false } };
+    this.scheduleConfigSave();
+  }
+
+  async refreshCaptionStatus() {
+    try {
+      this.captionsRunning = await invoke<boolean>('is_captions_running');
+      this.captionStatus = await invoke<CaptionStatus>('get_caption_status');
+      await this.refreshCaptionsUrl();
+    } catch (e) {
+      console.error('Failed to read caption status:', e);
+    }
+  }
+
+  async refreshCaptionsUrl() {
+    try {
+      this.captionsUrl = await invoke<string>('get_captions_url');
+    } catch {
+      this.captionsUrl = '';
+    }
+  }
+
+  /** Write config now instead of waiting out the debounce. */
+  private async flushConfigSave() {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
+    await invoke('save_config', { config: this.config });
   }
 }
 
