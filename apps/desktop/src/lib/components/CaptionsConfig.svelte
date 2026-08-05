@@ -138,11 +138,18 @@
           <span class="hint warn">
             {apple?.message ?? appleDisabledReason ?? 'The Apple provider is unavailable on this machine.'}
           </span>
+        {:else if !config.sourceLanguage}
+          <!-- Speech model / translation pack status is per-language and
+               meaningless before a Spoken Language is typed in, so skip
+               straight to the one thing the operator needs to do. -->
+          <span class="hint warn">
+            Spoken Language is required for the Apple provider — it can't auto-detect.
+          </span>
         {:else}
           <div class="status-row">
             <span class="status-dot" class:ok={apple.speechModelInstalled}></span>
             <span class="status-text">
-              Speech model ({config.sourceLanguage || 'not set'}):
+              Speech model ({config.sourceLanguage}):
               {#if !apple.speechLocaleSupported}
                 not supported for this language
               {:else if apple.speechModelInstalled}
@@ -156,7 +163,7 @@
           <div class="status-row">
             <span class="status-dot" class:ok={apple.translationStatus === 'installed'}></span>
             <span class="status-text">
-              Translation pack ({config.sourceLanguage || '?'} → {config.targetLanguage}):
+              Translation pack ({config.sourceLanguage} → {config.targetLanguage}):
               {#if apple.translationStatus === 'installed'}
                 installed
               {:else if apple.translationStatus === 'notInstalled'}
@@ -177,12 +184,6 @@
               Apple can't download translation packs for us. Install it under
               System Settings › General › Language &amp; Region › Translation Languages,
               then re-check.
-            </span>
-          {/if}
-
-          {#if !config.sourceLanguage}
-            <span class="hint warn">
-              Spoken Language is required for the Apple provider — it can't auto-detect.
             </span>
           {/if}
 

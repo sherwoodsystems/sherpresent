@@ -66,8 +66,10 @@ Retune without rebuilding via query params:
 `/captions?bg=00b140&size=64&lines=2&safe=5`, plus `bg=transparent` for OBS,
 `text=source|both` and `clean=1`.
 
-**Providers**: `gemini` (default, cross-platform, billed) and `apple`
-(macOS 26+ Apple Silicon, free/offline/no key). `openai` is a stub.
+**Providers**: `apple` is the default on a capable Mac (macOS 26+, Apple
+Silicon; free/offline/no key) — `config::default_caption_provider` picks it via
+`apple::is_platform_supported`. `gemini` (cross-platform, billed) is the
+fallback everywhere else. `openai` is a stub.
 
 **Apple provider**: `SpeechAnalyzer` + `TranslationSession` are Swift-only with
 no C ABI, so `apple.rs` drives a helper process built from

@@ -20,11 +20,26 @@ mod nsapplescript {
     #[link(name = "Foundation", kind = "framework")]
     extern "C" {}
 
+    // `objc_msgSend` is declared per call-arity below rather than as a single
+    // C-variadic `...` binding. On Apple Silicon, Apple's arm64 ABI passes
+    // variadic arguments differently from fixed-arity ones, so a variadic Rust
+    // FFI declaration hands the callee garbage instead of the real argument —
+    // it happens to work on x86_64, where the two ABIs coincide, which is how
+    // this went unnoticed until run on real Apple Silicon hardware.
+    #[allow(clashing_extern_declarations)]
     #[link(name = "objc")]
     extern "C" {
         fn objc_getClass(name: *const c_char) -> Class;
         fn sel_registerName(name: *const c_char) -> SEL;
-        fn objc_msgSend(obj: id, sel: SEL, ...) -> id;
+
+        #[link_name = "objc_msgSend"]
+        fn objc_msgSend0(obj: id, sel: SEL) -> id;
+        #[link_name = "objc_msgSend"]
+        fn objc_msgSend1(obj: id, sel: SEL, arg1: id) -> id;
+        #[link_name = "objc_msgSend"]
+        fn objc_msgSend1_cstr(obj: id, sel: SEL, arg1: *const c_char) -> id;
+        #[link_name = "objc_msgSend"]
+        fn objc_msgSend1_errptr(obj: id, sel: SEL, arg1: *mut id) -> id;
     }
 
     fn sel(name: &str) -> SEL {
@@ -40,15 +55,15 @@ mod nsapplescript {
     unsafe fn nsstring(s: &str) -> id {
         let cls = class("NSString");
         let c = std::ffi::CString::new(s).unwrap();
-        let alloc: id = objc_msgSend(cls as id, sel("alloc"));
-        objc_msgSend(alloc, sel("initWithUTF8String:"), c.as_ptr())
+        let alloc: id = objc_msgSend0(cls as id, sel("alloc"));
+        objc_msgSend1_cstr(alloc, sel("initWithUTF8String:"), c.as_ptr())
     }
 
     unsafe fn from_nsstring(nsstr: id) -> Option<String> {
         if nsstr.is_null() {
             return None;
         }
-        let ptr: *const c_char = objc_msgSend(nsstr, sel("UTF8String")) as *const c_char;
+        let ptr: *const c_char = objc_msgSend0(nsstr, sel("UTF8String")) as *const c_char;
         if ptr.is_null() {
             return None;
         }
@@ -61,39 +76,39 @@ mod nsapplescript {
             let source = nsstring(script);
 
             let cls = class("NSAppleScript");
-            let alloc: id = objc_msgSend(cls as id, sel("alloc"));
-            let script_obj: id = objc_msgSend(alloc, sel("initWithSource:"), source);
+            let alloc: id = objc_msgSend0(cls as id, sel("alloc"));
+            let script_obj: id = objc_msgSend1(alloc, sel("initWithSource:"), source);
 
             if script_obj.is_null() {
-                let _: id = objc_msgSend(source, sel("release"));
+                let _: id = objc_msgSend0(source, sel("release"));
                 return Err("Failed to create NSAppleScript".to_string());
             }
 
             let mut error_dict: id = NIL;
             let error_ptr: *mut id = &mut error_dict;
 
-            let result: id = objc_msgSend(script_obj, sel("executeAndReturnError:"), error_ptr);
+            let result: id = objc_msgSend1_errptr(script_obj, sel("executeAndReturnError:"), error_ptr);
 
             if result.is_null() || !error_dict.is_null() {
                 let err_msg = if !error_dict.is_null() {
                     let key = nsstring("NSAppleScriptErrorMessage");
-                    let msg: id = objc_msgSend(error_dict, sel("objectForKey:"), key);
-                    let _: id = objc_msgSend(key, sel("release"));
+                    let msg: id = objc_msgSend1(error_dict, sel("objectForKey:"), key);
+                    let _: id = objc_msgSend0(key, sel("release"));
                     from_nsstring(msg).unwrap_or_else(|| "Unknown AppleScript error".to_string())
                 } else {
                     "AppleScript execution failed".to_string()
                 };
 
-                let _: id = objc_msgSend(script_obj, sel("release"));
-                let _: id = objc_msgSend(source, sel("release"));
+                let _: id = objc_msgSend0(script_obj, sel("release"));
+                let _: id = objc_msgSend0(source, sel("release"));
                 return Err(err_msg);
             }
 
-            let string_val: id = objc_msgSend(result, sel("stringValue"));
+            let string_val: id = objc_msgSend0(result, sel("stringValue"));
             let output = from_nsstring(string_val).unwrap_or_default();
 
-            let _: id = objc_msgSend(script_obj, sel("release"));
-            let _: id = objc_msgSend(source, sel("release"));
+            let _: id = objc_msgSend0(script_obj, sel("release"));
+            let _: id = objc_msgSend0(source, sel("release"));
 
             Ok(output)
         }

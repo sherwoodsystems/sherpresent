@@ -627,6 +627,14 @@ fn sidecar_override() -> Result<Option<PathBuf>, String> {
     Ok(Some(path))
 }
 
+/// Whether this machine can run the Apple on-device provider at all — used to
+/// pick the default provider on a fresh config. A real per-language-pair
+/// readiness check (translation pack installed, speech model present) still
+/// only happens via `probe_support`.
+pub(crate) fn is_platform_supported() -> bool {
+    check_platform().is_ok()
+}
+
 #[cfg(target_os = "macos")]
 fn check_platform() -> Result<(), String> {
     if std::env::consts::ARCH != "aarch64" {
@@ -735,12 +743,30 @@ pub struct AppleCaptionSupport {
 }
 
 impl AppleCaptionSupport {
-    /// The answer when the helper cannot even be asked.
+    /// The answer when the OS/architecture genuinely doesn't qualify.
     pub fn unavailable(message: impl Into<String>) -> Self {
         Self {
             os_supported: false,
             os_version: None,
             arch_supported: false,
+            speech_locale_supported: false,
+            speech_model_installed: false,
+            supported_locales: Vec::new(),
+            translation_status: "unsupported".to_string(),
+            message: Some(message.into()),
+        }
+    }
+
+    /// The answer when `check_platform` already passed — this machine qualifies
+    /// — but something else still stops the helper from answering (the sidecar
+    /// binary is missing, a bad `SHERPRESENT_SPEECH_BIN` override, a malformed
+    /// probe argument, a timeout). Reporting `os_supported: false` here would
+    /// send the operator chasing an OS upgrade that was never the problem.
+    fn runtime_error(message: impl Into<String>) -> Self {
+        Self {
+            os_supported: true,
+            os_version: None,
+            arch_supported: true,
             speech_locale_supported: false,
             speech_model_installed: false,
             supported_locales: Vec::new(),
@@ -758,10 +784,38 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Never returns `Err` for an unsupported machine — "this Mac cannot do it, and
 /// here is why" is a valid answer that Settings needs to render, not an error.
 pub async fn probe_support(source: &str, target: &str) -> AppleCaptionSupport {
-    let path = match preflight() {
-        Ok(p) => p,
-        Err(message) => return AppleCaptionSupport::unavailable(message),
+    // Classified by hand rather than via `preflight()` directly: only a real
+    // `check_platform` failure means the OS/arch is unsupported. Everything
+    // past that point (missing binary, bad override, a timeout) happens on a
+    // machine that already qualifies.
+    let path = match sidecar_override() {
+        Ok(Some(p)) => p,
+        Ok(None) => match check_platform() {
+            Ok(()) => match resolve_bundled_sidecar() {
+                Ok(p) => p,
+                Err(message) => return AppleCaptionSupport::runtime_error(message),
+            },
+            Err(message) => return AppleCaptionSupport::unavailable(message),
+        },
+        Err(message) => return AppleCaptionSupport::runtime_error(message),
     };
+
+    // The helper's `--source` is unconditionally required (there's no OS/arch
+    // check it can run without one), so short-circuit here instead of paying
+    // for a spawn just to get back a raw `ParseError` string. Settings already
+    // renders its own "Spoken Language is required" hint for this case.
+    if source.trim().is_empty() {
+        return AppleCaptionSupport {
+            os_supported: true,
+            os_version: None,
+            arch_supported: true,
+            speech_locale_supported: false,
+            speech_model_installed: false,
+            supported_locales: Vec::new(),
+            translation_status: "unsupported".to_string(),
+            message: None,
+        };
+    }
 
     let output = tokio::process::Command::new(&path)
         .args(probe_args(source, target))
@@ -774,13 +828,13 @@ pub async fn probe_support(source: &str, target: &str) -> AppleCaptionSupport {
     let output = match timeout(PROBE_TIMEOUT, output).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
-            return AppleCaptionSupport::unavailable(format!(
+            return AppleCaptionSupport::runtime_error(format!(
                 "Could not run the Apple speech helper: {}",
                 e
             ))
         }
         Err(_) => {
-            return AppleCaptionSupport::unavailable(
+            return AppleCaptionSupport::runtime_error(
                 "The Apple speech helper did not respond within 10 seconds.",
             )
         }
@@ -798,7 +852,9 @@ pub async fn probe_support(source: &str, target: &str) -> AppleCaptionSupport {
         Err(e) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let detail = stderr.trim().lines().last().unwrap_or_default();
-            AppleCaptionSupport::unavailable(if detail.is_empty() {
+            // The helper just ran on this exact OS/arch, so a parse failure
+            // here (e.g. a missing `--source`) is never a platform problem.
+            AppleCaptionSupport::runtime_error(if detail.is_empty() {
                 e
             } else {
                 format!("{} — {}", e, detail)

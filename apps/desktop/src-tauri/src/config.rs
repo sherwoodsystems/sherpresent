@@ -222,8 +222,14 @@ pub struct CaptionsConfig {
     pub api_keys: CaptionApiKeys,
 }
 
+/// Apple on-device when this Mac can actually run it (macOS 26+, Apple
+/// Silicon); Gemini otherwise, as the cross-platform fallback.
 fn default_caption_provider() -> String {
-    "gemini".to_string()
+    if crate::captions::provider::apple::is_platform_supported() {
+        "apple".to_string()
+    } else {
+        "gemini".to_string()
+    }
 }
 
 fn default_target_language() -> String {
@@ -453,7 +459,12 @@ mod tests {
     fn test_captions_config_defaults() {
         let c = CaptionsConfig::default();
         assert!(!c.enabled);
-        assert_eq!(c.provider, "gemini");
+        let expected_provider = if crate::captions::provider::apple::is_platform_supported() {
+            "apple"
+        } else {
+            "gemini"
+        };
+        assert_eq!(c.provider, expected_provider);
         assert_eq!(c.target_language, "fr");
         assert_eq!(c.max_lines, 2);
         assert!(c.input_device.is_none());
