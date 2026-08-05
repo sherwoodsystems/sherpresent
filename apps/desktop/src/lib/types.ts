@@ -108,7 +108,36 @@ export interface WebServerConfig {
 }
 
 /** Live caption provider id */
-export type CaptionProviderId = 'gemini' | 'openai';
+export type CaptionProviderId = 'gemini' | 'openai' | 'apple';
+
+/** Providers that bill per minute and need a key in `apiKeys`. */
+export type CaptionApiKeyProviderId = 'gemini' | 'openai';
+
+/** Whether an Apple translation language pack is present for a language pair */
+export type TranslationPackStatus = 'installed' | 'notInstalled' | 'unsupported';
+
+/**
+ * What the Apple on-device provider can do on this machine.
+ *
+ * Reported by the `check_apple_captions_support` command, which runs the speech
+ * helper's `--probe` mode. Translation language packs can only be installed by
+ * the user in System Settings, so this has to be legible before a show.
+ */
+export interface AppleCaptionSupport {
+  /** macOS 26 (Tahoe) or later */
+  osSupported: boolean;
+  osVersion: string | null;
+  /** Apple Silicon */
+  archSupported: boolean;
+  /** The spoken language has a SpeechTranscriber model available */
+  speechLocaleSupported: boolean;
+  /** That model is already downloaded (it downloads automatically if not) */
+  speechModelInstalled: boolean;
+  supportedLocales: string[];
+  translationStatus: TranslationPackStatus;
+  /** Why the provider is unusable, when it is */
+  message: string | null;
+}
 
 /** API keys for caption providers. Stored in plaintext in config.json. */
 export interface CaptionApiKeys {

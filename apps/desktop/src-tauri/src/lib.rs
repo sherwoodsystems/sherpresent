@@ -95,6 +95,8 @@ pub fn run() {
             commands::captions::is_captions_running,
             commands::captions::get_caption_status,
             commands::captions::get_captions_url,
+            commands::captions::check_apple_captions_support,
+            commands::captions::open_translation_settings,
             // Debug
             commands::debug::get_latency_events,
             commands::debug::clear_latency_events,

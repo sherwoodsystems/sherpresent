@@ -1,3 +1,4 @@
+use crate::captions::provider::apple::AppleCaptionSupport;
 use crate::captions::{self, audio::AudioDevice, CaptionStatus};
 use crate::config;
 use crate::state::AppState;
@@ -67,6 +68,41 @@ pub fn is_captions_running(state: tauri::State<AppState>) -> bool {
 #[tauri::command]
 pub fn get_caption_status(state: tauri::State<AppState>) -> CaptionStatus {
     state.caption_status.lock().unwrap().clone()
+}
+
+/// Ask the Apple speech helper what it can actually do on this machine.
+///
+/// Settings calls this to decide whether the Apple provider is selectable and
+/// to tell the operator *why* not — a missing translation language pack is not
+/// something the app can fix on their behalf, so it has to be legible before a
+/// show rather than as a failure during one.
+#[tauri::command]
+pub async fn check_apple_captions_support(
+    source: Option<String>,
+    target: String,
+) -> Result<AppleCaptionSupport, String> {
+    Ok(captions::provider::apple::probe_support(source.as_deref().unwrap_or(""), &target).await)
+}
+
+/// Open System Settings at the Translation Languages pane.
+///
+/// Done here rather than through the opener plugin: its default ACL covers only
+/// http/https/mailto/tel, and scoping a custom scheme with no `//` authority has
+/// murky glob semantics. One spawn is deterministic.
+#[tauri::command]
+pub fn open_translation_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.Localization-Settings.extension")
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Could not open System Settings: {}", e))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Translation language settings are only available on macOS".to_string())
+    }
 }
 
 /// LAN URL of the chroma-key caption overlay, for a browser source or a

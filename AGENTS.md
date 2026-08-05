@@ -54,6 +54,7 @@ Microphone → streaming translation → chroma-key overlay served on the LAN.
 - `audio.rs` - cpal capture on a dedicated OS thread, downmix + rubato resample to 16 kHz mono i16
 - `provider/mod.rs` - `CaptionProvider` trait + `build()` selection
 - `provider/gemini.rs` - Gemini Live `BidiGenerateContent` WSS client
+- `provider/apple.rs` - macOS 26+ on-device provider driving a Swift sidecar
 - `../commands/captions.rs` - Tauri command wrappers
 - `../../assets/captions.html` - overlay page, served by `webserver.rs` at `/captions`
 
@@ -65,8 +66,28 @@ Retune without rebuilding via query params:
 `/captions?bg=00b140&size=64&lines=2&safe=5`, plus `bg=transparent` for OBS,
 `text=source|both` and `clean=1`.
 
+**Providers**: `gemini` (default, cross-platform, billed) and `apple`
+(macOS 26+ Apple Silicon, free/offline/no key). `openai` is a stub.
+
+**Apple provider**: `SpeechAnalyzer` + `TranslationSession` are Swift-only with
+no C ABI, so `apple.rs` drives a helper process built from
+`apps/desktop/sidecars/speech-macos/` (see its README). Rust pipes the existing
+cpal PCM into the helper's stdin — the helper never opens the mic, so there is
+still one device claim and one TCC prompt. `bun run macos:sidecar` builds it;
+the script no-ops off macOS so Linux `cargo build` stays clean.
+
+**`Delta` vs `Replace`**: `ProviderEvent::Delta` appends (Gemini);
+`ProviderEvent::Replace` assigns the whole line (Apple). On-device recognizers
+emit *revisable* hypotheses — "hello word" becomes "hello world" — so diffing
+them into appends corrupts text. A provider must pick one and stay with it.
+
 **Gotchas**:
 - cpal `Stream` is `!Send` — it lives on its own `std::thread`, never in `AppState`.
+- Apple translation language packs cannot be installed programmatically; the
+  provider fails with a Settings deeplink instead. Speech models *do* download
+  on their own via `AssetInventory`.
+- `SHERPRESENT_SPEECH_BIN` overrides sidecar discovery and skips the OS/arch
+  preflight — how the Linux tests drive a scripted fake helper.
 - Provider sessions die every ~10 min by design; reconnection is the normal
   path, driven by `sessionResumption` handles. Test runs of 25+ min.
 - API keys are stored **plaintext** in `config.json` (deliberate).

@@ -26,11 +26,17 @@
     return s && typeof s === 'object' ? s.error : null;
   });
 
+  // The Apple provider runs on-device and needs no key, so it must not be
+  // gated on one — otherwise Start is permanently disabled.
   const hasKey = $derived(
-    captions.provider === 'openai'
-      ? captions.apiKeys.openai.length > 0
-      : captions.apiKeys.gemini.length > 0
+    captions.provider === 'apple'
+      ? true
+      : captions.provider === 'openai'
+        ? captions.apiKeys.openai.length > 0
+        : captions.apiKeys.gemini.length > 0
   );
+
+  const isOnDevice = $derived(captions.provider === 'apple');
 
   // Gemini Live translate bills by audio token — roughly $0.037/min at the
   // preview rate. Shown so an operator can see burn without leaving the app.
@@ -135,7 +141,8 @@
       </div>
       <div class="stat">
         <span class="stat-label">Est. Cost</span>
-        <span class="stat-value">${estimatedCost}</span>
+        <!-- A dollar figure for a local model would be actively misleading. -->
+        <span class="stat-value">{isOnDevice ? 'On-device — free' : `$${estimatedCost}`}</span>
       </div>
       <div class="stat">
         <span class="stat-label">Reconnects</span>
@@ -143,7 +150,12 @@
       </div>
     </div>
     <p class="hint">
-      Reconnects are normal — the provider recycles the session every few minutes.
+      {#if isOnDevice}
+        Runs entirely on this Mac — no network, no API key. Reconnects mean the
+        speech helper restarted.
+      {:else}
+        Reconnects are normal — the provider recycles the session every few minutes.
+      {/if}
     </p>
   </section>
 

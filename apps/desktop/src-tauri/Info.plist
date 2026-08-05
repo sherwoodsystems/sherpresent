@@ -7,5 +7,12 @@
          prompting. -->
     <key>NSMicrophoneUsageDescription</key>
     <string>SherPresent listens to the selected audio input to generate live translated captions.</string>
+
+    <!-- For the Apple on-device provider. SpeechAnalyzer with locally installed
+         assets may not consult TCC at all, but if it does, a missing key kills
+         the helper outright instead of prompting — which looks like an
+         unexplained crash. One string is cheap insurance. -->
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>SherPresent transcribes the selected audio input on this Mac to generate live translated captions.</string>
 </dict>
 </plist>

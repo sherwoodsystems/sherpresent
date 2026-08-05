@@ -30,18 +30,11 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::{CaptionProvider, ProviderConfig, ProviderEvent};
+use super::{drain_backlog, CaptionProvider, ProviderConfig, ProviderEvent};
 use crate::captions::audio::{samples_to_le_bytes, TARGET_SAMPLE_RATE};
 
 const MODEL: &str = "models/gemini-3.5-live-translate-preview";
 const ENDPOINT: &str = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
-
-/// Chunks of backlog to keep when a session is re-established.
-///
-/// Captions are a live feed: after an outage the operator needs the *current*
-/// words, not a replay of what was said while we were offline. Anything older
-/// than this is dropped.
-const MAX_BACKLOG_CHUNKS: usize = 10; // 1 second
 
 /// Reconnect backoff bounds.
 const BACKOFF_START: Duration = Duration::from_millis(250);
@@ -393,23 +386,6 @@ fn build_setup(config: &ProviderConfig, resume_handle: Option<&str>) -> Value {
     })
 }
 
-/// Take the newest [`MAX_BACKLOG_CHUNKS`] pending chunks, discarding older ones.
-///
-/// Returns `(kept, dropped_count)`. Keeping the tail preserves the last second
-/// of speech across a session handoff; dropping the rest stops a long outage
-/// from replaying minutes of stale audio into a live caption feed.
-fn drain_backlog(audio_rx: &mut UnboundedReceiver<Vec<i16>>) -> (Vec<Vec<i16>>, usize) {
-    let mut pending = Vec::new();
-    while let Ok(chunk) = audio_rx.try_recv() {
-        pending.push(chunk);
-    }
-    if pending.len() <= MAX_BACKLOG_CHUNKS {
-        return (pending, 0);
-    }
-    let dropped = pending.len() - MAX_BACKLOG_CHUNKS;
-    (pending.split_off(dropped), dropped)
-}
-
 /// Encode one PCM chunk as a Live API `realtimeInput` frame.
 fn audio_frame(chunk: &[i16]) -> Value {
     let b64 = base64::engine::general_purpose::STANDARD.encode(samples_to_le_bytes(chunk));
@@ -571,30 +547,6 @@ mod tests {
             .unwrap();
         // 100 ms of 16 kHz mono 16-bit audio.
         assert_eq!(decoded.len(), 3200);
-    }
-
-    #[test]
-    fn test_drain_backlog_keeps_newest_chunks() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        for i in 0..25i16 {
-            tx.send(vec![i]).unwrap();
-        }
-        let (kept, dropped) = drain_backlog(&mut rx);
-        assert_eq!(dropped, 15);
-        assert_eq!(kept.len(), MAX_BACKLOG_CHUNKS);
-        // The tail is retained, not the head.
-        assert_eq!(kept.first().unwrap()[0], 15);
-        assert_eq!(kept.last().unwrap()[0], 24);
-    }
-
-    #[test]
-    fn test_drain_backlog_keeps_everything_when_short() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        tx.send(vec![7i16]).unwrap();
-        let (kept, dropped) = drain_backlog(&mut rx);
-        assert_eq!(dropped, 0);
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0][0], 7);
     }
 
     #[test]

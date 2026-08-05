@@ -9,8 +9,12 @@ dist/
 src-tauri/target/
 src-tauri/gen/schemas
 
-# Sidecar binaries
+# Sidecar binaries (built by scripts/build-macos-sidecar.sh)
 src-tauri/binaries/
+
+# SwiftPM build cache for the speech sidecar (the `build/` rule above doesn't
+# match a dot-prefixed directory)
+sidecars/speech-macos/.build/
 
 # Environment files
 .env

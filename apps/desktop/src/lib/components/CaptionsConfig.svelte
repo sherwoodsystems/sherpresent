@@ -1,5 +1,11 @@
 <script lang="ts">
-  import type { CaptionsConfig, CaptionProviderId } from '../types';
+  import { invoke } from '@tauri-apps/api/core';
+  import type {
+    AppleCaptionSupport,
+    CaptionApiKeyProviderId,
+    CaptionsConfig,
+    CaptionProviderId
+  } from '../types';
 
   interface Props {
     config: CaptionsConfig;
@@ -12,7 +18,7 @@
     onchange({ ...config, [field]: value });
   }
 
-  function updateKey(provider: CaptionProviderId, value: string) {
+  function updateKey(provider: CaptionApiKeyProviderId, value: string) {
     onchange({ ...config, apiKeys: { ...config.apiKeys, [provider]: value.trim() } });
   }
 
@@ -22,8 +28,76 @@
 
   const providers: { id: CaptionProviderId; label: string; note: string }[] = [
     { id: 'gemini', label: 'Google Gemini Live', note: 'Streaming translation in one hop — lowest latency' },
+    { id: 'apple', label: 'Apple On-Device (macOS 26+)', note: 'Free and offline — needs a downloaded translation language pack' },
     { id: 'openai', label: 'OpenAI Realtime', note: 'Not implemented yet' }
   ];
+
+  const isApple = $derived(config.provider === 'apple');
+  const needsKey = $derived(config.provider === 'gemini' || config.provider === 'openai');
+
+  let apple = $state<AppleCaptionSupport | null>(null);
+  let probing = $state(false);
+
+  /**
+   * Ask the speech helper what it supports.
+   *
+   * Debounced because the language fields are free text and re-probing on every
+   * keystroke would spawn a process per character.
+   */
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
+  function probeApple(source: string | null, target: string) {
+    clearTimeout(probeTimer);
+    probeTimer = setTimeout(async () => {
+      probing = true;
+      try {
+        apple = await invoke<AppleCaptionSupport>('check_apple_captions_support', {
+          source,
+          target
+        });
+      } catch (e) {
+        apple = {
+          osSupported: false,
+          osVersion: null,
+          archSupported: false,
+          speechLocaleSupported: false,
+          speechModelInstalled: false,
+          supportedLocales: [],
+          translationStatus: 'unsupported',
+          message: String(e)
+        };
+      } finally {
+        probing = false;
+      }
+    }, 400);
+  }
+
+  // Re-probe whenever the pair changes: pack status is per language pair, so a
+  // stale answer would be worse than none.
+  $effect(() => {
+    probeApple(config.sourceLanguage, config.targetLanguage);
+  });
+
+  const appleUsable = $derived(
+    !!apple && apple.osSupported && apple.archSupported && apple.translationStatus === 'installed'
+  );
+
+  // Kept visible-but-disabled rather than hidden: "why can't I pick Apple?" has
+  // to have an answer on screen.
+  const appleDisabledReason = $derived.by(() => {
+    if (!apple) return probing ? 'Checking…' : null;
+    if (!apple.osSupported)
+      return `Requires macOS 26 (Tahoe) or later${apple.osVersion ? ` — this Mac runs ${apple.osVersion}` : ''}`;
+    if (!apple.archSupported) return 'Requires an Apple Silicon Mac';
+    return null;
+  });
+
+  async function openTranslationSettings() {
+    try {
+      await invoke('open_translation_settings');
+    } catch (e) {
+      console.error('Could not open translation settings', e);
+    }
+  }
 </script>
 
 <div class="captions-config">
@@ -40,12 +114,86 @@
         onchange={(e) => update('provider', e.currentTarget.value as CaptionProviderId)}
       >
         {#each providers as p (p.id)}
-          <option value={p.id}>{p.label}</option>
+          <option value={p.id} disabled={p.id === 'apple' && !!appleDisabledReason}>
+            {p.label}
+          </option>
         {/each}
       </select>
-      <span class="hint">{providers.find((p) => p.id === config.provider)?.note ?? ''}</span>
+      <span class="hint">
+        {#if config.provider === 'apple' && appleDisabledReason}
+          {appleDisabledReason}
+        {:else}
+          {providers.find((p) => p.id === config.provider)?.note ?? ''}
+        {/if}
+      </span>
     </div>
 
+    {#if isApple}
+      <div class="field span">
+        <span class="label">Apple On-Device Status</span>
+
+        {#if probing && !apple}
+          <span class="hint">Checking this Mac…</span>
+        {:else if !apple || !apple.osSupported || !apple.archSupported}
+          <span class="hint warn">
+            {apple?.message ?? appleDisabledReason ?? 'The Apple provider is unavailable on this machine.'}
+          </span>
+        {:else}
+          <div class="status-row">
+            <span class="status-dot" class:ok={apple.speechModelInstalled}></span>
+            <span class="status-text">
+              Speech model ({config.sourceLanguage || 'not set'}):
+              {#if !apple.speechLocaleSupported}
+                not supported for this language
+              {:else if apple.speechModelInstalled}
+                installed
+              {:else}
+                downloads automatically on first start
+              {/if}
+            </span>
+          </div>
+
+          <div class="status-row">
+            <span class="status-dot" class:ok={apple.translationStatus === 'installed'}></span>
+            <span class="status-text">
+              Translation pack ({config.sourceLanguage || '?'} → {config.targetLanguage}):
+              {#if apple.translationStatus === 'installed'}
+                installed
+              {:else if apple.translationStatus === 'notInstalled'}
+                not installed
+              {:else}
+                this language pair is not supported
+              {/if}
+            </span>
+            {#if apple.translationStatus === 'notInstalled'}
+              <button type="button" class="reveal" onclick={openTranslationSettings}>
+                Open Settings…
+              </button>
+            {/if}
+          </div>
+
+          {#if apple.translationStatus === 'notInstalled'}
+            <span class="hint warn">
+              Apple can't download translation packs for us. Install it under
+              System Settings › General › Language &amp; Region › Translation Languages,
+              then re-check.
+            </span>
+          {/if}
+
+          {#if !config.sourceLanguage}
+            <span class="hint warn">
+              Spoken Language is required for the Apple provider — it can't auto-detect.
+            </span>
+          {/if}
+
+          {#if !appleUsable && apple.message}
+            <span class="hint warn">{apple.message}</span>
+          {/if}
+        {/if}
+      </div>
+    {/if}
+
+    {#if needsKey}
     <div class="field span">
       <div class="key-header">
         <span class="label">API Keys</span>
@@ -81,6 +229,7 @@
         Stored unencrypted in config.json — don't sync or share that file
       </span>
     </div>
+    {/if}
 
     <div class="field">
       <label class="label" for="cap-source-lang">Spoken Language</label>
@@ -88,11 +237,17 @@
         id="cap-source-lang"
         type="text"
         class="input"
-        placeholder="auto"
+        placeholder={isApple ? 'en-US (required)' : 'auto'}
         value={config.sourceLanguage ?? ''}
         onchange={(e) => update('sourceLanguage', e.currentTarget.value.trim() || null)}
       />
-      <span class="hint">BCP-47 (e.g. en-US). Blank = auto-detect</span>
+      <span class="hint">
+        {#if isApple}
+          BCP-47 (e.g. en-US). Required — Apple can't auto-detect
+        {:else}
+          BCP-47 (e.g. en-US). Blank = auto-detect
+        {/if}
+      </span>
     </div>
 
     <div class="field">
@@ -234,6 +389,30 @@
     color: #b8860b;
   }
 
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+  }
+
+  .status-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #b8860b;
+  }
+
+  .status-dot.ok {
+    background: #34c759;
+  }
+
+  .status-text {
+    font-size: 0.75rem;
+    color: #555;
+  }
+
   .input {
     padding: 0.5rem 0.75rem;
     border: 2px solid #ddd;
@@ -281,6 +460,14 @@
 
     .hint.warn {
       color: #d9a441;
+    }
+
+    .status-text {
+      color: #bbb;
+    }
+
+    .status-dot {
+      background: #d9a441;
     }
 
     .label {

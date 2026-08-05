@@ -126,8 +126,13 @@ pub fn start(
     sinks: CaptionSinks,
 ) -> Result<CaptionEngine, String> {
     let api_key = match config.provider.as_str() {
+        "gemini" => config.api_keys.gemini.clone(),
         "openai" => config.api_keys.openai.clone(),
-        _ => config.api_keys.gemini.clone(),
+        // On-device providers need no key, and an unknown provider name is
+        // rejected by `provider::build` below. Falling back to the Gemini key
+        // here would both hand it to a provider with no business holding it and
+        // mask a typo'd provider name behind a working-looking key.
+        _ => String::new(),
     };
 
     let provider = provider::build(
@@ -217,9 +222,17 @@ async fn consume_events(
             }
 
             ProviderEvent::Delta { source, translated } => {
-                current.source.push_str(&source);
-                current.translated.push_str(&translated);
-                current.timestamp = now_ms();
+                apply_delta(&mut current, &source, &translated);
+                sinks.publish(
+                    &app,
+                    CaptionUpdate::Segment {
+                        segment: current.clone(),
+                    },
+                );
+            }
+
+            ProviderEvent::Replace { source, translated } => {
+                apply_replace(&mut current, source, translated);
                 sinks.publish(
                     &app,
                     CaptionUpdate::Segment {
@@ -297,6 +310,20 @@ async fn consume_events(
     );
 }
 
+/// Append incremental text to the line in progress.
+fn apply_delta(seg: &mut CaptionSegment, source: &str, translated: &str) {
+    seg.source.push_str(source);
+    seg.translated.push_str(translated);
+    seg.timestamp = now_ms();
+}
+
+/// Overwrite the line in progress with a revised hypothesis.
+fn apply_replace(seg: &mut CaptionSegment, source: String, translated: String) {
+    seg.source = source;
+    seg.translated = translated;
+    seg.timestamp = now_ms();
+}
+
 fn set_status(
     app: &AppHandle,
     sinks: &CaptionSinks,
@@ -364,6 +391,44 @@ mod tests {
         };
         let json = serde_json::to_string(&update).unwrap();
         assert!(json.contains("\"type\":\"status\""));
+    }
+
+    fn blank_segment() -> CaptionSegment {
+        CaptionSegment {
+            id: 1,
+            source: String::new(),
+            translated: String::new(),
+            is_final: false,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn test_apply_delta_appends() {
+        let mut seg = blank_segment();
+        apply_delta(&mut seg, "hello", "bonjour");
+        apply_delta(&mut seg, " world", " le monde");
+        assert_eq!(seg.source, "hello world");
+        assert_eq!(seg.translated, "bonjour le monde");
+    }
+
+    #[test]
+    fn test_apply_replace_overwrites_a_revised_hypothesis() {
+        let mut seg = blank_segment();
+        // On-device recognizers revise, they don't only extend. Appending these
+        // would yield "hello wordhello world".
+        apply_replace(&mut seg, "hello word".into(), "bonjour mot".into());
+        apply_replace(&mut seg, "hello world".into(), "bonjour le monde".into());
+        assert_eq!(seg.source, "hello world");
+        assert_eq!(seg.translated, "bonjour le monde");
+    }
+
+    #[test]
+    fn test_apply_replace_can_shorten_the_line() {
+        let mut seg = blank_segment();
+        apply_replace(&mut seg, "a longer guess".into(), String::new());
+        apply_replace(&mut seg, "short".into(), String::new());
+        assert_eq!(seg.source, "short");
     }
 
     #[test]

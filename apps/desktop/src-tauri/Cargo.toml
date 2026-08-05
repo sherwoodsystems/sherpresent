@@ -40,7 +40,16 @@ rosc = "0.10"
 #   - "time" = Interval timers for state polling
 #   - "sync" = mpsc channels for inter-task communication
 #   - "rt-multi-thread" = Multi-threaded runtime for spawn_blocking
-tokio = { version = "1", features = ["net", "time", "sync", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = [
+    "net",
+    "time",
+    "sync",
+    "rt-multi-thread",
+    "macros",
+    # Apple caption sidecar: child process spawn + async stdio pipes.
+    "process",
+    "io-util",
+] }
 
 # log: Logging facade for debugging
 #   - Used throughout the OSC module to trace execution
