@@ -35,6 +35,21 @@
   const isApple = $derived(config.provider === 'apple');
   const needsKey = $derived(config.provider === 'gemini' || config.provider === 'openai');
 
+  const languageModes = [
+    { id: 'en-fr', source: 'en-US', target: 'fr', label: 'English → French' },
+    { id: 'fr-en', source: 'fr', target: 'en-US', label: 'French → English' },
+    { id: 'en-only', source: 'en-US', target: 'en-US', label: 'English (captions only)' },
+    { id: 'fr-only', source: 'fr', target: 'fr', label: 'French (captions only)' }
+  ];
+  const selectedLanguageMode = $derived(
+    languageModes.find((m) => m.source === config.sourceLanguage && m.target === config.targetLanguage)
+      ?.id ?? 'en-fr'
+  );
+  function updateLanguageMode(id: string) {
+    const mode = languageModes.find((m) => m.id === id);
+    if (mode) onchange({ ...config, sourceLanguage: mode.source, targetLanguage: mode.target });
+  }
+
   let apple = $state<AppleCaptionSupport | null>(null);
   let probing = $state(false);
 
@@ -232,35 +247,18 @@
     </div>
     {/if}
 
-    <div class="field">
-      <label class="label" for="cap-source-lang">Spoken Language</label>
-      <input
-        id="cap-source-lang"
-        type="text"
+    <div class="field span">
+      <label class="label" for="cap-language-mode">Language</label>
+      <select
+        id="cap-language-mode"
         class="input"
-        placeholder={isApple ? 'en-US (required)' : 'auto'}
-        value={config.sourceLanguage ?? ''}
-        onchange={(e) => update('sourceLanguage', e.currentTarget.value.trim() || null)}
-      />
-      <span class="hint">
-        {#if isApple}
-          BCP-47 (e.g. en-US). Required — Apple can't auto-detect
-        {:else}
-          BCP-47 (e.g. en-US). Blank = auto-detect
-        {/if}
-      </span>
-    </div>
-
-    <div class="field">
-      <label class="label" for="cap-target-lang">Caption Language</label>
-      <input
-        id="cap-target-lang"
-        type="text"
-        class="input"
-        value={config.targetLanguage}
-        onchange={(e) => update('targetLanguage', e.currentTarget.value.trim() || 'fr')}
-      />
-      <span class="hint">BCP-47 (e.g. fr for French)</span>
+        value={selectedLanguageMode}
+        onchange={(e) => updateLanguageMode(e.currentTarget.value)}
+      >
+        {#each languageModes as m (m.id)}
+          <option value={m.id}>{m.label}</option>
+        {/each}
+      </select>
     </div>
 
     <div class="field">

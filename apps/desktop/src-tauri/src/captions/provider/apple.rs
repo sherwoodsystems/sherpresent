@@ -539,22 +539,6 @@ fn normalize_lang(raw: &str) -> String {
     out
 }
 
-/// Whether two tags name the same language, ignoring region.
-///
-/// "en-US" and "en" are the same language, so translating between them is a
-/// no-op and the sidecar should skip building a `TranslationSession`.
-fn same_language(a: &str, b: &str) -> bool {
-    fn primary(tag: &str) -> String {
-        tag.trim()
-            .split(['-', '_'])
-            .next()
-            .unwrap_or("")
-            .to_lowercase()
-    }
-    let (a, b) = (primary(a), primary(b));
-    !a.is_empty() && a == b
-}
-
 /// Build the sidecar's argument vector.
 fn build_args(config: &ProviderConfig) -> Vec<String> {
     let source = normalize_lang(config.source_language.as_deref().unwrap_or(""));
@@ -575,7 +559,7 @@ fn build_args(config: &ProviderConfig) -> Vec<String> {
         "s16le".to_string(),
     ];
 
-    if same_language(&source, &target) {
+    if super::same_language(&source, &target) {
         args.push("--no-translate".to_string());
     }
 
@@ -1053,15 +1037,6 @@ mod tests {
         assert_eq!(normalize_lang("zh-hans-cn"), "zh-Hans-CN");
         assert_eq!(normalize_lang(""), "");
         assert_eq!(normalize_lang("   "), "");
-    }
-
-    #[test]
-    fn test_same_language_ignores_region_and_case() {
-        assert!(same_language("en-US", "en"));
-        assert!(same_language("EN", "en-GB"));
-        assert!(same_language("fr", "fr-CA"));
-        assert!(!same_language("en", "fr"));
-        assert!(!same_language("", ""));
     }
 
     // -- build_args ---------------------------------------------------------

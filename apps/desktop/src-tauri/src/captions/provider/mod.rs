@@ -135,6 +135,24 @@ pub(crate) fn validate_apple_config(config: &ProviderConfig) -> Result<(), Strin
     Ok(())
 }
 
+/// Whether two BCP-47 tags name the same language, ignoring region.
+///
+/// "en-US" and "en" are the same language, so translating between them is a
+/// no-op. Shared by `apple::build_args` (to skip building a
+/// `TranslationSession`) and `CaptionEngine::start` (to tell the overlay
+/// whether to expect translated text at all).
+pub(crate) fn same_language(a: &str, b: &str) -> bool {
+    fn primary(tag: &str) -> String {
+        tag.trim()
+            .split(['-', '_'])
+            .next()
+            .unwrap_or("")
+            .to_lowercase()
+    }
+    let (a, b) = (primary(a), primary(b));
+    !a.is_empty() && a == b
+}
+
 /// Take the newest [`MAX_BACKLOG_CHUNKS`] pending chunks, discarding older ones.
 ///
 /// Returns `(kept, dropped_count)`. Keeping the tail preserves the last second
@@ -209,5 +227,14 @@ mod tests {
     #[test]
     fn test_validate_apple_config_accepts_explicit_pair() {
         assert!(validate_apple_config(&apple_cfg(Some("en-US"), "fr")).is_ok());
+    }
+
+    #[test]
+    fn test_same_language_ignores_region() {
+        assert!(same_language("en-US", "en"));
+        assert!(same_language("EN", "en-GB"));
+        assert!(same_language("fr", "fr-CA"));
+        assert!(!same_language("en", "fr"));
+        assert!(!same_language("", ""));
     }
 }

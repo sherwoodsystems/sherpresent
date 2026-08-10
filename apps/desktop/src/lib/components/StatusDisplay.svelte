@@ -14,6 +14,14 @@
   let gotoValue = $state('');
 
   const supportsZoom = $derived(adapter === 'powerpoint');
+
+  const adapterLabels: Record<string, string> = {
+    powerpoint: 'PowerPoint',
+    keynote: 'Keynote',
+    libreoffice: 'LibreOffice Impress',
+    canva: 'Canva',
+  };
+  const adapterLabel = $derived(adapterLabels[adapter] ?? adapter);
 </script>
 
 <div class="status-display">
@@ -22,7 +30,7 @@
   {#if !status}
     <p class="placeholder">Waiting for status...</p>
   {:else if !status.is_open}
-    <p class="placeholder">Presentation not open</p>
+    <p class="placeholder">{adapterLabel} is not open — open it to control your presentation</p>
   {:else if !status.is_presenting}
     <p class="placeholder">Not presenting</p>
   {:else}

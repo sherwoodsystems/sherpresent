@@ -153,6 +153,20 @@ pub fn clear_compiled_cache() {
     // No-op
 }
 
+/// Whether a GUI app is currently running, by its process name, without
+/// launching it. `tell application "X" to ...` launches X via Launch
+/// Services if it isn't already running — fine for sending a real command,
+/// but wrong for a presence check, which would otherwise force-open
+/// PowerPoint/Keynote just by polling their status. System Events is always
+/// resident and never launches the process it's asked about.
+pub fn is_app_running(process_name: &str) -> bool {
+    let script = format!(
+        r#"tell application "System Events" to (exists process "{}")"#,
+        process_name
+    );
+    matches!(run_applescript(&script), Ok(result) if result.trim() == "true")
+}
+
 #[cfg(test)]
 #[cfg(target_os = "macos")]
 mod tests {

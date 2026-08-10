@@ -22,7 +22,7 @@ actor Translator {
     /// are dropped rather than overwriting the new line.
     private var currentTurn: UInt64 = 1
 
-    init(session: TranslationSession?, debounceMilliseconds: Int = 250) {
+    init(session: TranslationSession?, debounceMilliseconds: Int = 100) {
         self.session = session
         self.debounce = .milliseconds(debounceMilliseconds)
     }

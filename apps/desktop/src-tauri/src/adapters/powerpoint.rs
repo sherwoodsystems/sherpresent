@@ -1,12 +1,18 @@
 use std::collections::HashMap;
 use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 use super::parse_notes_response;
-use crate::applescript::run_applescript;
+use crate::applescript::{is_app_running, run_applescript};
+
+const APP_NAME: &str = "Microsoft PowerPoint";
 
 pub struct PowerPointAdapter;
 
 impl PresentationAdapter for PowerPointAdapter {
     fn get_open_presentations(&self) -> Result<Vec<String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(vec![]);
+        }
+
         let script = r#"tell application "Microsoft PowerPoint" to get name of every presentation"#;
 
         match run_applescript(script) {
@@ -20,6 +26,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn get_presentation_state(&self, name: &str) -> Result<PresentationState, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(PresentationState { is_open: false, is_presenting: false });
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set isOpen to false
@@ -57,6 +67,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn get_slide_info(&self, name: &str) -> Result<SlideInfo, String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set currentPos to current show position of slide show view of slide show window of presentation "{}"
@@ -86,6 +100,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set ssView to slide show view of slide show window of presentation "{}"
@@ -118,6 +136,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set ssView to slide show view of slide show window of presentation "{}"
@@ -150,6 +172,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(None);
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set pres to presentation "{}"
@@ -185,6 +211,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn get_all_presenter_notes(&self, name: &str) -> Result<HashMap<i32, String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(HashMap::new());
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set pres to presentation "{}"
@@ -223,6 +253,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(None);
+        }
+
         let script = r#"tell application "Microsoft PowerPoint"
             try
                 set pvWindow to presenter view window 1
@@ -245,6 +279,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn set_notes_zoom(&self, level: i32) -> Result<(), String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 try
@@ -268,6 +306,10 @@ impl PresentationAdapter for PowerPointAdapter {
     }
 
     fn get_live_status(&self, name: &str) -> LiveStatus {
+        if !is_app_running(APP_NAME) {
+            return LiveStatus::default();
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set isOpen to "false"

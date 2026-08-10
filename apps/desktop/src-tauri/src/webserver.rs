@@ -39,8 +39,11 @@ struct WebServerState {
     state_manager: Option<Arc<StateManager>>,
     /// Live caption fan-out for the /captions overlay
     captions: CaptionSinks,
+    /// Overlay font size default, overridable per-URL by `?size=`. A `watch`
+    /// receiver rather than a plain value so it reflects Settings changes
+    /// without a server restart — see `CaptionSinks::font_size`.
+    caption_font_size: tokio::sync::watch::Receiver<u16>,
     /// Overlay defaults, overridable per-URL by query params
-    caption_font_size: u16,
     caption_max_lines: u8,
     chroma_color: String,
 }
@@ -56,6 +59,8 @@ pub async fn start(
     captions: CaptionSinks,
     captions_config: &crate::config::CaptionsConfig,
 ) -> Result<WebServerHandle, String> {
+    let caption_font_size = captions.font_size.subscribe();
+
     let state = WebServerState {
         notes_cache,
         status_broadcast,
@@ -67,9 +72,9 @@ pub async fn start(
         font_size: config.font_size,
         state_manager,
         captions,
-        // Baked at startup like `font_size` above. The overlay's query params
-        // are the live-retune path; they do not need a server restart.
-        caption_font_size: captions_config.font_size,
+        caption_font_size,
+        // Baked at startup: the overlay's query params are the live-retune
+        // path for these; they do not need a server restart.
         caption_max_lines: captions_config.max_lines,
         chroma_color: captions_config.chroma_color.clone(),
     };
@@ -418,7 +423,7 @@ async fn captions_page_handler(
     let font_size = params
         .get("size")
         .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(state.caption_font_size)
+        .unwrap_or(*state.caption_font_size.borrow())
         .clamp(12, 240);
 
     let max_lines = params
@@ -479,6 +484,20 @@ async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState) {
         return;
     }
 
+    // Send the current font size too: the HTML's baked default only reflects
+    // whatever config was live at server start, and a tab that's been open a
+    // while needs this same message pushed again on every later change below.
+    let mut font_size_rx = state.caption_font_size.clone();
+    let settings_msg = |size: u16| serde_json::json!({ "type": "settings", "fontSize": size }).to_string();
+    let initial_font_size = *font_size_rx.borrow();
+    if socket
+        .send(Message::Text(settings_msg(initial_font_size).into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
     let mut rx = state.captions.broadcast.subscribe();
 
     loop {
@@ -497,6 +516,12 @@ async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState) {
                         log::warn!("Caption overlay lagged, skipped {} updates", n);
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            Ok(()) = font_size_rx.changed() => {
+                let size = *font_size_rx.borrow();
+                if socket.send(Message::Text(settings_msg(size).into())).await.is_err() {
+                    break;
                 }
             }
             msg = socket.recv() => {

@@ -204,7 +204,7 @@ pub struct CaptionsConfig {
     #[serde(rename = "inputDevice", default)]
     pub input_device: Option<String>,
     /// BCP-47 source language. `None` = let the provider auto-detect.
-    #[serde(rename = "sourceLanguage", default)]
+    #[serde(rename = "sourceLanguage", default = "default_source_language")]
     pub source_language: Option<String>,
     /// BCP-47 target language for the caption output
     #[serde(rename = "targetLanguage", default = "default_target_language")]
@@ -236,7 +236,14 @@ fn default_target_language() -> String {
     "fr".to_string()
 }
 
-fn default_caption_font_size() -> u16 {
+/// Defaults the language dropdown to English -> French rather than an
+/// auto-detect that Apple's on-device provider can't actually support (it
+/// needs an explicit source locale up front).
+fn default_source_language() -> Option<String> {
+    Some("en-US".to_string())
+}
+
+pub(crate) fn default_caption_font_size() -> u16 {
     56
 }
 
@@ -255,7 +262,7 @@ impl Default for CaptionsConfig {
             enabled: false,
             provider: default_caption_provider(),
             input_device: None,
-            source_language: None,
+            source_language: default_source_language(),
             target_language: default_target_language(),
             font_size: default_caption_font_size(),
             max_lines: default_caption_max_lines(),
@@ -468,7 +475,7 @@ mod tests {
         assert_eq!(c.target_language, "fr");
         assert_eq!(c.max_lines, 2);
         assert!(c.input_device.is_none());
-        assert!(c.source_language.is_none());
+        assert_eq!(c.source_language.as_deref(), Some("en-US"));
         assert!(c.api_keys.gemini.is_empty());
     }
 

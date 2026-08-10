@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo, parse_notes_response};
-use crate::applescript::run_applescript;
+use crate::applescript::{is_app_running, run_applescript};
+
+const APP_NAME: &str = "Keynote";
 
 /// Keynote adapter for macOS - constructed conditionally in get_adapter()
 #[allow(dead_code)]
@@ -8,6 +10,10 @@ pub struct KeynoteAdapter;
 
 impl PresentationAdapter for KeynoteAdapter {
     fn get_open_presentations(&self) -> Result<Vec<String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(vec![]);
+        }
+
         let script = r#"tell application "Keynote" to get name of every document"#;
 
         match run_applescript(script) {
@@ -21,6 +27,10 @@ impl PresentationAdapter for KeynoteAdapter {
     }
 
     fn get_presentation_state(&self, name: &str) -> Result<PresentationState, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(PresentationState { is_open: false, is_presenting: false });
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 set isOpen to false
@@ -51,6 +61,10 @@ impl PresentationAdapter for KeynoteAdapter {
     }
 
     fn get_slide_info(&self, name: &str) -> Result<SlideInfo, String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 tell document "{}"
@@ -82,6 +96,10 @@ impl PresentationAdapter for KeynoteAdapter {
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 tell document "{}"
@@ -129,6 +147,10 @@ impl PresentationAdapter for KeynoteAdapter {
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 tell document "{}"
@@ -166,6 +188,10 @@ impl PresentationAdapter for KeynoteAdapter {
     }
 
     fn goto_slide(&self, name: &str, slide: i32) -> Result<SlideInfo, String> {
+        if !is_app_running(APP_NAME) {
+            return Err(format!("{} is not running", APP_NAME));
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 tell document "{}"
@@ -209,6 +235,10 @@ impl PresentationAdapter for KeynoteAdapter {
     // Keynote doesn't support notes zoom control
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(None);
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 tell document "{}"
@@ -236,6 +266,10 @@ impl PresentationAdapter for KeynoteAdapter {
     }
 
     fn get_all_presenter_notes(&self, name: &str) -> Result<HashMap<i32, String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(HashMap::new());
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 tell document "{}"
@@ -264,6 +298,10 @@ impl PresentationAdapter for KeynoteAdapter {
     /// Batched live status — single AppleScript call instead of 3 separate ones.
     /// Keynote doesn't support notes zoom, so that field is always None.
     fn get_live_status(&self, name: &str) -> LiveStatus {
+        if !is_app_running(APP_NAME) {
+            return LiveStatus::default();
+        }
+
         let script = format!(
             r#"tell application "Keynote"
                 set isOpen to "false"

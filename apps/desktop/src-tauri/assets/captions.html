@@ -87,8 +87,6 @@
     /* Latency matters more than polish; no entry animation on the live line. */
   }
 
-  .line.previous { opacity: 0.62; }
-
   .line .source {
     display: block;
     font-size: 0.62em;
@@ -146,9 +144,21 @@
   var finals = [];
   var live = null;
 
+  // Whether the current session translates at all; set from caption-status
+  // messages. While it's true, an empty `translated` means "not ready yet",
+  // not "no translation" — falling back to source would flash English before
+  // French on every new line.
+  var TRANSLATE_ENABLED = false;
+  var lastGoodTranslated = { id: null, text: '' };
+
   function textOf(seg) {
     if (TEXT_MODE === 'source') return seg.source || '';
-    return seg.translated || seg.source || '';
+    if (!TRANSLATE_ENABLED) return seg.translated || seg.source || '';
+    if (seg.translated) {
+      lastGoodTranslated = { id: seg.id, text: seg.translated };
+      return seg.translated;
+    }
+    return (lastGoodTranslated.id === seg.id) ? lastGoodTranslated.text : '';
   }
 
   function render() {
@@ -157,9 +167,9 @@
     shown = shown.slice(-MAX_LINES);
 
     linesEl.innerHTML = '';
-    shown.forEach(function (seg, i) {
+    shown.forEach(function (seg) {
       var div = document.createElement('div');
-      div.className = 'line' + (i < shown.length - 1 ? ' previous' : '');
+      div.className = 'line';
 
       if (SHOW_SOURCE && seg.source && TEXT_MODE !== 'source') {
         var src = document.createElement('span');
@@ -200,6 +210,8 @@
   }
 
   function applyStatus(status) {
+    TRANSLATE_ENABLED = !!(status && status.translateEnabled);
+
     var state = status && status.state;
     if (typeof state === 'object' && state !== null && 'error' in state) {
       showStatus('error: ' + state.error);
@@ -241,6 +253,11 @@
         finals = msg.segments.slice(-(MAX_LINES + 2));
         live = null;
         render();
+      } else if (msg.type === 'settings' && msg.fontSize) {
+        // Settings' own font size, unless the URL pinned one explicitly.
+        if (!params.get('size')) {
+          document.documentElement.style.setProperty('--size', msg.fontSize + 'px');
+        }
       }
     };
 

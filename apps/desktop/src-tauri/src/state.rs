@@ -4,7 +4,7 @@ use crate::adapters::LiveStatus;
 use crate::captions::{
     CaptionEngine, CaptionSegment, CaptionSinks, CaptionStatus, CaptionUpdate,
 };
-use crate::config::AdapterConfig;
+use crate::config::{default_caption_font_size, AdapterConfig};
 use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -75,6 +75,10 @@ pub struct AppState {
 
     /// Latest caption engine status, for the REST/initial-WS snapshot
     pub caption_status: Arc<Mutex<CaptionStatus>>,
+
+    /// Live overlay font size, synced from config at startup and on every
+    /// save; see `CaptionSinks::font_size` for why this is a `watch` channel.
+    pub caption_font_size: tokio::sync::watch::Sender<u16>,
 }
 
 impl AppState {
@@ -84,6 +88,7 @@ impl AppState {
             broadcast: self.caption_broadcast.clone(),
             buffer: self.caption_buffer.clone(),
             status: self.caption_status.clone(),
+            font_size: self.caption_font_size.clone(),
         }
     }
 }
@@ -110,6 +115,7 @@ impl Default for AppState {
             caption_broadcast: tokio::sync::broadcast::channel(64).0,
             caption_buffer: Arc::new(Mutex::new(VecDeque::new())),
             caption_status: Arc::new(Mutex::new(CaptionStatus::default())),
+            caption_font_size: tokio::sync::watch::channel(default_caption_font_size()).0,
         }
     }
 }

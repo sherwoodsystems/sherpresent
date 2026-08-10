@@ -66,6 +66,12 @@ pub struct CaptionStatus {
     pub elapsed_seconds: u64,
     pub reconnects: u32,
     pub provider: String,
+    /// Whether this session translates at all (source/target differ). The
+    /// overlay uses this to decide whether a blank `translated` field means
+    /// "translation not started yet" (hold the previous line) versus
+    /// "captions-only mode" (show source text immediately).
+    #[serde(rename = "translateEnabled")]
+    pub translate_enabled: bool,
 }
 
 /// A message published to the overlay page.
@@ -82,6 +88,10 @@ pub struct CaptionSinks {
     pub broadcast: tokio::sync::broadcast::Sender<CaptionUpdate>,
     pub buffer: Arc<Mutex<VecDeque<CaptionSegment>>>,
     pub status: Arc<Mutex<CaptionStatus>>,
+    /// Live overlay font size in px. A `watch` channel rather than a plain
+    /// value so the web server can both read it fresh on every page load and
+    /// push updates to already-open overlay tabs without a restart.
+    pub font_size: tokio::sync::watch::Sender<u16>,
 }
 
 impl CaptionSinks {
@@ -146,6 +156,14 @@ pub fn start(
 
     let provider_name = provider.name().to_string();
 
+    // Auto-detect (`source_language: None`) always means "translate": the
+    // provider doesn't know yet whether the detected language will match the
+    // target, so the overlay must not assume captions-only mode.
+    let translate_enabled = match config.source_language.as_deref() {
+        Some(src) => !provider::same_language(src, &config.target_language),
+        None => true,
+    };
+
     let (audio_tx, audio_rx) = mpsc::unbounded_channel::<Vec<i16>>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<ProviderEvent>();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -168,6 +186,7 @@ pub fn start(
         &sinks,
         CaptionEngineState::Starting,
         &provider_name,
+        translate_enabled,
         None,
     );
 
@@ -180,7 +199,7 @@ pub fn start(
     let task = tokio::spawn(async move {
         tokio::join!(
             provider_fut,
-            consume_events(app_for_task, sinks_for_task, event_rx, provider_name),
+            consume_events(app_for_task, sinks_for_task, event_rx, provider_name, translate_enabled),
         );
     });
 
@@ -197,6 +216,7 @@ async fn consume_events(
     sinks: CaptionSinks,
     mut events: mpsc::UnboundedReceiver<ProviderEvent>,
     provider_name: String,
+    translate_enabled: bool,
 ) {
     let mut next_id: u64 = 1;
     let mut current = CaptionSegment {
@@ -217,6 +237,7 @@ async fn consume_events(
                     &sinks,
                     CaptionEngineState::Running,
                     &provider_name,
+                    translate_enabled,
                     Some((started.elapsed().as_secs(), reconnects)),
                 );
             }
@@ -283,6 +304,7 @@ async fn consume_events(
                     &sinks,
                     CaptionEngineState::Reconnecting,
                     &provider_name,
+                    translate_enabled,
                     Some((started.elapsed().as_secs(), reconnects)),
                 );
             }
@@ -294,6 +316,7 @@ async fn consume_events(
                     &sinks,
                     CaptionEngineState::Error(message),
                     &provider_name,
+                    translate_enabled,
                     Some((started.elapsed().as_secs(), reconnects)),
                 );
                 return;
@@ -306,6 +329,7 @@ async fn consume_events(
         &sinks,
         CaptionEngineState::Stopped,
         &provider_name,
+        translate_enabled,
         Some((started.elapsed().as_secs(), reconnects)),
     );
 }
@@ -329,6 +353,7 @@ fn set_status(
     sinks: &CaptionSinks,
     state: CaptionEngineState,
     provider: &str,
+    translate_enabled: bool,
     counters: Option<(u64, u32)>,
 ) {
     let (elapsed_seconds, reconnects) = counters.unwrap_or((0, 0));
@@ -337,6 +362,7 @@ fn set_status(
         elapsed_seconds,
         reconnects,
         provider: provider.to_string(),
+        translate_enabled,
     };
 
     {
@@ -361,6 +387,7 @@ impl Default for CaptionStatus {
             elapsed_seconds: 0,
             reconnects: 0,
             provider: "gemini".to_string(),
+            translate_enabled: true,
         }
     }
 }

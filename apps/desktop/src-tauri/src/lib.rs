@@ -119,6 +119,14 @@ pub fn run() {
                 *ac = config.adapter_config.clone();
             }
 
+            // Sync the persisted caption font size into the live channel the
+            // web server reads from, so the overlay reflects it from the
+            // first page load rather than a hardcoded default.
+            {
+                let state = app.state::<AppState>();
+                let _ = state.caption_font_size.send(config.captions.font_size);
+            }
+
             let app_handle = app.handle().clone();
             let osc_config = config.osc.clone();
             let adapter = config.adapter.clone();
