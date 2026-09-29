@@ -45,24 +45,23 @@ sox sample.wav -r 16000 -c 1 -e signed -b 16 -t raw - \
 ./sherpresent-speech --probe --protocol 1 --source en-US --target fr
 ```
 
-## Verify on first build
+## Verified on hardware
 
-Written on a Linux machine with no macOS SDK, so **every Apple API call here is
-unverified**. Compile a small spike before trusting the rest. Specifically:
+Originally written on Linux with no macOS SDK. Since confirmed on macOS 26.6,
+Apple Silicon, Swift 6.3 — builds warning-free, and synthetic speech (`say` →
+`afconvert` → stdin) round-trips through transcription and en-US → fr
+translation:
 
-- `SpeechAnalyzer.start(inputSequence:)` vs `analyzeSequence(_:)`, and
-  `finalizeAndFinishThroughEndOfInput()`.
-- Whether a transcriber result exposes `.isFinal` or requires comparing against
-  `transcriber.volatileRange`.
-- The `SpeechTranscriber.init` argument labels, and whether
-  `supportedLocales` / `installedLocales` are `async`.
-- `AssetInventory.assetInstallationRequest(supporting:)` returning an optional,
-  whether `request.progress` is a Foundation `Progress`, and whether a locale
-  must be `allocate`d (and deallocated on exit).
-- The `TranslationSession(installedSource:target:)` label spelling and whether
-  `prepareTranslation()` must run before the first `translate`.
-- What `bestAvailableAudioFormat` actually returns — the `ready` message reports
-  it precisely so this is answerable from a log paste.
+- All `SpeechAnalyzer`, `SpeechTranscriber`, `AssetInventory` and
+  `TranslationSession` call sites compile as written.
+- `bestAvailableAudioFormat` returns **16 kHz mono Int16**, not Float32, so
+  `AVAudioConverter` is effectively a passthrough.
+- `AssetInventory.assetInstallationRequest` returns a request even when the
+  model is already installed, so `installedLocales` is checked first.
+- No explicit locale `allocate` was needed for transcription to run.
+
+Still worth watching during a long live session: turn breaks under real room
+audio, and memory over 25+ minutes.
 
 ## Tuning
 

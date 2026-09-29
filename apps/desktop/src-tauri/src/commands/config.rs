@@ -11,10 +11,12 @@ pub fn get_config(app: AppHandle) -> Result<AppConfig, String> {
 pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     config::save_config(&app, &config)?;
 
-    // Re-sync the live overlay font size so a running caption session and any
-    // open overlay tab pick up the change without an app restart.
+    // Re-sync the live overlay styling so any open overlay tab picks up the
+    // change without an app restart.
     let state = app.state::<AppState>();
-    let _ = state.caption_font_size.send(config.captions.font_size);
+    state
+        .caption_overlay
+        .send_replace(crate::captions::OverlaySettings::from_config(&config.captions));
 
     Ok(())
 }

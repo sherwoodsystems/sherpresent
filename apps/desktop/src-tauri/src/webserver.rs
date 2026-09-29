@@ -11,7 +11,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::adapters::LiveStatus;
-use crate::captions::CaptionSinks;
+use crate::captions::{finite_clamp, sanitize_chroma, CaptionSinks};
 use crate::config::WebServerConfig;
 use crate::osc::latency::CommandSource;
 use crate::osc::state_manager::StateManager;
@@ -39,13 +39,10 @@ struct WebServerState {
     state_manager: Option<Arc<StateManager>>,
     /// Live caption fan-out for the /captions overlay
     captions: CaptionSinks,
-    /// Overlay font size default, overridable per-URL by `?size=`. A `watch`
-    /// receiver rather than a plain value so it reflects Settings changes
-    /// without a server restart — see `CaptionSinks::font_size`.
-    caption_font_size: tokio::sync::watch::Receiver<u16>,
-    /// Overlay defaults, overridable per-URL by query params
-    caption_max_lines: u8,
-    chroma_color: String,
+    /// Overlay styling defaults, each overridable per-URL by a query param. A
+    /// `watch` receiver so it reflects Settings changes without a server
+    /// restart — see `CaptionSinks::overlay`.
+    caption_overlay: tokio::sync::watch::Receiver<crate::captions::OverlaySettings>,
 }
 
 /// Start the web server on the given port. Returns a handle to stop it later.
@@ -57,9 +54,8 @@ pub async fn start(
     scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
     state_manager: Option<Arc<StateManager>>,
     captions: CaptionSinks,
-    captions_config: &crate::config::CaptionsConfig,
 ) -> Result<WebServerHandle, String> {
-    let caption_font_size = captions.font_size.subscribe();
+    let caption_overlay = captions.overlay.subscribe();
 
     let state = WebServerState {
         notes_cache,
@@ -72,11 +68,7 @@ pub async fn start(
         font_size: config.font_size,
         state_manager,
         captions,
-        caption_font_size,
-        // Baked at startup: the overlay's query params are the live-retune
-        // path for these; they do not need a server restart.
-        caption_max_lines: captions_config.max_lines,
-        chroma_color: captions_config.chroma_color.clone(),
+        caption_overlay,
     };
 
     // Spawn a task to keep last_status updated for REST endpoint
@@ -391,59 +383,29 @@ async fn page_handler(
 /// live switcher and brace-escaping every CSS rule makes that miserable.
 const CAPTIONS_HTML: &str = include_str!("../assets/captions.html");
 
-/// Normalize a colour into something safe to drop into a CSS declaration.
-///
-/// Only `#rgb` / `#rrggbb` / `transparent` are accepted; anything else falls
-/// back to broadcast green. This is a stylesheet injection guard, since the
-/// value reaches the page from both config and an untrusted query string.
-fn sanitize_chroma(raw: &str) -> String {
-    let s = raw.trim();
-    if s.eq_ignore_ascii_case("transparent") {
-        return "transparent".to_string();
-    }
-
-    let hex = s.strip_prefix('#').unwrap_or(s);
-    if matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        format!("#{}", hex)
-    } else {
-        "#00B140".to_string()
-    }
-}
-
 async fn captions_page_handler(
     AxumState(state): AxumState<WebServerState>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Html<String> {
-    let chroma = params
-        .get("bg")
-        .map(|s| sanitize_chroma(s))
-        .unwrap_or_else(|| sanitize_chroma(&state.chroma_color));
+    let s = state.caption_overlay.borrow().clone();
 
-    // Clamped so a typo in a URL can't produce an unreadable or invisible frame.
-    let font_size = params
-        .get("size")
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(*state.caption_font_size.borrow())
-        .clamp(12, 240);
+    // Query params win over Settings, clamped the same way, so a typo in a URL
+    // can't produce an unreadable or invisible frame. The page also reads
+    // them to know which values it must *not* retune live.
+    let num = |key: &str| params.get(key).and_then(|v| v.parse::<f32>().ok());
 
-    let max_lines = params
-        .get("lines")
-        .and_then(|s| s.parse::<u8>().ok())
-        .unwrap_or(state.caption_max_lines)
-        .clamp(1, 6);
-
-    // Title-safe inset from the bottom edge, as a percentage of frame height.
-    let safe = params
-        .get("safe")
-        .and_then(|s| s.parse::<f32>().ok())
-        .unwrap_or(5.0)
-        .clamp(0.0, 40.0);
+    let chroma = params.get("bg").map(|v| sanitize_chroma(v)).unwrap_or(s.chroma_color);
+    let font_size = num("size").map_or(s.font_size as f32, |v| finite_clamp(v, 12.0, 240.0, 56.0));
+    let max_lines = num("lines").map_or(s.max_lines as f32, |v| finite_clamp(v, 1.0, 6.0, 2.0));
+    let safe = num("safe").map_or(s.safe_area, |v| finite_clamp(v, 0.0, 40.0, 5.0));
+    let width = num("width").map_or(s.width, |v| finite_clamp(v, 20.0, 100.0, 80.0));
 
     let html = CAPTIONS_HTML
         .replace("{{CHROMA}}", &chroma)
-        .replace("{{FONT_SIZE}}", &font_size.to_string())
-        .replace("{{MAX_LINES}}", &max_lines.to_string())
-        .replace("{{SAFE}}", &format!("{:.2}", safe));
+        .replace("{{FONT_SIZE}}", &format!("{}", font_size.round()))
+        .replace("{{MAX_LINES}}", &format!("{}", max_lines.round()))
+        .replace("{{SAFE}}", &format!("{:.2}", safe))
+        .replace("{{WIDTH}}", &format!("{:.2}", width));
 
     Html(html)
 }
@@ -484,17 +446,15 @@ async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState) {
         return;
     }
 
-    // Send the current font size too: the HTML's baked default only reflects
-    // whatever config was live at server start, and a tab that's been open a
-    // while needs this same message pushed again on every later change below.
-    let mut font_size_rx = state.caption_font_size.clone();
-    let settings_msg = |size: u16| serde_json::json!({ "type": "settings", "fontSize": size }).to_string();
-    let initial_font_size = *font_size_rx.borrow();
-    if socket
-        .send(Message::Text(settings_msg(initial_font_size).into()))
-        .await
-        .is_err()
-    {
+    // Send the current styling too: the page may have been rendered before a
+    // Settings change, and a tab that's been open a while needs this same
+    // message pushed again on every later change below.
+    let mut overlay_rx = state.caption_overlay.clone();
+    let settings_msg = |s: &crate::captions::OverlaySettings| {
+        serde_json::json!({ "type": "settings", "settings": s }).to_string()
+    };
+    let initial = settings_msg(&overlay_rx.borrow_and_update());
+    if socket.send(Message::Text(initial.into())).await.is_err() {
         return;
     }
 
@@ -518,9 +478,9 @@ async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState) {
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
-            Ok(()) = font_size_rx.changed() => {
-                let size = *font_size_rx.borrow();
-                if socket.send(Message::Text(settings_msg(size).into())).await.is_err() {
+            Ok(()) = overlay_rx.changed() => {
+                let msg = settings_msg(&overlay_rx.borrow_and_update());
+                if socket.send(Message::Text(msg.into())).await.is_err() {
                     break;
                 }
             }

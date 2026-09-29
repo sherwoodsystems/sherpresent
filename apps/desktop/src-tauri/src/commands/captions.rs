@@ -116,3 +116,24 @@ pub fn get_captions_url(app: tauri::AppHandle) -> Result<String, String> {
         local_ip, cfg.web_server.port
     ))
 }
+
+/// Restyle open overlays immediately, without saving.
+///
+/// Settings calls this on every slider tick so the overlay tracks the control
+/// in real time; the debounced `save_config` that follows persists the final
+/// value. Skips the send when nothing changed, so it's cheap to call often.
+#[tauri::command]
+pub fn preview_caption_overlay(
+    state: tauri::State<'_, AppState>,
+    captions: config::CaptionsConfig,
+) {
+    let next = captions::OverlaySettings::from_config(&captions);
+    state.caption_overlay.send_if_modified(|cur| {
+        if *cur == next {
+            false
+        } else {
+            *cur = next;
+            true
+        }
+    });
+}

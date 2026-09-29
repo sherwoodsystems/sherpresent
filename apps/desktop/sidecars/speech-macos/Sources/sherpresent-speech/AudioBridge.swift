@@ -16,7 +16,7 @@ final class AudioBridge {
 
     var formatDescription: String {
         "\(outputFormat.sampleRate)Hz \(outputFormat.channelCount)ch "
-            + "\(outputFormat.commonFormat == .pcmFormatFloat32 ? "float32" : "other")"
+            + formatName(outputFormat.commonFormat)
     }
 
     init?(sampleRate: Double, channels: UInt32, outputFormat: AVAudioFormat) {
@@ -58,16 +58,15 @@ final class AudioBridge {
             return nil
         }
 
-        var consumed = false
+        let feed = OneShotInput(input)
         var error: NSError?
         let status = converter.convert(to: output, error: &error) { _, outStatus in
-            if consumed {
+            guard let buffer = feed.take() else {
                 outStatus.pointee = .noDataNow
                 return nil
             }
-            consumed = true
             outStatus.pointee = .haveData
-            return input
+            return buffer
         }
 
         if status == .error {
@@ -75,5 +74,31 @@ final class AudioBridge {
             return nil
         }
         return output.frameLength > 0 ? output : nil
+    }
+}
+
+/// Hands `AVAudioConverter`'s input block its buffer exactly once.
+///
+/// The block is typed `@Sendable`, but `convert(to:error:withInputFrom:)` calls
+/// it synchronously on the caller's thread before returning, so nothing here is
+/// ever touched concurrently — which is what makes `@unchecked` sound.
+private final class OneShotInput: @unchecked Sendable {
+    private var buffer: AVAudioPCMBuffer?
+
+    init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+
+    func take() -> AVAudioPCMBuffer? {
+        defer { buffer = nil }
+        return buffer
+    }
+}
+
+private func formatName(_ format: AVAudioCommonFormat) -> String {
+    switch format {
+    case .pcmFormatFloat32: "float32"
+    case .pcmFormatFloat64: "float64"
+    case .pcmFormatInt16: "int16"
+    case .pcmFormatInt32: "int32"
+    default: "other"
     }
 }

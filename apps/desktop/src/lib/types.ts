@@ -162,6 +162,12 @@ export interface CaptionsConfig {
   maxLines: number;
   /** Overlay background: hex colour, or 'transparent' for OBS */
   chromaColor: string;
+  /** Gap below the captions, % of frame height */
+  safeArea: number;
+  /** Caption block width, % of frame width (centred) */
+  width: number;
+  /** Drop shadow behind caption text (default off) */
+  shadow: boolean;
   apiKeys: CaptionApiKeys;
 }
 
@@ -313,6 +319,9 @@ export const defaultConfig: AppConfig = {
     fontSize: 56,
     maxLines: 2,
     chromaColor: '#00B140', // Broadcast green
+    safeArea: 5,
+    width: 80,
+    shadow: false,
     apiKeys: { gemini: '', openai: '' }
   }
 };

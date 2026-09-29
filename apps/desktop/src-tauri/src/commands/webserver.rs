@@ -33,7 +33,6 @@ pub async fn start_web_server(
         scroll_broadcast,
         state_manager,
         caption_sinks,
-        &cfg.captions,
     )
     .await?;
 

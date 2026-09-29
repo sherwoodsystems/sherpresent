@@ -9,22 +9,18 @@ use uuid::Uuid;
 // =============================================================================
 
 /// Per-adapter network configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AdapterConfig {
     #[serde(rename = "libreoffice")]
     LibreOffice { host: String, port: u16 },
     #[serde(rename = "canva")]
     Canva { url: String },
+    #[default]
     #[serde(rename = "none")]
     None,
 }
 
-impl Default for AdapterConfig {
-    fn default() -> Self {
-        AdapterConfig::None
-    }
-}
 
 // =============================================================================
 // FEEDBACK DESTINATION
@@ -218,6 +214,16 @@ pub struct CaptionsConfig {
     /// Overlay background. Hex colour, or "transparent" for OBS browser sources.
     #[serde(rename = "chromaColor", default = "default_chroma_color")]
     pub chroma_color: String,
+    /// Title-safe inset from the bottom of the frame, in % of frame height
+    #[serde(rename = "safeArea", default = "default_caption_safe_area")]
+    pub safe_area: f32,
+    /// Width of the caption block, in % of frame width (centred)
+    #[serde(rename = "width", default = "default_caption_width")]
+    pub width: f32,
+    /// Drop shadow behind caption text. Off by default: clean white text keys
+    /// best; the shadow is for keying over busy, bright sources.
+    #[serde(default)]
+    pub shadow: bool,
     #[serde(rename = "apiKeys", default)]
     pub api_keys: CaptionApiKeys,
 }
@@ -243,12 +249,20 @@ fn default_source_language() -> Option<String> {
     Some("en-US".to_string())
 }
 
-pub(crate) fn default_caption_font_size() -> u16 {
+fn default_caption_font_size() -> u16 {
     56
 }
 
 fn default_caption_max_lines() -> u8 {
     2
+}
+
+fn default_caption_safe_area() -> f32 {
+    5.0
+}
+
+fn default_caption_width() -> f32 {
+    80.0
 }
 
 fn default_chroma_color() -> String {
@@ -267,6 +281,9 @@ impl Default for CaptionsConfig {
             font_size: default_caption_font_size(),
             max_lines: default_caption_max_lines(),
             chroma_color: default_chroma_color(),
+            safe_area: default_caption_safe_area(),
+            width: default_caption_width(),
+            shadow: false,
             api_keys: CaptionApiKeys::default(),
         }
     }
@@ -433,10 +450,12 @@ mod tests {
 
     #[test]
     fn test_app_config_roundtrip_with_adapter_config() {
-        let mut config = AppConfig::default();
-        config.adapter_config = AdapterConfig::LibreOffice {
-            host: "10.0.0.1".to_string(),
-            port: 1599,
+        let config = AppConfig {
+            adapter_config: AdapterConfig::LibreOffice {
+                host: "10.0.0.1".to_string(),
+                port: 1599,
+            },
+            ..AppConfig::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let restored: AppConfig = serde_json::from_str(&json).unwrap();
@@ -528,5 +547,14 @@ mod tests {
         assert_eq!(c.provider, "openai");
         assert_eq!(c.target_language, "fr");
         assert_eq!(c.font_size, 56);
+    }
+
+    #[test]
+    fn test_captions_config_without_overlay_fields_gets_defaults() {
+        // Configs saved before safeArea/width existed must still load.
+        let c: CaptionsConfig = serde_json::from_str(r#"{"fontSize": 72}"#).unwrap();
+        assert_eq!(c.font_size, 72);
+        assert_eq!(c.safe_area, 5.0);
+        assert_eq!(c.width, 80.0);
     }
 }

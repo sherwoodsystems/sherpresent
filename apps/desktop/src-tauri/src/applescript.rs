@@ -1,11 +1,12 @@
-/// Execute AppleScript in-process via NSAppleScript FFI on macOS,
-/// falling back to `osascript -e` on other platforms.
+//! Execute AppleScript in-process via NSAppleScript FFI on macOS,
+//! falling back to `osascript -e` on other platforms.
 
 #[cfg(target_os = "macos")]
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, clippy::upper_case_acronyms)]
 mod nsapplescript {
     use std::ffi::CStr;
     use std::os::raw::c_char;
+    use std::sync::Mutex;
 
     #[repr(C)]
     struct objc_object {
@@ -70,8 +71,16 @@ mod nsapplescript {
         Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
     }
 
+    /// NSAppleScript is not thread-safe: concurrent executions (a status poll
+    /// racing an OSC `next`, say) fail or return garbage. Every call goes
+    /// through this lock, so scripts run one at a time process-wide.
+    static RUN_LOCK: Mutex<()> = Mutex::new(());
+
     /// Execute an AppleScript using NSAppleScript (in-process, no osascript spawn).
     pub fn run(script: &str) -> Result<String, String> {
+        // A panic while holding the lock leaves no NSAppleScript state behind,
+        // so a poisoned lock is safe to reuse.
+        let _guard = RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             let source = nsstring(script);
 

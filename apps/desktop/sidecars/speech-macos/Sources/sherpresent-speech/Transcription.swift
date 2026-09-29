@@ -182,6 +182,14 @@ actor Transcription {
 
     /// Speech models, unlike translation packs, can be fetched programmatically.
     private func downloadSpeechModelIfNeeded(for transcriber: SpeechTranscriber) async -> Bool {
+        // `assetInstallationRequest` hands back a request even when the model
+        // is already on disk, so check first — otherwise every start reports a
+        // phantom download to the UI.
+        let installed = await SpeechTranscriber.installedLocales.map { $0.identifier(.bcp47) }
+        if installed.contains(where: { $0.caseInsensitiveCompare(args.source) == .orderedSame }) {
+            return true
+        }
+
         do {
             guard let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber])
             else {

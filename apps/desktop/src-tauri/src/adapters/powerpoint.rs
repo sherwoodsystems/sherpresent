@@ -298,10 +298,9 @@ impl PresentationAdapter for PowerPointAdapter {
         );
 
         let result = run_applescript(&script)?;
-        if result.starts_with("ERROR:") {
-            Err(result[6..].to_string())
-        } else {
-            Ok(())
+        match result.strip_prefix("ERROR:") {
+            Some(err) => Err(err.to_string()),
+            None => Ok(()),
         }
     }
 

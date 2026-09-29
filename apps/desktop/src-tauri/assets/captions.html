@@ -5,10 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SherPresent Captions</title>
 <style>
+  /* Every value here is retuned live over the socket (see applySettings).
+     --size is unitless on purpose: it is multiplied by a length below, and
+     CSS rejects length x length, which silently voids the whole rule. */
   :root {
     --chroma: {{CHROMA}};
-    --size: {{FONT_SIZE}}px;
+    --size: {{FONT_SIZE}};
+    --lines: {{MAX_LINES}};
     --safe: {{SAFE}}%;
+    --width: {{WIDTH}}%;
+    --leading: 1.22;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -48,43 +54,54 @@
   }
 
   /* Type scales with the frame, not the window, so a 1280-wide preview and a
-     1920 program feed look identical. --size is calibrated at 1920 wide. */
-  #lines, #status {
-    font-size: calc(var(--size) * (100cqw / 1920));
-  }
+     1920 program feed look identical. --size is px at 1920 wide. */
+  #lines { font-size: calc(var(--size) * 100cqw / 1920); }
+  #status { font-size: calc(18 * 100cqw / 1920); }
 
   @supports not (container-type: size) {
     /* Fallback: vw-relative. Correct whenever the frame spans the viewport
        width, which is the common browser-source case. */
-    #lines, #status { font-size: calc(var(--size) * (100vw / 1920)); }
+    #lines { font-size: calc(var(--size) * 100vw / 1920); }
+    #status { font-size: calc(18 * 100vw / 1920); }
   }
 
+  /* A fixed window exactly --lines text rows tall, bottom-anchored: however
+     long a sentence runs, it wraps upward and the oldest rows clip off the
+     top, like broadcast roll-up captions. Counting segments instead let one
+     long sentence fill half the frame. No gap between lines, so rows stay on
+     a --leading grid and the clip always falls between rows, never mid-glyph. */
   #lines {
     position: absolute;
-    left: 10%;
-    right: 10%;
+    left: calc((100% - var(--width)) / 2);
+    width: var(--width);
     bottom: var(--safe);
+    height: calc(var(--lines) * var(--leading) * 1em);
+    overflow: hidden;
     display: flex;
     flex-direction: column;
+    justify-content: flex-end;
     align-items: center;
-    gap: 0.18em;
   }
 
   .line {
+    flex-shrink: 0;
     font-size: 1em;
-    line-height: 1.22;
+    line-height: var(--leading);
     font-weight: 650;
     text-align: center;
     color: #fff;
-    /* Shadow rather than a filled box: a translucent plate would pick up the
-       chroma colour underneath and key out with the background. A hard shadow
-       keys cleanly and still holds up over a busy source. */
+    text-wrap: balance;
+    /* Latency matters more than polish; no entry animation on the live line. */
+  }
+
+  /* Opt-in (Settings, or ?shadow=1). A shadow rather than a filled box: a
+     translucent plate would pick up the chroma colour underneath and key out
+     with the background. */
+  body.shadow .line {
     text-shadow:
       0 0 0.09em rgba(0, 0, 0, 0.95),
       0 0.035em 0.05em rgba(0, 0, 0, 0.9),
       0 0 0.28em rgba(0, 0, 0, 0.55);
-    text-wrap: balance;
-    /* Latency matters more than polish; no entry animation on the live line. */
   }
 
   .line .source {
@@ -92,7 +109,6 @@
     font-size: 0.62em;
     font-weight: 500;
     opacity: 0.8;
-    margin-bottom: 0.1em;
   }
 
   /* Connection trouble indicator. Deliberately tiny and in the top-left,
@@ -101,7 +117,6 @@
     position: absolute;
     top: 1.5%;
     left: 1.5%;
-    font-size: 0.22em;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -125,15 +140,42 @@
 <script>
 (function () {
   var params = new URLSearchParams(location.search);
-  var MAX_LINES = Math.max(1, Math.min(6, parseInt(params.get('lines') || '{{MAX_LINES}}', 10) || 2));
+  var root = document.documentElement.style;
   var SHOW_SOURCE = params.get('source') === '1' || params.get('text') === 'both';
   var TEXT_MODE = params.get('text') === 'source' ? 'source' : 'translated';
 
-  if ((params.get('bg') || '').toLowerCase() === 'transparent') {
-    document.body.classList.add('transparent');
+  // How many segments to keep in the DOM. The row-height window in CSS does
+  // the real limiting; this just bounds the work, generously, since a single
+  // segment is rarely shorter than one row.
+  var keepSegments = {{MAX_LINES}} * 2 + 2;
+
+  function setChroma(c) {
+    root.setProperty('--chroma', c);
+    document.body.classList.toggle('transparent', c === 'transparent');
   }
+  setChroma('{{CHROMA}}');
+
   if (params.get('clean') === '1') {
     document.body.classList.add('clean');
+  }
+  if (params.has('shadow')) {
+    document.body.classList.toggle('shadow', params.get('shadow') === '1');
+  }
+
+  // Live styling from Settings. The server already sanitized and clamped
+  // every field; anything pinned in the URL keeps its URL value, so an OBS
+  // source configured by hand is never retuned from the app.
+  function applySettings(s) {
+    if (!params.has('size') && s.fontSize) root.setProperty('--size', s.fontSize);
+    if (!params.has('lines') && s.maxLines) {
+      root.setProperty('--lines', s.maxLines);
+      keepSegments = s.maxLines * 2 + 2;
+      render();
+    }
+    if (!params.has('safe') && s.safeArea != null) root.setProperty('--safe', s.safeArea + '%');
+    if (!params.has('width') && s.width) root.setProperty('--width', s.width + '%');
+    if (!params.has('bg') && s.chromaColor) setChroma(s.chromaColor);
+    if (!params.has('shadow')) document.body.classList.toggle('shadow', !!s.shadow);
   }
 
   var linesEl = document.getElementById('lines');
@@ -164,7 +206,7 @@
   function render() {
     var shown = finals.slice();
     if (live && textOf(live).trim()) shown.push(live);
-    shown = shown.slice(-MAX_LINES);
+    shown = shown.slice(-keepSegments);
 
     linesEl.innerHTML = '';
     shown.forEach(function (seg) {
@@ -193,7 +235,7 @@
       } else {
         finals[finals.length - 1] = seg;
       }
-      if (finals.length > MAX_LINES + 2) finals = finals.slice(-(MAX_LINES + 2));
+      if (finals.length > keepSegments) finals = finals.slice(-keepSegments);
     } else {
       live = seg;
     }
@@ -250,14 +292,11 @@
       } else if (msg.type === 'status' && msg.status) {
         applyStatus(msg.status);
       } else if (msg.type === 'replay' && Array.isArray(msg.segments)) {
-        finals = msg.segments.slice(-(MAX_LINES + 2));
+        finals = msg.segments.slice(-keepSegments);
         live = null;
         render();
-      } else if (msg.type === 'settings' && msg.fontSize) {
-        // Settings' own font size, unless the URL pinned one explicitly.
-        if (!params.get('size')) {
-          document.documentElement.style.setProperty('--size', msg.fontSize + 'px');
-        }
+      } else if (msg.type === 'settings' && msg.settings) {
+        applySettings(msg.settings);
       }
     };
 

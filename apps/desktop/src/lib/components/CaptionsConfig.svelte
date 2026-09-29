@@ -18,6 +18,34 @@
     onchange({ ...config, [field]: value });
   }
 
+  /**
+   * Overlay styling: push to open overlays on every input tick, ahead of the
+   * debounced save, so the overlay tracks the control in real time. Previews
+   * are fire-and-forget — a dropped one is superseded by the next tick or the
+   * save that follows.
+   */
+  function live<K extends keyof CaptionsConfig>(field: K, value: CaptionsConfig[K]) {
+    const next = { ...config, [field]: value };
+    invoke('preview_caption_overlay', { captions: next }).catch(() => {});
+    onchange(next);
+  }
+
+  type OverlayField = 'fontSize' | 'maxLines' | 'safeArea' | 'width';
+  const overlaySliders: {
+    field: OverlayField;
+    label: string;
+    min: number;
+    max: number;
+    step: number;
+    unit: string;
+    hint: string;
+  }[] = [
+    { field: 'fontSize', label: 'Caption Font Size', min: 12, max: 240, step: 2, unit: 'px', hint: 'At 1080p — scales with the frame' },
+    { field: 'maxLines', label: 'Lines On Screen', min: 1, max: 6, step: 1, unit: '', hint: 'Rows of text — long sentences roll up' },
+    { field: 'safeArea', label: 'Bottom Safe Area', min: 0, max: 40, step: 0.5, unit: '%', hint: 'Gap below the captions, of frame height' },
+    { field: 'width', label: 'Caption Width', min: 20, max: 100, step: 1, unit: '%', hint: 'Of frame width, centred' }
+  ];
+
   function updateKey(provider: CaptionApiKeyProviderId, value: string) {
     onchange({ ...config, apiKeys: { ...config.apiKeys, [provider]: value.trim() } });
   }
@@ -261,33 +289,25 @@
       </select>
     </div>
 
-    <div class="field">
-      <label class="label" for="cap-font-size">Caption Font Size</label>
-      <input
-        id="cap-font-size"
-        type="number"
-        class="input"
-        min="12"
-        max="240"
-        step="2"
-        value={config.fontSize}
-        onchange={(e) => update('fontSize', parseInt(e.currentTarget.value) || 56)}
-      />
-      <span class="hint">px at 1080p — scales with the frame</span>
-    </div>
-
-    <div class="field">
-      <label class="label" for="cap-max-lines">Lines On Screen</label>
-      <input
-        id="cap-max-lines"
-        type="number"
-        class="input"
-        min="1"
-        max="6"
-        value={config.maxLines}
-        onchange={(e) => update('maxLines', parseInt(e.currentTarget.value) || 2)}
-      />
-    </div>
+    {#each overlaySliders as s (s.field)}
+      <div class="field">
+        <div class="slider-header">
+          <label class="label" for="cap-{s.field}">{s.label}</label>
+          <span class="slider-value">{config[s.field]}{s.unit}</span>
+        </div>
+        <input
+          id="cap-{s.field}"
+          type="range"
+          class="slider"
+          min={s.min}
+          max={s.max}
+          step={s.step}
+          value={config[s.field]}
+          oninput={(e) => live(s.field, e.currentTarget.valueAsNumber)}
+        />
+        <span class="hint">{s.hint}</span>
+      </div>
+    {/each}
 
     <div class="field span">
       <label class="label" for="cap-chroma">Key Colour</label>
@@ -297,18 +317,28 @@
           type="color"
           class="swatch"
           value={config.chromaColor.startsWith('#') ? config.chromaColor : '#00B140'}
-          onchange={(e) => update('chromaColor', e.currentTarget.value)}
+          oninput={(e) => live('chromaColor', e.currentTarget.value)}
         />
         <input
           type="text"
           class="input"
           aria-label="Key colour hex value"
           value={config.chromaColor}
-          onchange={(e) => update('chromaColor', e.currentTarget.value.trim() || '#00B140')}
+          onchange={(e) => live('chromaColor', e.currentTarget.value.trim() || '#00B140')}
         />
       </div>
       <span class="hint">#00B140 is broadcast green. Use "transparent" for OBS browser sources</span>
     </div>
+
+    <label class="field span check-row">
+      <input
+        type="checkbox"
+        checked={config.shadow}
+        onchange={(e) => live('shadow', e.currentTarget.checked)}
+      />
+      <span class="label">Text drop shadow</span>
+      <span class="hint">Helps over busy, bright sources; off keys cleanest</span>
+    </label>
   </div>
 </div>
 
@@ -433,6 +463,30 @@
     align-items: center;
   }
 
+  .check-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .slider-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  .slider-value {
+    font-size: 0.75rem;
+    font-family: monospace;
+    font-variant-numeric: tabular-nums;
+    color: #333;
+  }
+
+  .slider {
+    width: 100%;
+    accent-color: #007aff;
+  }
+
   .swatch {
     width: 3rem;
     height: 2.25rem;
@@ -463,6 +517,10 @@
 
     .status-text {
       color: #bbb;
+    }
+
+    .slider-value {
+      color: #ddd;
     }
 
     .status-dot {

@@ -1185,7 +1185,7 @@ mod fake_sidecar_tests {
     use tokio::sync::mpsc;
 
     /// `SHERPRESENT_SPEECH_BIN` is process-global, so sessions must not overlap.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     static SCRIPT_SEQ: AtomicU32 = AtomicU32::new(0);
 
     fn write_script(body: &str) -> PathBuf {
@@ -1228,7 +1228,7 @@ mod fake_sidecar_tests {
         }
     }
 
-    fn start(body: &str, guard: &std::sync::MutexGuard<'_, ()>) -> Harness {
+    fn start(body: &str, guard: &tokio::sync::MutexGuard<'_, ()>) -> Harness {
         let _ = guard;
         let script = write_script(body);
         std::env::set_var(SIDECAR_ENV, &script);
@@ -1256,7 +1256,7 @@ mod fake_sidecar_tests {
 
     #[tokio::test]
     async fn test_happy_path_emits_replace_then_turn_complete() {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().await;
         // `cat` at the end keeps the helper alive until stdin closes, the way a
         // real streaming session behaves.
         let mut h = start(
@@ -1309,7 +1309,7 @@ cat > /dev/null
 
     #[tokio::test]
     async fn test_exit_before_ready_is_fatal_and_stops() {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().await;
         let h = start(
             r#"
 echo '[error] could not load the speech model' >&2
@@ -1333,7 +1333,7 @@ exit 1
 
     #[tokio::test]
     async fn test_missing_language_pack_is_fatal_with_the_operator_message() {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().await;
         let h = start(
             r#"
 echo '{"type":"error","code":"translationNotInstalled","fatal":true,"message":"French is not installed. Open System Settings > General > Language & Region > Translation Languages."}'
@@ -1354,7 +1354,7 @@ exit 3
 
     #[tokio::test]
     async fn test_crash_after_ready_commits_the_line_and_respawns() {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().await;
         let mut h = start(
             r#"
 echo '{"type":"ready","protocol":1}'
@@ -1392,7 +1392,7 @@ exit 1
 
     #[tokio::test]
     async fn test_malformed_lines_do_not_end_the_session() {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().await;
         let mut h = start(
             r#"
 echo '{"type":"ready","protocol":1}'
@@ -1421,7 +1421,7 @@ cat > /dev/null
 
     #[tokio::test]
     async fn test_capture_stopping_is_a_clean_shutdown() {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().await;
         let mut h = start(
             r#"
 echo '{"type":"ready","protocol":1}'
@@ -1451,7 +1451,7 @@ cat > /dev/null
 
     #[tokio::test]
     async fn test_bad_override_path_is_fatal() {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().await;
         let _ = &guard;
         std::env::set_var(SIDECAR_ENV, "/nonexistent/sherpresent-speech");
 

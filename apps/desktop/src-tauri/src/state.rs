@@ -2,9 +2,9 @@ use sherpresent_core::DiscoveryService;
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
 use crate::captions::{
-    CaptionEngine, CaptionSegment, CaptionSinks, CaptionStatus, CaptionUpdate,
+    CaptionEngine, CaptionSegment, CaptionSinks, CaptionStatus, CaptionUpdate, OverlaySettings,
 };
-use crate::config::{default_caption_font_size, AdapterConfig};
+use crate::config::AdapterConfig;
 use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -76,9 +76,9 @@ pub struct AppState {
     /// Latest caption engine status, for the REST/initial-WS snapshot
     pub caption_status: Arc<Mutex<CaptionStatus>>,
 
-    /// Live overlay font size, synced from config at startup and on every
-    /// save; see `CaptionSinks::font_size` for why this is a `watch` channel.
-    pub caption_font_size: tokio::sync::watch::Sender<u16>,
+    /// Live overlay styling, synced from config at startup, on every save, and
+    /// on every preview tick from Settings; see `CaptionSinks::overlay`.
+    pub caption_overlay: tokio::sync::watch::Sender<OverlaySettings>,
 }
 
 impl AppState {
@@ -88,7 +88,7 @@ impl AppState {
             broadcast: self.caption_broadcast.clone(),
             buffer: self.caption_buffer.clone(),
             status: self.caption_status.clone(),
-            font_size: self.caption_font_size.clone(),
+            overlay: self.caption_overlay.clone(),
         }
     }
 }
@@ -115,7 +115,7 @@ impl Default for AppState {
             caption_broadcast: tokio::sync::broadcast::channel(64).0,
             caption_buffer: Arc::new(Mutex::new(VecDeque::new())),
             caption_status: Arc::new(Mutex::new(CaptionStatus::default())),
-            caption_font_size: tokio::sync::watch::channel(default_caption_font_size()).0,
+            caption_overlay: tokio::sync::watch::channel(OverlaySettings::default()).0,
         }
     }
 }

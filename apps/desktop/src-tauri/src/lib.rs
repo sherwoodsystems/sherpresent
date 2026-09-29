@@ -95,6 +95,7 @@ pub fn run() {
             commands::captions::is_captions_running,
             commands::captions::get_caption_status,
             commands::captions::get_captions_url,
+            commands::captions::preview_caption_overlay,
             commands::captions::check_apple_captions_support,
             commands::captions::open_translation_settings,
             // Debug
@@ -119,12 +120,14 @@ pub fn run() {
                 *ac = config.adapter_config.clone();
             }
 
-            // Sync the persisted caption font size into the live channel the
+            // Sync the persisted overlay styling into the live channel the
             // web server reads from, so the overlay reflects it from the
             // first page load rather than a hardcoded default.
             {
                 let state = app.state::<AppState>();
-                let _ = state.caption_font_size.send(config.captions.font_size);
+                state
+                    .caption_overlay
+                    .send_replace(captions::OverlaySettings::from_config(&config.captions));
             }
 
             let app_handle = app.handle().clone();
@@ -262,7 +265,6 @@ pub fn run() {
             {
                 let app_handle3 = app.handle().clone();
                 let web_server_config = config.web_server.clone();
-                let captions_config = config.captions.clone();
 
                 tauri::async_runtime::spawn(async move {
                     log::info!("Auto-starting web server on port {}", web_server_config.port);
@@ -283,7 +285,6 @@ pub fn run() {
                         scroll_broadcast,
                         state_manager,
                         caption_sinks,
-                        &captions_config,
                     )
                     .await
                     {

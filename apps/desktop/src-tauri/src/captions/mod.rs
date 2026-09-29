@@ -74,6 +74,75 @@ pub struct CaptionStatus {
     pub translate_enabled: bool,
 }
 
+/// Everything the `/captions` overlay page renders with, pushed live over its
+/// socket so a Settings change restyles open overlays without a reload.
+///
+/// Clamped and sanitized here, once, because it reaches a stylesheet: the page
+/// drops these straight into CSS custom properties.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlaySettings {
+    /// px at a 1920-wide frame; the page scales it with the frame
+    pub font_size: u16,
+    /// Visual rows of text on screen, not caption segments: one long sentence
+    /// can wrap to several rows, and those count.
+    pub max_lines: u8,
+    /// `#rrggbb` / `#rgb` / `transparent`
+    pub chroma_color: String,
+    /// % of frame height
+    pub safe_area: f32,
+    /// % of frame width
+    pub width: f32,
+    pub shadow: bool,
+}
+
+impl OverlaySettings {
+    pub fn from_config(c: &CaptionsConfig) -> Self {
+        Self {
+            font_size: c.font_size.clamp(12, 240),
+            max_lines: c.max_lines.clamp(1, 6),
+            chroma_color: sanitize_chroma(&c.chroma_color),
+            safe_area: finite_clamp(c.safe_area, 0.0, 40.0, 5.0),
+            width: finite_clamp(c.width, 20.0, 100.0, 80.0),
+            shadow: c.shadow,
+        }
+    }
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        Self::from_config(&CaptionsConfig::default())
+    }
+}
+
+/// `f32::clamp` passes NaN through, and NaN in a CSS `calc()` voids the rule.
+pub(crate) fn finite_clamp(v: f32, min: f32, max: f32, fallback: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(min, max)
+    } else {
+        fallback
+    }
+}
+
+/// Normalize a colour into something safe to drop into a CSS declaration.
+///
+/// Only `#rgb` / `#rrggbb` / `transparent` are accepted; anything else falls
+/// back to broadcast green. This is a stylesheet injection guard, since the
+/// value reaches the page from both config and an untrusted query string.
+pub(crate) fn sanitize_chroma(raw: &str) -> String {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("transparent") {
+        return "transparent".to_string();
+    }
+
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    if matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("#{}", hex)
+    } else {
+        "#00B140".to_string()
+    }
+}
+
 /// A message published to the overlay page.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -88,10 +157,10 @@ pub struct CaptionSinks {
     pub broadcast: tokio::sync::broadcast::Sender<CaptionUpdate>,
     pub buffer: Arc<Mutex<VecDeque<CaptionSegment>>>,
     pub status: Arc<Mutex<CaptionStatus>>,
-    /// Live overlay font size in px. A `watch` channel rather than a plain
-    /// value so the web server can both read it fresh on every page load and
-    /// push updates to already-open overlay tabs without a restart.
-    pub font_size: tokio::sync::watch::Sender<u16>,
+    /// Live overlay styling. A `watch` channel rather than a plain value so the
+    /// web server can both read it fresh on every page load and push updates
+    /// to already-open overlay tabs without a restart.
+    pub overlay: tokio::sync::watch::Sender<OverlaySettings>,
 }
 
 impl CaptionSinks {
@@ -395,6 +464,40 @@ impl Default for CaptionStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_overlay_settings_clamp_and_sanitize() {
+        let cfg = CaptionsConfig {
+            font_size: 9999,
+            max_lines: 0,
+            chroma_color: "red; } body { display:none".into(),
+            safe_area: f32::NAN,
+            width: 5.0,
+            ..CaptionsConfig::default()
+        };
+        let s = OverlaySettings::from_config(&cfg);
+        assert_eq!(s.font_size, 240);
+        assert_eq!(s.max_lines, 1);
+        assert_eq!(s.chroma_color, "#00B140");
+        assert_eq!(s.safe_area, 5.0);
+        assert_eq!(s.width, 20.0);
+    }
+
+    #[test]
+    fn test_overlay_settings_serialize_camel_case() {
+        let json = serde_json::to_value(OverlaySettings::default()).unwrap();
+        for key in ["fontSize", "maxLines", "chromaColor", "safeArea", "width", "shadow"] {
+            assert!(json.get(key).is_some(), "missing {key}");
+        }
+    }
+
+    #[test]
+    fn test_sanitize_chroma() {
+        assert_eq!(sanitize_chroma("TRANSPARENT"), "transparent");
+        assert_eq!(sanitize_chroma("0f0"), "#0f0");
+        assert_eq!(sanitize_chroma("#00b140"), "#00b140");
+        assert_eq!(sanitize_chroma("url(x)"), "#00B140");
+    }
 
     #[test]
     fn test_segment_serializes_final_not_is_final() {
