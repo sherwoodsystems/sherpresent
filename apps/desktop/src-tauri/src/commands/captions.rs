@@ -137,3 +137,12 @@ pub fn preview_caption_overlay(
         }
     });
 }
+
+/// Status of the native caption outputs (Syphon), for Settings. Changes are
+/// also pushed as `caption-outputs-status` events.
+#[tauri::command]
+pub fn get_caption_outputs_status(
+    state: tauri::State<'_, AppState>,
+) -> captions::output::OutputsStatus {
+    state.caption_outputs.lock().unwrap().status()
+}

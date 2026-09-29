@@ -18,5 +18,13 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
         .caption_overlay
         .send_replace(crate::captions::OverlaySettings::from_config(&config.captions));
 
+    // Start/stop/rename native outputs to match; unchanged ones are untouched.
+    let sinks = state.caption_sinks();
+    state
+        .caption_outputs
+        .lock()
+        .unwrap()
+        .reconcile(&app, &sinks, &config.captions.outputs);
+
     Ok(())
 }

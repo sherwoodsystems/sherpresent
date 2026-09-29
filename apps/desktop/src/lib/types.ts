@@ -146,6 +146,35 @@ export interface CaptionApiKeys {
 }
 
 /** Live caption / translation configuration */
+/** Native caption outputs. NDI would be a sibling of `syphon`. */
+export interface CaptionOutputsConfig {
+  syphon: SyphonOutputConfig;
+}
+
+/** Transparent 1920x1080 caption frames over Syphon (macOS) */
+export interface SyphonOutputConfig {
+  enabled: boolean;
+  /** Name receivers list the source under */
+  serverName: string;
+}
+
+export type CaptionOutputState = 'stopped' | 'starting' | 'running' | 'error';
+
+export interface CaptionOutputStatus {
+  /** Whether this machine can run the output at all */
+  supported: boolean;
+  state: CaptionOutputState;
+  name: string;
+  /** Whether any receiver is connected right now */
+  hasClients: boolean;
+  message: string | null;
+}
+
+/** Payload of `get_caption_outputs_status` and the `caption-outputs-status` event */
+export interface CaptionOutputsStatus {
+  syphon: CaptionOutputStatus;
+}
+
 export interface CaptionsConfig {
   /** Auto-start captions on app launch */
   enabled: boolean;
@@ -168,6 +197,8 @@ export interface CaptionsConfig {
   width: number;
   /** Drop shadow behind caption text (default off) */
   shadow: boolean;
+  /** Native video outputs beyond the always-on web overlay */
+  outputs: CaptionOutputsConfig;
   apiKeys: CaptionApiKeys;
 }
 
@@ -322,6 +353,7 @@ export const defaultConfig: AppConfig = {
     safeArea: 5,
     width: 80,
     shadow: false,
+    outputs: { syphon: { enabled: false, serverName: 'SherPresent Captions' } },
     apiKeys: { gemini: '', openai: '' }
   }
 };

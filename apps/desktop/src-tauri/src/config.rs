@@ -224,8 +224,44 @@ pub struct CaptionsConfig {
     /// best; the shadow is for keying over busy, bright sources.
     #[serde(default)]
     pub shadow: bool,
+    /// Video outputs beyond the always-on web overlay
+    #[serde(default)]
+    pub outputs: CaptionOutputsConfig,
     #[serde(rename = "apiKeys", default)]
     pub api_keys: CaptionApiKeys,
+}
+
+/// Caption video outputs. The web overlay is always served and isn't listed;
+/// each entry here is an optional native output with its own helper process.
+/// NDI would be a sibling of `syphon`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CaptionOutputsConfig {
+    #[serde(default)]
+    pub syphon: SyphonOutputConfig,
+}
+
+/// Transparent 1920x1080 caption frames over Syphon (macOS only), for OBS,
+/// Resolume, QLab and other receivers on the same Mac.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SyphonOutputConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Name receivers list the source under
+    #[serde(rename = "serverName", default = "default_syphon_server_name")]
+    pub server_name: String,
+}
+
+fn default_syphon_server_name() -> String {
+    "SherPresent Captions".to_string()
+}
+
+impl Default for SyphonOutputConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_name: default_syphon_server_name(),
+        }
+    }
 }
 
 /// Apple on-device when this Mac can actually run it (macOS 26+, Apple
@@ -284,6 +320,7 @@ impl Default for CaptionsConfig {
             safe_area: default_caption_safe_area(),
             width: default_caption_width(),
             shadow: false,
+            outputs: CaptionOutputsConfig::default(),
             api_keys: CaptionApiKeys::default(),
         }
     }

@@ -1,7 +1,10 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import type {
     AppleCaptionSupport,
+    CaptionOutputsStatus,
+    SyphonOutputConfig,
     CaptionApiKeyProviderId,
     CaptionsConfig,
     CaptionProviderId
@@ -45,6 +48,47 @@
     { field: 'safeArea', label: 'Bottom Safe Area', min: 0, max: 40, step: 0.5, unit: '%', hint: 'Gap below the captions, of frame height' },
     { field: 'width', label: 'Caption Width', min: 20, max: 100, step: 1, unit: '%', hint: 'Of frame width, centred' }
   ];
+
+  function updateSyphon(patch: Partial<SyphonOutputConfig>) {
+    onchange({
+      ...config,
+      outputs: { ...config.outputs, syphon: { ...config.outputs.syphon, ...patch } }
+    });
+  }
+
+  // Output status is pushed from Rust as receivers connect and disconnect.
+  let outputs = $state<CaptionOutputsStatus | null>(null);
+  $effect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    invoke<CaptionOutputsStatus>('get_caption_outputs_status')
+      .then((s) => (outputs = s))
+      .catch(() => {});
+    listen<CaptionOutputsStatus>('caption-outputs-status', (e) => (outputs = e.payload)).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  });
+
+  const syphon = $derived(outputs?.syphon);
+  const syphonSummary = $derived.by(() => {
+    if (!syphon) return '';
+    if (!config.outputs.syphon.enabled) return 'Off';
+    switch (syphon.state) {
+      case 'running':
+        return syphon.hasClients ? 'Publishing — receiver connected' : 'Publishing — no receivers yet';
+      case 'starting':
+        return 'Starting…';
+      case 'error':
+        return syphon.message ?? 'Error';
+      default:
+        return 'Stopped';
+    }
+  });
 
   function updateKey(provider: CaptionApiKeyProviderId, value: string) {
     onchange({ ...config, apiKeys: { ...config.apiKeys, [provider]: value.trim() } });
@@ -340,6 +384,54 @@
       <span class="hint">Helps over busy, bright sources; off keys cleanest</span>
     </label>
   </div>
+
+  <h4 class="sub-title">Video Outputs</h4>
+  <div class="grid">
+    <div class="field span">
+      <span class="label">Web Overlay</span>
+      <span class="hint">Always on at <code>/captions</code> — a browser source or fullscreen browser, keyed on the colour above</span>
+    </div>
+
+    {#if syphon?.supported}
+      <label class="field span check-row">
+        <input
+          type="checkbox"
+          checked={config.outputs.syphon.enabled}
+          onchange={(e) => updateSyphon({ enabled: e.currentTarget.checked })}
+        />
+        <span class="label">Syphon</span>
+        <span class="hint">Text only, on real transparency — no key needed. 1920×1080.</span>
+      </label>
+
+      {#if config.outputs.syphon.enabled}
+        <div class="field span">
+          <label class="label" for="cap-syphon-name">Syphon Source Name</label>
+          <input
+            id="cap-syphon-name"
+            class="input"
+            value={config.outputs.syphon.serverName}
+            onchange={(e) =>
+              updateSyphon({ serverName: e.currentTarget.value.trim() || 'SherPresent Captions' })}
+          />
+          <div class="status-row">
+            <span
+              class="status-dot"
+              class:ok={syphon.state === 'running' && syphon.hasClients}
+              class:idle={syphon.state === 'running' && !syphon.hasClients}
+              class:bad={syphon.state === 'error'}
+            ></span>
+            <span class="status-text">{syphonSummary}</span>
+          </div>
+          <span class="hint">Pick it in OBS (Syphon Client source), Resolume, QLab, Millumin…</span>
+        </div>
+      {/if}
+    {:else if syphon}
+      <div class="field span">
+        <span class="label">Syphon</span>
+        <span class="hint">Needs an Apple Silicon Mac</span>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -433,6 +525,21 @@
     background: #b8860b;
   }
 
+  .status-dot.idle {
+    background: #8e8e93;
+  }
+
+  .status-dot.bad {
+    background: #ff3b30;
+  }
+
+  .sub-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #333;
+    margin: 0.5rem 0 0;
+  }
+
   .status-dot.ok {
     background: #34c759;
   }
@@ -521,6 +628,10 @@
 
     .slider-value {
       color: #ddd;
+    }
+
+    .sub-title {
+      color: #eee;
     }
 
     .status-dot {

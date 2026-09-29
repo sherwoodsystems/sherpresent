@@ -1,6 +1,7 @@
 use sherpresent_core::DiscoveryService;
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
+use crate::captions::output::CaptionOutputs;
 use crate::captions::{
     CaptionEngine, CaptionSegment, CaptionSinks, CaptionStatus, CaptionUpdate, OverlaySettings,
 };
@@ -79,6 +80,9 @@ pub struct AppState {
     /// Live overlay styling, synced from config at startup, on every save, and
     /// on every preview tick from Settings; see `CaptionSinks::overlay`.
     pub caption_overlay: tokio::sync::watch::Sender<OverlaySettings>,
+
+    /// Native caption video outputs (Syphon), reconciled against config
+    pub caption_outputs: Mutex<CaptionOutputs>,
 }
 
 impl AppState {
@@ -116,6 +120,7 @@ impl Default for AppState {
             caption_buffer: Arc::new(Mutex::new(VecDeque::new())),
             caption_status: Arc::new(Mutex::new(CaptionStatus::default())),
             caption_overlay: tokio::sync::watch::channel(OverlaySettings::default()).0,
+            caption_outputs: Mutex::new(CaptionOutputs::default()),
         }
     }
 }

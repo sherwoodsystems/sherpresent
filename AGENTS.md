@@ -72,6 +72,25 @@ Pin any value per-URL (a pinned value ignores live updates):
 `/captions?bg=00b140&size=64&lines=2&safe=5&width=80&shadow=1`, plus
 `bg=transparent` for OBS, `text=source|both` and `clean=1`.
 
+**Native outputs** (`captions/output/`): optional video outputs alongside the
+web overlay, each a helper process fed the *same* NDJSON the overlay socket
+carries (segments, replay, status, `OverlaySettings`), so they match it line
+for line. `CaptionOutputs::reconcile` starts/stops/renames them on startup and
+every `save_config`; they run independently of the caption engine so
+receivers stay wired up between talks. Status is pushed as
+`caption-outputs-status`.
+
+- `output/syphon.rs` drives `sherpresent-output`
+  (`apps/desktop/sidecars/caption-output-macos/`): Core Text render onto a
+  transparent 1920x1080 IOSurface, published via a vendored, source-built
+  Syphon (`Sources/Syphon/VENDORED.md` — one patch, shaders compiled at
+  runtime so no Xcode is needed). macOS 13+, Apple Silicon.
+  `SHERPRESENT_OUTPUT_BIN` overrides discovery.
+- Adding NDI: a `FrameSink` in the helper (or a Rust sender for
+  cross-platform) plus a sibling config entry. See the helper README.
+- `syphon-probe` (dev-only target in that package) receives a frame and prints
+  alpha stats — the end-to-end check.
+
 **Providers**: `apple` is the default on a capable Mac (macOS 26+, Apple
 Silicon; free/offline/no key) — `config::default_caption_provider` picks it via
 `apple::is_platform_supported`. `gemini` (cross-platform, billed) is the

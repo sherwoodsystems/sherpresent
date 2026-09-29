@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build the Swift speech sidecar and stage it where Tauri's externalBin expects.
+# Build the Swift sidecars (speech recognition, caption video output) and stage
+# them where Tauri's externalBin expects.
 #
 # Deliberately NOT wired into build.rs: day-to-day development happens on Linux,
 # and a Swift step in the Cargo graph would break `cargo build`/`cargo test`
@@ -14,11 +15,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-PKG="$ROOT/apps/desktop/sidecars/speech-macos"
 OUT="$ROOT/apps/desktop/src-tauri/binaries"
 
 # Apple Silicon only: the on-device Speech and Translation models effectively
-# require it, and apple.rs preflights the architecture with a clear message.
+# require it, and apple.rs / output/syphon.rs preflight the architecture with a
+# clear message.
 TRIPLE="aarch64-apple-darwin"
 
 if ! command -v swift >/dev/null 2>&1; then
@@ -26,19 +27,25 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Building sherpresent-speech (release, arm64)…"
-swift build --package-path "$PKG" -c release --arch arm64
-
-BIN_DIR="$(swift build --package-path "$PKG" -c release --arch arm64 --show-bin-path)"
-BIN="$BIN_DIR/sherpresent-speech"
-
-if [[ ! -f "$BIN" ]]; then
-  echo "error: expected binary not found at $BIN" >&2
-  exit 1
-fi
-
 mkdir -p "$OUT"
-cp "$BIN" "$OUT/sherpresent-speech-$TRIPLE"
-chmod +x "$OUT/sherpresent-speech-$TRIPLE"
 
-echo "Sidecar staged at $OUT/sherpresent-speech-$TRIPLE"
+# build <package dir> <product>
+build() {
+  local pkg="$ROOT/apps/desktop/sidecars/$1" product="$2"
+  echo "Building $product (release, arm64)…"
+  swift build --package-path "$pkg" -c release --arch arm64 --product "$product"
+
+  local bin_dir
+  bin_dir="$(swift build --package-path "$pkg" -c release --arch arm64 --show-bin-path)"
+  if [[ ! -f "$bin_dir/$product" ]]; then
+    echo "error: expected binary not found at $bin_dir/$product" >&2
+    exit 1
+  fi
+
+  cp "$bin_dir/$product" "$OUT/$product-$TRIPLE"
+  chmod +x "$OUT/$product-$TRIPLE"
+  echo "Staged $OUT/$product-$TRIPLE"
+}
+
+build speech-macos sherpresent-speech
+build caption-output-macos sherpresent-output

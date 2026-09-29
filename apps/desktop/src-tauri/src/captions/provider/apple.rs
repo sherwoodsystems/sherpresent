@@ -594,21 +594,7 @@ fn preflight() -> Result<PathBuf, String> {
 }
 
 fn sidecar_override() -> Result<Option<PathBuf>, String> {
-    let Ok(raw) = std::env::var(SIDECAR_ENV) else {
-        return Ok(None);
-    };
-    if raw.trim().is_empty() {
-        return Ok(None);
-    }
-    let path = PathBuf::from(raw);
-    if !path.is_file() {
-        return Err(format!(
-            "{} points at a missing file: {}",
-            SIDECAR_ENV,
-            path.display()
-        ));
-    }
-    Ok(Some(path))
+    crate::sidecar::env_override(SIDECAR_ENV)
 }
 
 /// Whether this machine can run the Apple on-device provider at all — used to
@@ -678,36 +664,14 @@ fn parse_macos_major(product_version: &str) -> Option<u32> {
         .ok()
 }
 
-/// Locate the bundled helper.
-///
-/// Tauri copies `externalBin` entries — with the target-triple suffix stripped
-/// — next to the app executable: `target/debug/` under `tauri dev`,
-/// `SherPresent.app/Contents/MacOS/` when bundled. `current_exe` covers both,
-/// which is what `tauri-plugin-shell` does internally; resolving it here avoids
-/// taking on the plugin and its capability wiring for one spawn.
+/// Locate the bundled speech helper; see [`crate::sidecar::resolve_bundled`].
 pub(crate) fn resolve_bundled_sidecar() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {}", e))?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| "app executable has no parent directory".to_string())?;
-
-    let sibling = dir.join(SIDECAR_NAME);
-    if sibling.is_file() {
-        return Ok(sibling);
-    }
-
-    // Fallback in case the bundling strategy moves to `bundle.resources`.
-    let resources = dir.join("../Resources").join(SIDECAR_NAME);
-    if resources.is_file() {
-        return Ok(resources);
-    }
-
-    Err(format!(
-        "The Apple speech helper '{}' is missing from this build (looked in {}). \
-         Rebuild with `bun run macos:sidecar`, or select Gemini in Settings.",
-        SIDECAR_NAME,
-        dir.display()
-    ))
+    crate::sidecar::resolve_bundled(SIDECAR_NAME).map_err(|e| {
+        format!(
+            "Apple speech: {} Rebuild with `bun run macos:sidecar`, or select Gemini in Settings.",
+            e
+        )
+    })
 }
 
 /// Result of `--probe`, surfaced to Settings so the operator can see why the

@@ -19,6 +19,7 @@ use tokio::sync::{mpsc, watch};
 use crate::config::CaptionsConfig;
 
 pub mod audio;
+pub mod output;
 pub mod provider;
 
 use provider::{ProviderConfig, ProviderEvent};

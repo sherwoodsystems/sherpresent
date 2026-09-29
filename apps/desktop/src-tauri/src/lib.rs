@@ -5,6 +5,7 @@ mod captions;
 mod config;
 mod generated_constants;
 mod osc;
+mod sidecar;
 mod state;
 mod commands;
 mod webserver;
@@ -96,6 +97,7 @@ pub fn run() {
             commands::captions::get_caption_status,
             commands::captions::get_captions_url,
             commands::captions::preview_caption_overlay,
+            commands::captions::get_caption_outputs_status,
             commands::captions::check_apple_captions_support,
             commands::captions::open_translation_settings,
             // Debug
@@ -128,6 +130,15 @@ pub fn run() {
                 state
                     .caption_overlay
                     .send_replace(captions::OverlaySettings::from_config(&config.captions));
+
+                // Native outputs run independently of the caption engine, so a
+                // receiver stays wired up (showing transparency) between talks.
+                let sinks = state.caption_sinks();
+                state
+                    .caption_outputs
+                    .lock()
+                    .unwrap()
+                    .reconcile(app.handle(), &sinks, &config.captions.outputs);
             }
 
             let app_handle = app.handle().clone();
@@ -370,7 +381,12 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = window.set_focus();
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                // Let the output helper close its Syphon server cleanly;
+                // receivers otherwise see the source vanish mid-frame.
+                app.state::<AppState>().caption_outputs.lock().unwrap().stop_all();
+                app.exit(0)
+            }
             _ => {}
         })
         .build(app)?;
