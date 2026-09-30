@@ -57,6 +57,33 @@ pub fn get_local_ip() -> Option<String> {
     Some(addr.ip().to_string())
 }
 
+/// This machine's name, for labelling it when no display name is set.
+///
+/// Read-only: macOS reports `Name.local` while on a network, so the suffix is
+/// dropped for display.
+fn machine_name() -> String {
+    let name = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    name.strip_suffix(".local").map(str::to_string).unwrap_or(name)
+}
+
+/// The mDNS host name our service record points at.
+///
+/// Deliberately *not* the machine's own `<hostname>.local.`: that name belongs
+/// to the OS responder (mDNSResponder on macOS, Avahi on Linux). Answering for
+/// it from a second responder is a name conflict, and the OS resolves it by
+/// renaming the machine (`MyMac-2.local`, `-3`, ...). A per-instance name only
+/// we answer for resolves peers just as well.
+fn mdns_host_name(instance_id: &str) -> String {
+    let short_id: String = instance_id
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(8)
+        .collect();
+    format!("sherpresent-{}.local.", short_id.to_lowercase())
+}
+
 /// Get all available network interfaces for mDNS.
 /// Returns non-loopback IPv4 interfaces.
 pub fn get_network_interfaces() -> Vec<NetworkInterface> {
@@ -156,7 +183,8 @@ pub struct DiscoveryService {
     extra_properties: Vec<(String, String)>,
     /// Our assigned display ID
     our_display_id: Arc<Mutex<u8>>,
-    /// Discovered peers (keyed by instance_id)
+    /// Discovered peers, keyed by mDNS service fullname: `ServiceRemoved`
+    /// carries only the fullname, and the instance id isn't recoverable from it.
     peers: Arc<Mutex<HashMap<String, DiscoveredPeer>>>,
     /// Display ID assignments (instance_id -> display_id)
     display_id_map: Arc<Mutex<HashMap<String, u8>>>,
@@ -282,30 +310,17 @@ impl DiscoveryService {
             return Ok(());
         }
 
-        // Get hostname for service registration
-        let host_name = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
+        let mdns_hostname = mdns_host_name(&self.instance_id);
 
-        // Format hostname for mDNS (must end with .local.)
-        let mdns_hostname = format!("{}.local.", host_name);
-
-        // Use display_name or hostname as the service name for human-readable
-        // mDNS discovery (e.g., in Companion's device dropdown).
+        // Use display_name or the machine name as the service name for
+        // human-readable mDNS discovery (e.g., in Companion's device dropdown).
         // Append a short instance suffix to ensure uniqueness across instances.
+        let name_value = self.display_name.clone().unwrap_or_else(machine_name);
         let short_id = &self.instance_id[..8.min(self.instance_id.len())];
-        let base_name = self
-            .display_name
-            .clone()
-            .unwrap_or_else(|| host_name.clone());
-        let service_name = format!("{} ({})", base_name, short_id);
+        let service_name = format!("{} ({})", name_value, short_id);
 
         // Create TXT record properties.
         // Baseline set: version, instance, name. Then any extras (config_port, etc.).
-        let name_value = self
-            .display_name
-            .clone()
-            .unwrap_or_else(|| host_name.clone());
 
         let mut properties: Vec<(String, String)> = Vec::with_capacity(3 + self.extra_properties.len());
         properties.push(("version".to_string(), self.version.clone()));
@@ -503,10 +518,12 @@ impl DiscoveryService {
                     peer.config_port,
                 );
 
-                // Add to peers
+                // Add to peers. A peer that re-registered under a new
+                // name (display name change) replaces its old entry.
                 {
                     let mut peers_lock = peers.lock().unwrap();
-                    peers_lock.insert(instance_id, peer);
+                    peers_lock.retain(|_, p| p.instance_id != instance_id);
+                    peers_lock.insert(info.get_fullname().to_string(), peer);
                 }
 
                 // Notify listeners
@@ -514,20 +531,12 @@ impl DiscoveryService {
             }
 
             ServiceEvent::ServiceRemoved(_, fullname) => {
-                // Extract instance_id from fullname (format: "instance_id._sher-present._udp.local.")
-                let instance_id = fullname
-                    .split('.')
-                    .next()
-                    .unwrap_or(&fullname)
-                    .to_string();
-
-                log::info!("Peer removed: {}", instance_id);
-
                 // Remove from peers (but keep display_id assignment for stability)
-                {
-                    let mut peers_lock = peers.lock().unwrap();
-                    peers_lock.remove(&instance_id);
-                }
+                let removed = peers.lock().unwrap().remove(&fullname);
+                let Some(peer) = removed else {
+                    return;
+                };
+                log::info!("Peer removed: {} ({})", fullname, peer.instance_id);
 
                 // Notify listeners
                 Self::notify_peers(peers, peer_tx).await;
@@ -573,11 +582,7 @@ impl DiscoveryService {
         let our_display_id = *self.our_display_id.lock().unwrap();
         let our_peer = DiscoveredPeer {
             instance_id: self.instance_id.clone(),
-            display_name: self.display_name.clone().or_else(|| {
-                hostname::get()
-                    .map(|h| h.to_string_lossy().to_string())
-                    .ok()
-            }),
+            display_name: Some(self.display_name.clone().unwrap_or_else(machine_name)),
             display_id: our_display_id,
             host: get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string()),
             port: self.osc_port,
@@ -644,6 +649,18 @@ mod tests {
     fn test_service_type() {
         assert!(SERVICE_TYPE.ends_with(".local."));
         assert!(SERVICE_TYPE.contains("_sher-present"));
+    }
+
+    #[test]
+    fn test_mdns_host_name_is_ours_not_the_machines() {
+        let host = mdns_host_name("3F2A9C1B-0000-4000-8000-000000000000");
+        assert_eq!(host, "sherpresent-3f2a9c1b.local.");
+        assert_ne!(host, format!("{}.local.", machine_name()));
+    }
+
+    #[test]
+    fn test_machine_name_has_no_local_suffix() {
+        assert!(!machine_name().ends_with(".local"));
     }
 
     #[test]
