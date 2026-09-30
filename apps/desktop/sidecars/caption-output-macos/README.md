@@ -59,8 +59,13 @@ sleep 1; $BIN/syphon-probe "Test" /tmp/received.png
 ```
 
 `syphon-probe` prints pixel stats: `clear` / `opaque` / `partial` counts,
-`notPremultiplied` (must be 0) and `topmostTextRow` (near the bottom means
-the frame isn't upside down).
+`notPremultiplied` (must be 0), and `captionsAtBottom` (must be `true`).
+
+Orientation: Syphon surfaces are **bottom-up** (OpenGL convention — memory
+row 0 is the bottom of the picture), which is how OBS and other receivers read
+them. Our frames are top-down Metal textures, so `SyphonSink` publishes with
+`flipped: true`. The probe reads bottom-up like a real receiver, so a
+regression shows up as `captionsAtBottom: false`.
 
 ## Adding NDI
 

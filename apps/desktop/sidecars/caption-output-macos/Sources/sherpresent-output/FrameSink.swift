@@ -42,11 +42,14 @@ final class SyphonSink: FrameSink {
 
     func publish(_ frame: Frame) {
         guard let buffer = queue?.makeCommandBuffer() else { return }
-        // Core Graphics rows are top-down in memory, same as Metal: not flipped.
+        // Syphon surfaces are bottom-up (the OpenGL convention its receivers
+        // read them in), while our texture is top-down like any Metal texture.
+        // `flipped: false` copies it through as-is, and OBS showed it upside
+        // down; `true` makes the server write it bottom-up.
         server.publishFrameTexture(
             frame.texture, on: buffer,
             imageRegion: NSRect(x: 0, y: 0, width: frame.width, height: frame.height),
-            flipped: false)
+            flipped: true)
         buffer.commit()
     }
 

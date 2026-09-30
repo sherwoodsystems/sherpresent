@@ -8,6 +8,11 @@ import Syphon
 // and report what arrived — size, and how many pixels are transparent,
 // opaque, or partially covered. Proves alpha survives the round trip.
 //
+// Syphon surfaces are bottom-up (OpenGL convention): memory row 0 is the
+// *bottom* of the picture. Everything below reports and saves in picture
+// orientation, the way OBS and other receivers display it, so the check
+// catches an upside-down frame instead of mirroring the publisher's mistake.
+//
 //   syphon-probe "SherPresent Captions" [out.png] [--timeout 5]
 
 let argv = Array(CommandLine.arguments.dropFirst())
@@ -43,21 +48,29 @@ enum Probe {
 
     let px = buffer.contents().bindMemory(to: UInt8.self, capacity: w * h * 4)
     var clear = 0, opaque = 0, partial = 0, notPremultiplied = 0
+    // Picture row (0 = top of the displayed image) of the highest text pixel.
     var topmostText = h
-    for y in 0..<h {
+    for memRow in 0..<h {
+        let pictureRow = h - 1 - memRow
         for x in 0..<w {
-            let i = (y * w + x) * 4
+            let i = (memRow * w + x) * 4
             let a = px[i + 3]
             if a == 0 { clear += 1 } else if a == 255 { opaque += 1 } else { partial += 1 }
-            if a > 0 { topmostText = min(topmostText, y) }
+            if a > 0 { topmostText = min(topmostText, pictureRow) }
             // Premultiplied means no channel exceeds alpha.
             if px[i] > a || px[i + 1] > a || px[i + 2] > a { notPremultiplied += 1 }
         }
     }
 
     if let outPath {
+        // Reorder rows into picture orientation before saving.
+        let flipped = UnsafeMutablePointer<UInt8>.allocate(capacity: w * h * 4)
+        defer { flipped.deallocate() }
+        for memRow in 0..<h {
+            (flipped + (h - 1 - memRow) * w * 4).update(from: px + memRow * w * 4, count: w * 4)
+        }
         let ctx = CGContext(
-            data: px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            data: flipped, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
         let dest = CGImageDestinationCreateWithURL(
@@ -70,6 +83,8 @@ enum Probe {
         "width": w, "height": h, "pixelFormat": texture.pixelFormat.rawValue,
         "clear": clear, "opaque": opaque, "partial": partial,
         "notPremultiplied": notPremultiplied, "topmostTextRow": topmostText,
+        // Captions sit in the bottom quarter of a correctly oriented frame.
+        "captionsAtBottom": topmostText < h && topmostText > h * 3 / 4,
     ]
     let data = try! JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
     print(String(decoding: data, as: UTF8.self))
