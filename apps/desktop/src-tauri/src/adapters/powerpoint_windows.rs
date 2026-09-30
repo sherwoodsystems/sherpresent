@@ -41,10 +41,8 @@ use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 use windows::{
     core::{Interface, BSTR, GUID, PCWSTR},
     Win32::System::Com::{
-        CLSIDFromProgID, CoCreateInstance, CoInitializeEx,
-        CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED,
-        IDispatch, DISPATCH_METHOD, DISPATCH_PROPERTYGET,
-        DISPPARAMS,
+        CLSIDFromProgID, CoCreateInstance, CoInitializeEx, IDispatch, CLSCTX_LOCAL_SERVER,
+        COINIT_APARTMENTTHREADED, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPPARAMS,
     },
     Win32::System::Ole::GetActiveObject,
     Win32::System::Variant::VARIANT,
@@ -69,7 +67,10 @@ impl PowerPointWindowsAdapter {
                 // Only fail on actual errors, not S_FALSE (already initialized)
                 let code = hr.0;
                 if code < 0 {
-                    return Err(format!("Failed to initialize COM: HRESULT 0x{:08X}", code as u32));
+                    return Err(format!(
+                        "Failed to initialize COM: HRESULT 0x{:08X}",
+                        code as u32
+                    ));
                 }
             }
             Ok(())
@@ -92,8 +93,9 @@ impl PowerPointWindowsAdapter {
             let mut punk = None;
             if GetActiveObject(&clsid, None, &mut punk).is_ok() {
                 if let Some(unk) = punk {
-                    return unk.cast::<IDispatch>()
-                        .map_err(|e| format!("Failed to get IDispatch from running instance: {}", e));
+                    return unk.cast::<IDispatch>().map_err(|e| {
+                        format!("Failed to get IDispatch from running instance: {}", e)
+                    });
                 }
             }
 
@@ -185,7 +187,12 @@ impl PowerPointWindowsAdapter {
                 None,
                 None,
             )
-            .map_err(|e| format!("Failed to get indexed property '{}[{}]': {}", name, index, e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to get indexed property '{}[{}]': {}",
+                    name, index, e
+                )
+            })?;
 
             Ok(result)
         }
@@ -224,7 +231,11 @@ impl PowerPointWindowsAdapter {
     /// Call a method with a single integer argument
     ///
     /// Equivalent to VBA: `obj.MethodName(intArg)`
-    fn invoke_method_with_int_arg(disp: &IDispatch, name: &str, arg_value: i32) -> Result<VARIANT, String> {
+    fn invoke_method_with_int_arg(
+        disp: &IDispatch,
+        name: &str,
+        arg_value: i32,
+    ) -> Result<VARIANT, String> {
         unsafe {
             let dispid = Self::get_dispid(disp, name)?;
             let mut result = VARIANT::default();
@@ -255,14 +266,12 @@ impl PowerPointWindowsAdapter {
 
     /// Extract an IDispatch from a VARIANT
     fn variant_to_dispatch(var: &VARIANT) -> Result<IDispatch, String> {
-        IDispatch::try_from(var)
-            .map_err(|e| format!("Expected IDispatch variant: {}", e))
+        IDispatch::try_from(var).map_err(|e| format!("Expected IDispatch variant: {}", e))
     }
 
     /// Extract an i32 from a VARIANT
     fn variant_to_i32(var: &VARIANT) -> Result<i32, String> {
-        i32::try_from(var)
-            .map_err(|e| format!("Expected i32 variant: {}", e))
+        i32::try_from(var).map_err(|e| format!("Expected i32 variant: {}", e))
     }
 
     /// Extract a String from a VARIANT (BSTR)
@@ -402,7 +411,11 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
         let current = Self::variant_to_i32(&pos_var)?;
 
-        Ok(SlideInfo { current, total, transition_duration: None })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+        })
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -501,7 +514,10 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         let new_pos_var = Self::get_property(&view, "CurrentShowPosition")?;
         let new_pos = Self::variant_to_i32(&new_pos_var)?;
 
-        Ok(SlideInfo { current: new_pos, total })
+        Ok(SlideInfo {
+            current: new_pos,
+            total,
+        })
     }
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
@@ -550,7 +566,10 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         }
     }
 
-    fn get_all_presenter_notes(&self, name: &str) -> Result<std::collections::HashMap<i32, String>, String> {
+    fn get_all_presenter_notes(
+        &self,
+        name: &str,
+    ) -> Result<std::collections::HashMap<i32, String>, String> {
         Self::init_com()?;
 
         let app = Self::get_application()?;

@@ -5,8 +5,8 @@ pub mod powerpoint;
 #[cfg(target_os = "windows")]
 pub mod powerpoint_windows;
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::config::AdapterConfig;
 
@@ -49,7 +49,6 @@ pub struct LiveStatus {
     /// Total click-triggered build steps on this slide (0 or None = no builds)
     pub total_builds: Option<i32>,
 }
-
 
 /// Trait for presentation application adapters
 pub trait PresentationAdapter: Send + Sync {
@@ -103,10 +102,12 @@ pub trait PresentationAdapter: Send + Sync {
 
     /// Get full live status
     fn get_live_status(&self, name: &str) -> LiveStatus {
-        let state = self.get_presentation_state(name).unwrap_or(PresentationState {
-            is_open: false,
-            is_presenting: false,
-        });
+        let state = self
+            .get_presentation_state(name)
+            .unwrap_or(PresentationState {
+                is_open: false,
+                is_presenting: false,
+            });
 
         if !state.is_presenting {
             return LiveStatus {
@@ -188,7 +189,12 @@ pub fn parse_notes_response(result: &str) -> HashMap<i32, String> {
             if let Ok(slide_num) = num_str.trim().parse::<i32>() {
                 let text = text.trim();
                 if !text.is_empty() && text != "missing value" {
-                    log::debug!("parse_notes: slide {} has notes ({} chars): {:?}", slide_num, text.len(), &text[..text.len().min(60)]);
+                    log::debug!(
+                        "parse_notes: slide {} has notes ({} chars): {:?}",
+                        slide_num,
+                        text.len(),
+                        &text[..text.len().min(60)]
+                    );
                     notes.insert(slide_num, text.to_string());
                 } else {
                     empty_count += 1;
@@ -196,7 +202,12 @@ pub fn parse_notes_response(result: &str) -> HashMap<i32, String> {
             }
         }
     }
-    log::debug!("parse_notes: {} lines total, {} with notes, {} empty", total_lines, notes.len(), empty_count);
+    log::debug!(
+        "parse_notes: {} lines total, {} with notes, {} empty",
+        total_lines,
+        notes.len(),
+        empty_count
+    );
     notes
 }
 
@@ -207,7 +218,10 @@ pub fn parse_notes_response(result: &str) -> HashMap<i32, String> {
 /// - Keynote: macOS only (AppleScript)
 /// - LibreOffice: Cross-platform (TCP socket protocol, network-configurable)
 /// - Canva: Cross-platform (webview-based, requires AppHandle — use CanvaAdapter singleton)
-pub fn get_adapter(adapter_name: &str, config: &AdapterConfig) -> Option<Box<dyn PresentationAdapter>> {
+pub fn get_adapter(
+    adapter_name: &str,
+    config: &AdapterConfig,
+) -> Option<Box<dyn PresentationAdapter>> {
     match adapter_name {
         "powerpoint" => {
             #[cfg(target_os = "macos")]
@@ -379,21 +393,41 @@ mod tests {
         // The default trait impl returns Connected (for local adapters like PowerPoint)
         struct DummyAdapter;
         impl PresentationAdapter for DummyAdapter {
-            fn get_open_presentations(&self) -> Result<Vec<String>, String> { Ok(vec![]) }
+            fn get_open_presentations(&self) -> Result<Vec<String>, String> {
+                Ok(vec![])
+            }
             fn get_presentation_state(&self, _: &str) -> Result<PresentationState, String> {
-                Ok(PresentationState { is_open: false, is_presenting: false })
+                Ok(PresentationState {
+                    is_open: false,
+                    is_presenting: false,
+                })
             }
             fn get_slide_info(&self, _: &str) -> Result<SlideInfo, String> {
-                Ok(SlideInfo { current: 0, total: 0, transition_duration: None })
+                Ok(SlideInfo {
+                    current: 0,
+                    total: 0,
+                    transition_duration: None,
+                })
             }
             fn next_slide(&self, _: &str) -> Result<SlideInfo, String> {
-                Ok(SlideInfo { current: 0, total: 0, transition_duration: None })
+                Ok(SlideInfo {
+                    current: 0,
+                    total: 0,
+                    transition_duration: None,
+                })
             }
             fn prev_slide(&self, _: &str) -> Result<SlideInfo, String> {
-                Ok(SlideInfo { current: 0, total: 0, transition_duration: None })
+                Ok(SlideInfo {
+                    current: 0,
+                    total: 0,
+                    transition_duration: None,
+                })
             }
         }
         let adapter = DummyAdapter;
-        assert!(matches!(adapter.connection_status(), ConnectionStatus::Connected));
+        assert!(matches!(
+            adapter.connection_status(),
+            ConnectionStatus::Connected
+        ));
     }
 }

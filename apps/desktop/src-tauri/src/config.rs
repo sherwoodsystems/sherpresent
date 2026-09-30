@@ -21,7 +21,6 @@ pub enum AdapterConfig {
     None,
 }
 
-
 // =============================================================================
 // FEEDBACK DESTINATION
 // =============================================================================
@@ -469,7 +468,10 @@ mod tests {
         };
         assert!(cfg(Some("en-US"), "fr").translates());
         assert!(!cfg(Some("en-US"), "en").translates(), "straight captions");
-        assert!(cfg(None, "en").translates(), "auto-detect may still translate");
+        assert!(
+            cfg(None, "en").translates(),
+            "auto-detect may still translate"
+        );
     }
 
     use super::*;

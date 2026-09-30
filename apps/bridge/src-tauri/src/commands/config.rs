@@ -4,7 +4,9 @@ use crate::state::BridgeState;
 
 /// Return the current bridge config.
 #[tauri::command]
-pub fn get_config(state: tauri::State<BridgeState>) -> Result<crate::bridge::config::BridgeConfig, String> {
+pub fn get_config(
+    state: tauri::State<BridgeState>,
+) -> Result<crate::bridge::config::BridgeConfig, String> {
     Ok(state.core()?.config())
 }
 

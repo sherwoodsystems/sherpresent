@@ -1,12 +1,12 @@
+pub mod app;
 pub mod bridge;
 pub mod canva;
 pub mod captions;
 pub mod config;
 pub mod debug;
-pub mod network;
-pub mod presentation;
-pub mod polling;
-pub mod osc;
 pub mod discovery;
+pub mod network;
+pub mod osc;
+pub mod polling;
+pub mod presentation;
 pub mod webserver;
-pub mod app;

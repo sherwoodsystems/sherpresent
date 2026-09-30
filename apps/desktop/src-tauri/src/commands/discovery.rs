@@ -1,6 +1,6 @@
-use tauri::{AppHandle, Emitter};
-use sherpresent_core::{DiscoveredPeer, DiscoveryService};
 use crate::state::AppState;
+use sherpresent_core::{DiscoveredPeer, DiscoveryService};
+use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
 pub fn get_discovered_peers(state: tauri::State<AppState>) -> Vec<DiscoveredPeer> {
@@ -39,7 +39,13 @@ pub async fn start_discovery(
     let (peer_tx, mut peer_rx) = tokio::sync::mpsc::channel::<Vec<DiscoveredPeer>>(32);
 
     // Create and start the discovery service
-    let mut service = DiscoveryService::new(instance_id, display_name, osc_port, peer_tx, network_interface)?;
+    let mut service = DiscoveryService::new(
+        instance_id,
+        display_name,
+        osc_port,
+        peer_tx,
+        network_interface,
+    )?;
 
     service.register()?;
     let _browse_handle = service.start_browsing()?;
@@ -64,7 +70,10 @@ pub async fn start_discovery(
 }
 
 #[tauri::command]
-pub fn set_instance_name(state: tauri::State<AppState>, name: Option<String>) -> Result<(), String> {
+pub fn set_instance_name(
+    state: tauri::State<AppState>,
+    name: Option<String>,
+) -> Result<(), String> {
     let mut discovery = state.discovery_service.lock().unwrap();
     if let Some(service) = discovery.as_mut() {
         service.update_display_name(name)?;

@@ -309,12 +309,16 @@ impl CanvaAdapter {
             state.webview_open = true;
         }
 
-        WebviewWindowBuilder::new(&self.app_handle, "canva", tauri::WebviewUrl::External(parsed_url))
-            .title("Canva Remote")
-            .inner_size(400.0, 700.0)
-            .initialization_script(INTERCEPT_SCRIPT)
-            .build()
-            .map_err(|e| format!("Failed to create window: {}", e))?;
+        WebviewWindowBuilder::new(
+            &self.app_handle,
+            "canva",
+            tauri::WebviewUrl::External(parsed_url),
+        )
+        .title("Canva Remote")
+        .inner_size(400.0, 700.0)
+        .initialization_script(INTERCEPT_SCRIPT)
+        .build()
+        .map_err(|e| format!("Failed to create window: {}", e))?;
 
         log::info!("Canva: Opened webview for session: {}", session_id);
         Ok(())
@@ -362,23 +366,34 @@ impl CanvaAdapter {
 
         // Emit to the main window so the frontend can see webview activity
         if let Some(main_window) = self.app_handle.get_webview_window("main") {
-            let _ = main_window.emit("canva-webview-log", serde_json::json!({
-                "category": category,
-                "message": message,
-            }));
+            let _ = main_window.emit(
+                "canva-webview-log",
+                serde_json::json!({
+                    "category": category,
+                    "message": message,
+                }),
+            );
         }
     }
 
     /// Navigate to a specific page by evaluating JS in the webview
     fn navigate_to_page(&self, page: i32) -> Result<(), String> {
-        let session_id = self.session_id.lock().unwrap().clone()
+        let session_id = self
+            .session_id
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or("No Canva session open")?;
 
-        let window = self.app_handle.get_webview_window("canva")
+        let window = self
+            .app_handle
+            .get_webview_window("canva")
             .ok_or("Canva webview window not found")?;
 
         let js = format!("window.__canvaNavigate('{}', {});", session_id, page);
-        window.eval(&js).map_err(|e| format!("Failed to navigate: {}", e))?;
+        window
+            .eval(&js)
+            .map_err(|e| format!("Failed to navigate: {}", e))?;
 
         // Update cached state
         {

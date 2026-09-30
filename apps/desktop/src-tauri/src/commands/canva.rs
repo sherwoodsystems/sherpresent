@@ -1,10 +1,14 @@
-use tauri::{AppHandle, Emitter};
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::{ConnectionStatus, PresentationAdapter};
 use crate::state::AppState;
+use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
-pub fn open_canva_remote(app: AppHandle, state: tauri::State<AppState>, url: String) -> Result<(), String> {
+pub fn open_canva_remote(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    url: String,
+) -> Result<(), String> {
     let mut canva = state.canva_adapter.lock().unwrap();
     if canva.is_none() {
         *canva = Some(CanvaAdapter::new(app));

@@ -236,7 +236,10 @@ mod tests {
     #[test]
     fn currentslide_updates_state() {
         let mut s = FeedbackState::default();
-        assert!(s.apply_message(&msg(messages::feedback::CURRENT_SLIDE, rosc::OscType::Int(7))));
+        assert!(s.apply_message(&msg(
+            messages::feedback::CURRENT_SLIDE,
+            rosc::OscType::Int(7)
+        )));
         assert_eq!(s.current_slide, Some(7));
         assert!(s.last_updated.is_some());
     }
@@ -244,7 +247,10 @@ mod tests {
     #[test]
     fn slidecount_updates_state() {
         let mut s = FeedbackState::default();
-        s.apply_message(&msg(messages::feedback::SLIDE_COUNT, rosc::OscType::Int(42)));
+        s.apply_message(&msg(
+            messages::feedback::SLIDE_COUNT,
+            rosc::OscType::Int(42),
+        ));
         assert_eq!(s.slide_count, Some(42));
     }
 

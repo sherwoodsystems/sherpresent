@@ -64,7 +64,9 @@ impl LibreOfficeAdapter {
         // Try to connect
         let addr_str = format!("{}:{}", self.host, self.port);
         let stream = TcpStream::connect_timeout(
-            &addr_str.parse().map_err(|e| format!("Invalid address {}: {}", addr_str, e))?,
+            &addr_str
+                .parse()
+                .map_err(|e| format!("Invalid address {}: {}", addr_str, e))?,
             CONNECT_TIMEOUT,
         )
         .map_err(|e| {
@@ -97,7 +99,10 @@ impl LibreOfficeAdapter {
 
     /// Send the pairing request to LibreOffice
     fn send_pairing_request(&self) -> Result<(), String> {
-        let message = format!("LO_SERVER_CLIENT_PAIR\n{}\n{}\n\n", CLIENT_NAME, PAIRING_PIN);
+        let message = format!(
+            "LO_SERVER_CLIENT_PAIR\n{}\n{}\n\n",
+            CLIENT_NAME, PAIRING_PIN
+        );
 
         self.send_raw(&message)
     }
@@ -105,9 +110,7 @@ impl LibreOfficeAdapter {
     /// Send a raw message to LibreOffice
     fn send_raw(&self, message: &str) -> Result<(), String> {
         let mut conn_guard = self.connection.lock().unwrap();
-        let stream = conn_guard
-            .as_mut()
-            .ok_or("Not connected to LibreOffice")?;
+        let stream = conn_guard.as_mut().ok_or("Not connected to LibreOffice")?;
 
         stream
             .write_all(message.as_bytes())
@@ -246,7 +249,10 @@ impl LibreOfficeAdapter {
                     } else {
                         Some(trimmed)
                     };
-                    log::debug!("LibreOffice: Got slide notes ({} chars)", state.presenter_notes.as_ref().map_or(0, |s| s.len()));
+                    log::debug!(
+                        "LibreOffice: Got slide notes ({} chars)",
+                        state.presenter_notes.as_ref().map_or(0, |s| s.len())
+                    );
                 }
             }
             "slide_preview" => {
@@ -456,7 +462,10 @@ mod tests {
     #[test]
     fn test_initial_connection_status_is_disconnected() {
         let adapter = LibreOfficeAdapter::default();
-        matches!(adapter.connection_status(), super::super::ConnectionStatus::Disconnected);
+        matches!(
+            adapter.connection_status(),
+            super::super::ConnectionStatus::Disconnected
+        );
     }
 
     #[test]
@@ -514,10 +523,7 @@ mod tests {
             "10".to_string(),
             "0".to_string(),
         ]);
-        adapter.handle_message(&[
-            "slide_updated".to_string(),
-            "3".to_string(),
-        ]);
+        adapter.handle_message(&["slide_updated".to_string(), "3".to_string()]);
         let state = adapter.state.lock().unwrap();
         assert_eq!(state.current_slide, 3);
     }
@@ -604,7 +610,10 @@ mod tests {
     #[test]
     fn test_strip_html_tags() {
         assert_eq!(strip_html_tags("<p>Hello</p>"), "Hello");
-        assert_eq!(strip_html_tags("<b>bold</b> and <i>italic</i>"), "bold and italic");
+        assert_eq!(
+            strip_html_tags("<b>bold</b> and <i>italic</i>"),
+            "bold and italic"
+        );
         assert_eq!(strip_html_tags("no tags here"), "no tags here");
         assert_eq!(strip_html_tags("<p></p>"), "");
         assert_eq!(strip_html_tags("<div class=\"foo\">text</div>"), "text");
@@ -618,16 +627,16 @@ mod tests {
             "<p>These are my notes</p>".to_string(),
         ]);
         let state = adapter.state.lock().unwrap();
-        assert_eq!(state.presenter_notes, Some("These are my notes".to_string()));
+        assert_eq!(
+            state.presenter_notes,
+            Some("These are my notes".to_string())
+        );
     }
 
     #[test]
     fn test_handle_slide_notes_empty_html() {
         let adapter = LibreOfficeAdapter::default();
-        adapter.handle_message(&[
-            "slide_notes".to_string(),
-            "<p></p>".to_string(),
-        ]);
+        adapter.handle_message(&["slide_notes".to_string(), "<p></p>".to_string()]);
         let state = adapter.state.lock().unwrap();
         assert_eq!(state.presenter_notes, None);
     }
@@ -641,7 +650,10 @@ mod tests {
             "<p>Line two</p>".to_string(),
         ]);
         let state = adapter.state.lock().unwrap();
-        assert_eq!(state.presenter_notes, Some("Line one\nLine two".to_string()));
+        assert_eq!(
+            state.presenter_notes,
+            Some("Line one\nLine two".to_string())
+        );
     }
 
     #[test]
@@ -651,10 +663,7 @@ mod tests {
             let mut state = adapter.state.lock().unwrap();
             state.current_slide = 2;
         }
-        adapter.handle_message(&[
-            "slide_updated".to_string(),
-            "not_a_number".to_string(),
-        ]);
+        adapter.handle_message(&["slide_updated".to_string(), "not_a_number".to_string()]);
         // Should keep the old value on parse failure
         let state = adapter.state.lock().unwrap();
         assert_eq!(state.current_slide, 2);

@@ -15,4 +15,6 @@
 
 pub mod discovery;
 
-pub use discovery::{get_local_ip, get_network_interfaces, DiscoveredPeer, DiscoveryService, NetworkInterface};
+pub use discovery::{
+    get_local_ip, get_network_interfaces, DiscoveredPeer, DiscoveryService, NetworkInterface,
+};

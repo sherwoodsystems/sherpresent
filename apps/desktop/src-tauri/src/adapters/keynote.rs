@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo, parse_notes_response};
+use super::{parse_notes_response, LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 use crate::applescript::{is_app_running, run_applescript};
+use std::collections::HashMap;
 
 const APP_NAME: &str = "Keynote";
 
@@ -28,7 +28,10 @@ impl PresentationAdapter for KeynoteAdapter {
 
     fn get_presentation_state(&self, name: &str) -> Result<PresentationState, String> {
         if !is_app_running(APP_NAME) {
-            return Ok(PresentationState { is_open: false, is_presenting: false });
+            return Ok(PresentationState {
+                is_open: false,
+                is_presenting: false,
+            });
         }
 
         let script = format!(
@@ -92,7 +95,11 @@ impl PresentationAdapter for KeynoteAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total, transition_duration: None })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+        })
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -137,13 +144,13 @@ impl PresentationAdapter for KeynoteAdapter {
             .trim()
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
-        let transition_duration = parts[3]
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|&d| d > 0.0);
+        let transition_duration = parts[3].trim().parse::<f64>().ok().filter(|&d| d > 0.0);
 
-        Ok(SlideInfo { current, total, transition_duration })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration,
+        })
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -184,7 +191,11 @@ impl PresentationAdapter for KeynoteAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total, transition_duration: None })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+        })
     }
 
     fn goto_slide(&self, name: &str, slide: i32) -> Result<SlideInfo, String> {
@@ -229,7 +240,11 @@ impl PresentationAdapter for KeynoteAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total, transition_duration: None })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+        })
     }
 
     // Keynote doesn't support notes zoom control
@@ -253,15 +268,19 @@ impl PresentationAdapter for KeynoteAdapter {
             Ok(result) if result.trim().is_empty() || result.trim() == "missing value" => {
                 log::debug!("Keynote get_presenter_notes: empty/missing result for current slide");
                 Ok(None)
-            },
+            }
             Ok(result) => {
-                log::debug!("Keynote get_presenter_notes: got {} chars, first 80: {:?}", result.len(), &result[..result.len().min(80)]);
+                log::debug!(
+                    "Keynote get_presenter_notes: got {} chars, first 80: {:?}",
+                    result.len(),
+                    &result[..result.len().min(80)]
+                );
                 Ok(Some(result))
-            },
+            }
             Err(e) => {
                 log::debug!("Keynote get_presenter_notes: error: {}", e);
                 Ok(None)
-            },
+            }
         }
     }
 
@@ -289,9 +308,17 @@ impl PresentationAdapter for KeynoteAdapter {
         );
 
         let result = run_applescript(&script)?;
-        log::debug!("Keynote get_all_presenter_notes raw output ({} chars):\n{}", result.len(), &result[..result.len().min(2000)]);
+        log::debug!(
+            "Keynote get_all_presenter_notes raw output ({} chars):\n{}",
+            result.len(),
+            &result[..result.len().min(2000)]
+        );
         let parsed = parse_notes_response(&result);
-        log::debug!("Keynote get_all_presenter_notes parsed: {} slides with notes, keys: {:?}", parsed.len(), parsed.keys().collect::<Vec<_>>());
+        log::debug!(
+            "Keynote get_all_presenter_notes parsed: {} slides with notes, keys: {:?}",
+            parsed.len(),
+            parsed.keys().collect::<Vec<_>>()
+        );
         Ok(parsed)
     }
 
@@ -338,7 +365,10 @@ impl PresentationAdapter for KeynoteAdapter {
                 let is_presenting = parts[1].trim() == "true";
                 let current_slide = parts[2].trim().parse().unwrap_or(0);
                 let total_slides = parts[3].trim().parse().unwrap_or(0);
-                let notes = if parts.len() >= 5 && !parts[4].trim().is_empty() && parts[4].trim() != "missing value" {
+                let notes = if parts.len() >= 5
+                    && !parts[4].trim().is_empty()
+                    && parts[4].trim() != "missing value"
+                {
                     Some(parts[4].to_string())
                 } else {
                     None

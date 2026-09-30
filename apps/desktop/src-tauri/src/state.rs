@@ -1,4 +1,3 @@
-use sherpresent_core::DiscoveryService;
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
 use crate::captions::{CaptionEngine, CaptionSinks};
@@ -6,6 +5,7 @@ use crate::config::{AdapterConfig, CaptionsConfig, WebServerConfig};
 use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
 use crate::output::feed::NotesSources;
 use crate::output::{OutputSources, Outputs};
+use sherpresent_core::DiscoveryService;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -78,14 +78,22 @@ pub struct AppState {
 
 impl AppState {
     /// Start the caption engine. Shared by the Start button and auto-start.
-    pub fn start_captions(&self, app: &tauri::AppHandle, config: &CaptionsConfig) -> Result<(), String> {
+    pub fn start_captions(
+        &self,
+        app: &tauri::AppHandle,
+        config: &CaptionsConfig,
+    ) -> Result<(), String> {
         let mut slot = self.caption_engine.lock().unwrap();
         if slot.is_some() {
             return Err("Captions are already running".to_string());
         }
         // Clear stale lines so a new session doesn't open with the last one's text.
         self.captions.buffer.lock().unwrap().clear();
-        *slot = Some(crate::captions::start(app.clone(), config, self.captions.clone())?);
+        *slot = Some(crate::captions::start(
+            app.clone(),
+            config,
+            self.captions.clone(),
+        )?);
         Ok(())
     }
 

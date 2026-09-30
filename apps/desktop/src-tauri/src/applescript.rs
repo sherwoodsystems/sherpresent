@@ -96,7 +96,8 @@ mod nsapplescript {
             let mut error_dict: id = NIL;
             let error_ptr: *mut id = &mut error_dict;
 
-            let result: id = objc_msgSend1_errptr(script_obj, sel("executeAndReturnError:"), error_ptr);
+            let result: id =
+                objc_msgSend1_errptr(script_obj, sel("executeAndReturnError:"), error_ptr);
 
             if result.is_null() || !error_dict.is_null() {
                 let err_msg = if !error_dict.is_null() {

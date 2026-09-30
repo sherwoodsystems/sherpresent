@@ -82,7 +82,6 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 /// strictly better than leaking.
 const STDIN_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
-
 pub struct AppleProvider {
     config: ProviderConfig,
 }
@@ -178,7 +177,11 @@ async fn run_session(
     };
 
     let args = build_args(config);
-    log::info!("Starting speech sidecar: {} {}", path.display(), args.join(" "));
+    log::info!(
+        "Starting speech sidecar: {} {}",
+        path.display(),
+        args.join(" ")
+    );
 
     let mut child = match tokio::process::Command::new(&path)
         .args(&args)
@@ -231,7 +234,10 @@ async fn run_session(
     // last second; replaying it would push the live feed permanently behind.
     let (carryover, dropped) = drain_backlog(audio_rx);
     if dropped > 0 {
-        log::debug!("Dropped {} stale audio chunks before sidecar start", dropped);
+        log::debug!(
+            "Dropped {} stale audio chunks before sidecar start",
+            dropped
+        );
     }
     for chunk in carryover {
         if stdin.write_all(&samples_to_le_bytes(&chunk)).await.is_err() {
@@ -525,7 +531,11 @@ fn build_args(config: &ProviderConfig) -> Vec<String> {
 /// Straight captions (same language both sides) need no translation pack, so
 /// the target is left blank and the helper skips that check.
 pub(crate) fn probe_args(source: &str, target: &str) -> Vec<String> {
-    let target = if super::same_language(source, target) { "" } else { target };
+    let target = if super::same_language(source, target) {
+        ""
+    } else {
+        target
+    };
     vec![
         "--probe".to_string(),
         "--protocol".to_string(),
@@ -566,9 +576,11 @@ pub(crate) fn is_platform_supported() -> bool {
 #[cfg(target_os = "macos")]
 fn check_platform() -> Result<(), String> {
     if std::env::consts::ARCH != "aarch64" {
-        return Err("The Apple on-device caption provider requires an Apple Silicon Mac. \
+        return Err(
+            "The Apple on-device caption provider requires an Apple Silicon Mac. \
                     Select Gemini in Settings."
-            .to_string());
+                .to_string(),
+        );
     }
 
     match macos_major_version() {
@@ -966,8 +978,18 @@ mod tests {
     #[test]
     fn test_build_args_normalizes_and_carries_format() {
         let args = build_args(&cfg(Some(" en_us "), "FR"));
-        assert_eq!(args.iter().position(|a| a == "--source").map(|i| &args[i + 1]), Some(&"en-US".to_string()));
-        assert_eq!(args.iter().position(|a| a == "--target").map(|i| &args[i + 1]), Some(&"fr".to_string()));
+        assert_eq!(
+            args.iter()
+                .position(|a| a == "--source")
+                .map(|i| &args[i + 1]),
+            Some(&"en-US".to_string())
+        );
+        assert_eq!(
+            args.iter()
+                .position(|a| a == "--target")
+                .map(|i| &args[i + 1]),
+            Some(&"fr".to_string())
+        );
         assert!(args.contains(&"s16le".to_string()));
         assert!(args.contains(&TARGET_SAMPLE_RATE.to_string()));
         assert!(!args.contains(&"--no-translate".to_string()));
@@ -1145,7 +1167,7 @@ mod fake_sidecar_tests {
                 .await
                 .expect("timed out waiting for a provider event")
                 .expect("provider event channel closed early")
-            }
+        }
 
         /// Drain events until the provider finishes on its own.
         async fn drain(mut self) -> Vec<ProviderEvent> {
@@ -1255,7 +1277,11 @@ exit 1
             ProviderEvent::Fatal { message } => {
                 assert!(message.contains("before it was ready"), "{}", message);
                 // The stderr tail is what makes this diagnosable from a log.
-                assert!(message.contains("could not load the speech model"), "{}", message);
+                assert!(
+                    message.contains("could not load the speech model"),
+                    "{}",
+                    message
+                );
             }
             other => panic!("expected Fatal, got {:?}", other),
         }
@@ -1376,7 +1402,11 @@ cat > /dev/null
         .await
         .expect("run_loop did not stop when capture ended");
 
-        assert!(rest.is_empty(), "unexpected events after capture stop: {:?}", rest);
+        assert!(
+            rest.is_empty(),
+            "unexpected events after capture stop: {:?}",
+            rest
+        );
     }
 
     #[tokio::test]

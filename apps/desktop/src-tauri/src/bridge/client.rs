@@ -43,7 +43,10 @@ impl BridgeApiClient {
             .map_err(|e| format!("Parse failed: {}", e))
     }
 
-    pub async fn save_config(&self, req: SaveGlobalConfigRequest) -> Result<BridgeApiResponse, String> {
+    pub async fn save_config(
+        &self,
+        req: SaveGlobalConfigRequest,
+    ) -> Result<BridgeApiResponse, String> {
         self.client
             .post(format!("{}/config/global", self.base_url))
             .json(&req)
@@ -102,7 +105,9 @@ impl BridgeApiClient {
     pub async fn start_registration(&self, slot: &str) -> Result<BridgeApiResponse, String> {
         self.client
             .post(format!("{}/registration/start", self.base_url))
-            .json(&StartRegistrationRequest { slot: slot.to_string() })
+            .json(&StartRegistrationRequest {
+                slot: slot.to_string(),
+            })
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?
@@ -156,9 +161,16 @@ impl BridgeApiClient {
             .map_err(|e| format!("Parse failed: {}", e))
     }
 
-    pub async fn test_device(&self, slot: &str, command: &str) -> Result<BridgeApiResponse, String> {
+    pub async fn test_device(
+        &self,
+        slot: &str,
+        command: &str,
+    ) -> Result<BridgeApiResponse, String> {
         self.client
-            .post(format!("{}/devices/{}/test/{}", self.base_url, slot, command))
+            .post(format!(
+                "{}/devices/{}/test/{}",
+                self.base_url, slot, command
+            ))
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?

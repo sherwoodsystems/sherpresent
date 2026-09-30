@@ -9,7 +9,9 @@ use crate::state::BridgeState;
 
 /// Current list of discovered peers (desktops and other bridges seen on the LAN).
 #[tauri::command]
-pub fn get_discovered_peers(state: tauri::State<BridgeState>) -> Result<Vec<DiscoveredPeer>, String> {
+pub fn get_discovered_peers(
+    state: tauri::State<BridgeState>,
+) -> Result<Vec<DiscoveredPeer>, String> {
     Ok(state.core()?.discovered_peers())
 }
 

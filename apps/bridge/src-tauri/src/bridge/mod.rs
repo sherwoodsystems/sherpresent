@@ -32,8 +32,12 @@ use crate::bridge::usb::{UsbEvent, UsbManager};
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum BridgeEvent {
     UsbConnected(UsbDeviceInfo),
-    UsbDisconnected { device_id: String },
-    UsbAccessDenied { count: usize },
+    UsbDisconnected {
+        device_id: String,
+    },
+    UsbAccessDenied {
+        count: usize,
+    },
     RegistrationDetected {
         device_id: String,
         action: String,
@@ -128,7 +132,11 @@ impl BridgeCore {
 
     fn start_feedback_listener(&self, port: u16) {
         let state = self.state.clone();
-        match start_feedback_listener(port, state.feedback_state.clone(), state.feedback_tx.clone()) {
+        match start_feedback_listener(
+            port,
+            state.feedback_state.clone(),
+            state.feedback_tx.clone(),
+        ) {
             Ok(handle) => {
                 *state.feedback_listener.lock().unwrap() = Some(handle);
             }
@@ -210,7 +218,9 @@ impl BridgeCore {
                     }
 
                     while let Some(peers) = peer_rx.recv().await {
-                        let _ = peer_tx.send(PeerUpdate { peers: peers.clone() });
+                        let _ = peer_tx.send(PeerUpdate {
+                            peers: peers.clone(),
+                        });
                     }
                 }
                 Err(e) => {
@@ -296,7 +306,10 @@ impl BridgeCore {
         target: Option<DeviceTarget>,
     ) -> Result<(), String> {
         let mut config = self.config();
-        let device = config.devices.get_mut(&device_id).ok_or("device not found")?;
+        let device = config
+            .devices
+            .get_mut(&device_id)
+            .ok_or("device not found")?;
         device.target = target;
         self.save_config(&config)
     }

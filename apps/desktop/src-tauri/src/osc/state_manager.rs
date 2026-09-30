@@ -32,9 +32,12 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
-use crate::adapters::{canva::CanvaAdapter, get_adapter, powerpoint::PowerPointAdapter, LiveStatus, PresentationAdapter};
-use crate::config::AdapterConfig;
 use super::latency::{self, CommandSource, LatencyStore};
+use crate::adapters::{
+    canva::CanvaAdapter, get_adapter, powerpoint::PowerPointAdapter, LiveStatus,
+    PresentationAdapter,
+};
+use crate::config::AdapterConfig;
 
 // =============================================================================
 // CACHED STATE
@@ -79,7 +82,6 @@ pub struct CachedState {
     #[serde(skip)]
     pub last_updated_ms: u64,
 }
-
 
 impl CachedState {
     /// Create a new state with the current timestamp
@@ -315,11 +317,9 @@ impl StateManager {
         self.notify_state_change(self.get_state());
 
         // Now spawn the actual AppleScript command in the background
-        self.spawn_adapter_command(
-            "next".to_string(),
-            source,
-            |adapter, name| adapter.next_slide(&name),
-        );
+        self.spawn_adapter_command("next".to_string(), source, |adapter, name| {
+            adapter.next_slide(&name)
+        });
     }
 
     /// Go to the previous slide (optimistic update).
@@ -356,11 +356,9 @@ impl StateManager {
         }
 
         self.notify_state_change(self.get_state());
-        self.spawn_adapter_command(
-            "prev".to_string(),
-            source,
-            |adapter, name| adapter.prev_slide(&name),
-        );
+        self.spawn_adapter_command("prev".to_string(), source, |adapter, name| {
+            adapter.prev_slide(&name)
+        });
     }
 
     /// Jump to a specific slide (optimistic update).
@@ -389,11 +387,9 @@ impl StateManager {
         }
 
         self.notify_state_change(self.get_state());
-        self.spawn_adapter_command(
-            format!("goto:{}", slide),
-            source,
-            move |adapter, name| adapter.goto_slide(&name, slide),
-        );
+        self.spawn_adapter_command(format!("goto:{}", slide), source, move |adapter, name| {
+            adapter.goto_slide(&name, slide)
+        });
     }
 
     /// Increase notes zoom level (optimistic update).
@@ -458,7 +454,10 @@ impl StateManager {
     /// blocking operations, keeping the async runtime free.
     fn spawn_adapter_command<F>(&self, command_label: String, source: CommandSource, command: F)
     where
-        F: FnOnce(&dyn crate::adapters::PresentationAdapter, String) -> Result<crate::adapters::SlideInfo, String>
+        F: FnOnce(
+                &dyn crate::adapters::PresentationAdapter,
+                String,
+            ) -> Result<crate::adapters::SlideInfo, String>
             + Send
             + 'static,
     {
@@ -499,7 +498,8 @@ impl StateManager {
 
             // Capture latency after adapter completes
             let after_ms = latency::monotonic_ms();
-            let event = latency::make_event(before_ms, after_ms, command_label, source, adapter_label);
+            let event =
+                latency::make_event(before_ms, after_ms, command_label, source, adapter_label);
             latency_store.push(event.clone());
             if let Some(ref handle) = app_handle {
                 let _ = handle.emit("latency-event", &event);
@@ -591,8 +591,16 @@ impl StateManager {
         let canva_adapter = self.canva_adapter.clone();
 
         tokio::task::spawn(async move {
-            Self::do_refresh_internal(adapter_name, presentation_name, adapter_config, refresh_flag, state, tx, canva_adapter)
-                .await;
+            Self::do_refresh_internal(
+                adapter_name,
+                presentation_name,
+                adapter_config,
+                refresh_flag,
+                state,
+                tx,
+                canva_adapter,
+            )
+            .await;
         });
     }
 
@@ -617,7 +625,12 @@ impl StateManager {
 
         // Fetch state from presentation software (blocking)
         let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config, &canva_adapter)
+            Self::fetch_all_state(
+                &adapter_name,
+                &presentation_name,
+                &adapter_config,
+                &canva_adapter,
+            )
         })
         .await
         .unwrap_or_else(|_| CachedState::now());
@@ -659,7 +672,12 @@ impl StateManager {
         let canva_adapter = self.canva_adapter.clone();
 
         let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(&adapter_name, &presentation_name, &adapter_config, &canva_adapter)
+            Self::fetch_all_state(
+                &adapter_name,
+                &presentation_name,
+                &adapter_config,
+                &canva_adapter,
+            )
         })
         .await
         .unwrap_or_else(|_| CachedState::now());

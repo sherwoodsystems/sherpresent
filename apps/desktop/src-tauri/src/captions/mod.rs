@@ -220,8 +220,12 @@ pub(crate) fn sanitize_hex_color(raw: &str, fallback: &str) -> String {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum CaptionUpdate {
-    Segment { segment: CaptionSegment },
-    Status { status: CaptionStatus },
+    Segment {
+        segment: CaptionSegment,
+    },
+    Status {
+        status: CaptionStatus,
+    },
     /// The silence timeout fired: blank the screen. See [`run_silence_clear`].
     Clear,
 }
@@ -477,7 +481,10 @@ impl StatusReporter {
 }
 
 /// Accumulate provider deltas into lines and publish them.
-async fn consume_events(mut status: StatusReporter, mut events: mpsc::UnboundedReceiver<ProviderEvent>) {
+async fn consume_events(
+    mut status: StatusReporter,
+    mut events: mpsc::UnboundedReceiver<ProviderEvent>,
+) {
     let mut current = CaptionSegment::blank(1);
 
     while let Some(event) = events.recv().await {
@@ -537,7 +544,9 @@ fn publish_segment(status: &StatusReporter, seg: &mut CaptionSegment) {
     if !status.translate_enabled {
         seg.translated.clear();
     }
-    status.publish(CaptionUpdate::Segment { segment: seg.clone() });
+    status.publish(CaptionUpdate::Segment {
+        segment: seg.clone(),
+    });
 }
 
 impl CaptionSegment {
@@ -640,8 +649,14 @@ mod tests {
         let base = OverlaySettings::default();
         let s = base.with_overrides(&q);
         assert_eq!(s.font_size, 240, "clamped like config values");
-        assert_eq!(s.max_lines, base.max_lines, "unparseable value pins nothing");
-        assert_eq!(s.clear_after, base.clear_after, "silence timeout is app-wide, not pinnable");
+        assert_eq!(
+            s.max_lines, base.max_lines,
+            "unparseable value pins nothing"
+        );
+        assert_eq!(
+            s.clear_after, base.clear_after,
+            "silence timeout is app-wide, not pinnable"
+        );
         assert_eq!(s.chroma_color, "transparent");
         assert!(s.background);
         assert_eq!(s.shadow, base.shadow);
@@ -670,7 +685,10 @@ mod tests {
 
         sinks.buffer.lock().unwrap().push_back(final_segment(1));
         sinks.broadcast.send(segment(1)).unwrap();
-        assert!(matches!(rx.recv().await.unwrap(), CaptionUpdate::Segment { .. }));
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            CaptionUpdate::Segment { .. }
+        ));
 
         // Nothing before the 8s default...
         tokio::time::sleep(std::time::Duration::from_secs(7)).await;
@@ -737,7 +755,6 @@ mod tests {
         let json = serde_json::to_string(&update).unwrap();
         assert!(json.contains("\"type\":\"status\""));
     }
-
 
     #[test]
     fn test_apply_delta_appends() {

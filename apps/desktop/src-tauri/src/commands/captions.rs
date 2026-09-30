@@ -87,7 +87,10 @@ pub fn open_translation_settings() -> Result<(), String> {
 #[tauri::command]
 pub fn get_captions_url(app: tauri::AppHandle) -> Result<String, String> {
     let cfg = config::load_config(&app)?;
-    Ok(crate::commands::network::lan_url(cfg.web_server.port, "/captions"))
+    Ok(crate::commands::network::lan_url(
+        cfg.web_server.port,
+        "/captions",
+    ))
 }
 
 /// Restyle open overlays immediately, without saving.
@@ -102,4 +105,3 @@ pub fn preview_caption_overlay(
 ) {
     state.captions.set_overlay(&captions);
 }
-

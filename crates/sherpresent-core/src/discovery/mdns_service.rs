@@ -65,7 +65,9 @@ fn machine_name() -> String {
     let name = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
-    name.strip_suffix(".local").map(str::to_string).unwrap_or(name)
+    name.strip_suffix(".local")
+        .map(str::to_string)
+        .unwrap_or(name)
 }
 
 /// The mDNS host name our service record points at.
@@ -217,8 +219,8 @@ impl DiscoveryService {
         peer_tx: mpsc::Sender<Vec<DiscoveredPeer>>,
         network_interface: Option<String>,
     ) -> Result<Self, String> {
-        let daemon = ServiceDaemon::new()
-            .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
+        let daemon =
+            ServiceDaemon::new().map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
         // Enable network interfaces for mDNS advertisement.
         // By default, mdns-sd only enables loopback interfaces.
@@ -287,7 +289,10 @@ impl DiscoveryService {
     }
 
     /// Assign the next available display ID
-    fn assign_display_id(display_id_map: &Arc<Mutex<HashMap<String, u8>>>, instance_id: &str) -> u8 {
+    fn assign_display_id(
+        display_id_map: &Arc<Mutex<HashMap<String, u8>>>,
+        instance_id: &str,
+    ) -> u8 {
         let mut map = display_id_map.lock().unwrap();
 
         // Check if already assigned
@@ -322,7 +327,8 @@ impl DiscoveryService {
         // Create TXT record properties.
         // Baseline set: version, instance, name. Then any extras (config_port, etc.).
 
-        let mut properties: Vec<(String, String)> = Vec::with_capacity(3 + self.extra_properties.len());
+        let mut properties: Vec<(String, String)> =
+            Vec::with_capacity(3 + self.extra_properties.len());
         properties.push(("version".to_string(), self.version.clone()));
         properties.push(("instance".to_string(), self.instance_id.clone()));
         properties.push(("name".to_string(), name_value.clone()));
@@ -342,18 +348,22 @@ impl DiscoveryService {
             SERVICE_TYPE,
             &service_name,
             &mdns_hostname,
-            local_ip.as_deref().unwrap_or(""),  // Explicit IP address
+            local_ip.as_deref().unwrap_or(""), // Explicit IP address
             self.osc_port,
             &properties_ref[..],
         )
         .map_err(|e| format!("Failed to create service info: {}", e))?
-        .enable_addr_auto();  // Still enable auto for additional interfaces
+        .enable_addr_auto(); // Still enable auto for additional interfaces
 
         // Store the full name for later unregistration
         self.service_fullname = Some(service_info.get_fullname().to_string());
 
         // Log the addresses the service will advertise
-        let addrs: Vec<_> = service_info.get_addresses().iter().map(|a| a.to_string()).collect();
+        let addrs: Vec<_> = service_info
+            .get_addresses()
+            .iter()
+            .map(|a| a.to_string())
+            .collect();
         log::info!(
             "mDNS service will advertise on addresses: {:?} (addr_auto enabled), properties: {:?}",
             addrs,
@@ -401,7 +411,8 @@ impl DiscoveryService {
     ///
     /// Returns a task handle that processes discovery events.
     pub fn start_browsing(&self) -> Result<tokio::task::JoinHandle<()>, String> {
-        let receiver = self.daemon
+        let receiver = self
+            .daemon
             .browse(SERVICE_TYPE)
             .map_err(|e| format!("Failed to start browsing: {}", e))?;
 

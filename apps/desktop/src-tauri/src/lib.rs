@@ -2,6 +2,7 @@ mod adapters;
 mod applescript;
 mod bridge;
 mod captions;
+mod commands;
 mod config;
 mod generated_constants;
 mod ontime;
@@ -9,16 +10,15 @@ mod osc;
 mod output;
 mod sidecar;
 mod state;
-mod commands;
 mod webserver;
 
+use crate::osc::{OscServer, StateManager};
+use crate::state::AppState;
+use sherpresent_core::{DiscoveredPeer, DiscoveryService};
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use sherpresent_core::{DiscoveryService, DiscoveredPeer};
-use crate::state::AppState;
-use crate::osc::{OscServer, StateManager};
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -135,7 +135,11 @@ pub fn run() {
                 // Native outputs run independently of the caption engine and
                 // the presentation, so a receiver stays wired up between talks.
                 let sources = state.output_sources();
-                state.outputs.lock().unwrap().reconcile(app.handle(), &sources, &config);
+                state
+                    .outputs
+                    .lock()
+                    .unwrap()
+                    .reconcile(app.handle(), &sources, &config);
             }
 
             let app_handle = app.handle().clone();
@@ -163,7 +167,10 @@ pub fn run() {
 
             // Auto-start OSC server
             tauri::async_runtime::spawn(async move {
-                log::info!("Auto-starting OSC server on port {}", osc_config.receive_port);
+                log::info!(
+                    "Auto-starting OSC server on port {}",
+                    osc_config.receive_port
+                );
 
                 // Create state change channel
                 let (state_change_tx, state_change_rx) =
@@ -275,7 +282,10 @@ pub fn run() {
                 let web_server_config = config.web_server.clone();
 
                 tauri::async_runtime::spawn(async move {
-                    log::info!("Auto-starting web server on port {}", web_server_config.port);
+                    log::info!(
+                        "Auto-starting web server on port {}",
+                        web_server_config.port
+                    );
 
                     let state = app_handle3.state::<AppState>();
                     match state.start_web_server(web_server_config).await {
@@ -330,7 +340,8 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .item(&quit_i)
         .build()?;
 
-    let icon = app.default_window_icon()
+    let icon = app
+        .default_window_icon()
         .cloned()
         .ok_or("Failed to get default window icon")?;
 

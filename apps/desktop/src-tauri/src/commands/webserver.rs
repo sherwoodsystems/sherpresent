@@ -19,9 +19,7 @@ pub fn is_web_server_running(state: tauri::State<AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn get_web_server_url(
-    app: tauri::AppHandle,
-) -> Result<String, String> {
+pub fn get_web_server_url(app: tauri::AppHandle) -> Result<String, String> {
     let cfg = config::load_config(&app)?;
     Ok(crate::commands::network::lan_url(cfg.web_server.port, ""))
 }

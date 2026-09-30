@@ -145,7 +145,11 @@ pub struct BridgeConfig {
     #[serde(default = "default_log_level")]
     pub log_level: String,
     /// Unique bridge UUID; auto-generated on first run.
-    #[serde(default = "Uuid::new_v4", rename = "bridge_id", serialize_with = "serialize_uuid")]
+    #[serde(
+        default = "Uuid::new_v4",
+        rename = "bridge_id",
+        serialize_with = "serialize_uuid"
+    )]
     pub bridge_id: Uuid,
     /// Human-readable bridge name; auto-generated on first run if absent.
     #[serde(default = "auto_bridge_name", rename = "bridge_name")]
@@ -161,14 +165,11 @@ pub struct BridgeConfig {
 
 /// Deserialize the devices map, tolerating (and discarding) legacy `null`
 /// slot entries from the old fixed-slot config schema.
-fn deserialize_devices<'de, D>(
-    deserializer: D,
-) -> Result<BTreeMap<String, DeviceConfig>, D::Error>
+fn deserialize_devices<'de, D>(deserializer: D) -> Result<BTreeMap<String, DeviceConfig>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let raw: BTreeMap<String, Option<DeviceConfig>> =
-        BTreeMap::deserialize(deserializer)?;
+    let raw: BTreeMap<String, Option<DeviceConfig>> = BTreeMap::deserialize(deserializer)?;
     Ok(raw
         .into_iter()
         .filter_map(|(k, v)| v.map(|device| (k, device)))
@@ -262,8 +263,8 @@ pub fn load_config(config_dir: Option<&Path>) -> Result<BridgeConfig, String> {
     let content =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    let mut config: BridgeConfig = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let mut config: BridgeConfig =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     // Backfill bridge_id / bridge_name for older configs that may not have them.
     let dirty = (config.bridge_name.is_empty() || config.bridge_name == "Bridge ")

@@ -80,7 +80,10 @@ pub fn notes(src: NotesSources, timer: Option<watch::Receiver<TimerState>>) -> F
         // Subscribe before snapshotting, so nothing published in between is lost.
         let status = BroadcastStream::new(src.status_broadcast.subscribe());
         let notes = BroadcastStream::new(src.notes_broadcast.subscribe());
-        let mut opening = vec![message("status", &src.current_status()), src.notes_message()];
+        let mut opening = vec![
+            message("status", &src.current_status()),
+            src.notes_message(),
+        ];
 
         let timer: FeedStream = match &timer {
             Some(rx) => {
@@ -96,7 +99,8 @@ pub fn notes(src: NotesSources, timer: Option<watch::Receiver<TimerState>>) -> F
 
         // Lagged: resend the current state rather than the backlog.
         let s = src.clone();
-        let status = status.map(move |r| message("status", &r.unwrap_or_else(|_| s.current_status())));
+        let status =
+            status.map(move |r| message("status", &r.unwrap_or_else(|_| s.current_status())));
         let s = src.clone();
         let notes = notes.map(move |r| match r {
             Ok(n) => message("notes", &n),
@@ -140,7 +144,10 @@ mod tests {
         assert_eq!(next(&mut feed).await["payload"]["connected"], false);
 
         src.status_broadcast
-            .send(LiveStatus { current_slide: 7, ..Default::default() })
+            .send(LiveStatus {
+                current_slide: 7,
+                ..Default::default()
+            })
             .unwrap();
         assert_eq!(next(&mut feed).await["payload"]["current_slide"], 7);
 

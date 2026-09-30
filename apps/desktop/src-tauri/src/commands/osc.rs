@@ -1,8 +1,8 @@
-use tauri::{AppHandle, Emitter};
-use std::sync::Arc;
 use crate::config::AppConfig;
+use crate::osc::{CachedState, OscServer, StateManager};
 use crate::state::AppState;
-use crate::osc::{OscServer, StateManager, CachedState};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
 
 /// Start the native OSC server.
 #[tauri::command]
@@ -35,8 +35,7 @@ pub async fn start_osc_server(
     }
 
     // Create state change channel
-    let (state_change_tx, state_change_rx) =
-        tokio::sync::mpsc::channel::<CachedState>(32);
+    let (state_change_tx, state_change_rx) = tokio::sync::mpsc::channel::<CachedState>(32);
 
     // Create state manager
     let state_manager = Arc::new(StateManager::new(

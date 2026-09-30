@@ -8,5 +8,5 @@
 //! Windows and SherPresent desktop on macOS/Linux.
 
 pub mod feedback;
-pub mod sender;
 pub mod messages;
+pub mod sender;

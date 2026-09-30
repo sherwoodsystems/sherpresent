@@ -63,7 +63,11 @@ pub fn env_override(var: &str) -> Result<Option<PathBuf>, String> {
     }
     let path = PathBuf::from(raw);
     if !path.is_file() {
-        return Err(format!("{} points at a missing file: {}", var, path.display()));
+        return Err(format!(
+            "{} points at a missing file: {}",
+            var,
+            path.display()
+        ));
     }
     Ok(Some(path))
 }

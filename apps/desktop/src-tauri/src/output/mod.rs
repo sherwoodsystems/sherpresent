@@ -135,7 +135,9 @@ impl Outputs {
             |key, path, shutdown, report| {
                 let feed = feed::captions(captions);
                 let name = key.server_name.clone();
-                tauri::async_runtime::spawn(syphon::run(path, "captions", name, feed, shutdown, report));
+                tauri::async_runtime::spawn(syphon::run(
+                    path, "captions", name, feed, shutdown, report,
+                ));
             },
         );
 
@@ -160,14 +162,20 @@ impl Outputs {
                 });
                 let feed = feed::notes(notes, timer);
                 let name = key.syphon.server_name.clone();
-                tauri::async_runtime::spawn(syphon::run(path, "notes", name, feed, shutdown, report));
+                tauri::async_runtime::spawn(syphon::run(
+                    path, "notes", name, feed, shutdown, report,
+                ));
             },
         );
     }
 
     /// Reports into one field of the shared status, and pushes the whole
     /// snapshot to the frontend.
-    fn reporter(&self, app: &AppHandle, field: fn(&mut OutputsStatus) -> &mut OutputStatus) -> StatusReporter {
+    fn reporter(
+        &self,
+        app: &AppHandle,
+        field: fn(&mut OutputsStatus) -> &mut OutputStatus,
+    ) -> StatusReporter {
         let status = Arc::clone(&self.status);
         let app = app.clone();
         Arc::new(move |s: OutputStatus| {

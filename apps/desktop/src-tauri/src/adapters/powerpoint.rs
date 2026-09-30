@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 use super::parse_notes_response;
+use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 use crate::applescript::{is_app_running, run_applescript};
+use std::collections::HashMap;
 
 const APP_NAME: &str = "Microsoft PowerPoint";
 
@@ -27,7 +27,10 @@ impl PresentationAdapter for PowerPointAdapter {
 
     fn get_presentation_state(&self, name: &str) -> Result<PresentationState, String> {
         if !is_app_running(APP_NAME) {
-            return Ok(PresentationState { is_open: false, is_presenting: false });
+            return Ok(PresentationState {
+                is_open: false,
+                is_presenting: false,
+            });
         }
 
         let script = format!(
@@ -96,7 +99,11 @@ impl PresentationAdapter for PowerPointAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total, transition_duration: None })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+        })
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -132,7 +139,11 @@ impl PresentationAdapter for PowerPointAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total, transition_duration: None })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+        })
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
@@ -168,7 +179,11 @@ impl PresentationAdapter for PowerPointAdapter {
             .parse()
             .map_err(|_| "Failed to parse total slides")?;
 
-        Ok(SlideInfo { current, total, transition_duration: None })
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+        })
     }
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
@@ -198,15 +213,9 @@ impl PresentationAdapter for PowerPointAdapter {
         );
 
         match run_applescript(&script) {
-            Ok(result) if result.trim().is_empty() || result.trim() == "missing value" => {
-                Ok(None)
-            },
-            Ok(result) => {
-                Ok(Some(result))
-            },
-            Err(_) => {
-                Ok(None)
-            },
+            Ok(result) if result.trim().is_empty() || result.trim() == "missing value" => Ok(None),
+            Ok(result) => Ok(Some(result)),
+            Err(_) => Ok(None),
         }
     }
 
@@ -368,7 +377,10 @@ impl PresentationAdapter for PowerPointAdapter {
                 let is_presenting = parts[1].trim() == "true";
                 let current_slide = parts[2].trim().parse().unwrap_or(0);
                 let total_slides = parts[3].trim().parse().unwrap_or(0);
-                let notes = if parts.len() >= 5 && !parts[4].trim().is_empty() && parts[4].trim() != "missing value" {
+                let notes = if parts.len() >= 5
+                    && !parts[4].trim().is_empty()
+                    && parts[4].trim() != "missing value"
+                {
                     Some(parts[4].to_string())
                 } else {
                     None

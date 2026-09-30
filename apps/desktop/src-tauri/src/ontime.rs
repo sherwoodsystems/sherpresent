@@ -65,23 +65,26 @@ fn stopping(shutdown: &watch::Receiver<bool>) -> bool {
 
 /// One connection, until it drops.
 async fn follow(url: &str, tx: &watch::Sender<TimerState>) {
-    let mut ws = match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await {
-        Ok(Ok((ws, _))) => ws,
-        Ok(Err(e)) => {
-            log::debug!("Ontime connect to {} failed: {}", url, e);
-            return;
-        }
-        Err(_) => {
-            log::debug!("Ontime connect to {} timed out", url);
-            return;
-        }
-    };
+    let mut ws =
+        match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await {
+            Ok(Ok((ws, _))) => ws,
+            Ok(Err(e)) => {
+                log::debug!("Ontime connect to {} failed: {}", url, e);
+                return;
+            }
+            Err(_) => {
+                log::debug!("Ontime connect to {} timed out", url);
+                return;
+            }
+        };
     log::info!("Connected to Ontime at {}", url);
     tx.send_if_modified(|t| !std::mem::replace(&mut t.connected, true));
 
     while let Some(Ok(msg)) = ws.next().await {
         let Message::Text(text) = msg else { continue };
-        let Ok(v) = serde_json::from_str::<Value>(text.as_str()) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(text.as_str()) else {
+            continue;
+        };
         tx.send_if_modified(|t| apply(t, &v));
     }
     log::info!("Disconnected from Ontime at {}", url);
@@ -92,15 +95,24 @@ fn apply(t: &mut TimerState, v: &Value) -> bool {
     if v.get("tag").and_then(Value::as_str) != Some("runtime-data") {
         return false;
     }
-    let Some(p) = v.get("payload") else { return false };
+    let Some(p) = v.get("payload") else {
+        return false;
+    };
     let mut next = t.clone();
     if let Some(timer) = p.get("timer").filter(|t| t.is_object()) {
         next.current = timer.get("current").and_then(Value::as_f64);
-        next.playback = timer.get("playback").and_then(Value::as_str).map(str::to_string);
+        next.playback = timer
+            .get("playback")
+            .and_then(Value::as_str)
+            .map(str::to_string);
     }
     // Like the stage page: a message without an event keeps the last title.
     if let Some(event) = p.get("eventNow").filter(|e| e.is_object()) {
-        next.title = event.get("title").and_then(Value::as_str).unwrap_or_default().to_string();
+        next.title = event
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
     }
     let changed = next != *t;
     *t = next;
@@ -113,7 +125,10 @@ mod tests {
 
     #[test]
     fn test_apply_reads_timer_and_event() {
-        let mut t = TimerState { connected: true, ..Default::default() };
+        let mut t = TimerState {
+            connected: true,
+            ..Default::default()
+        };
         let msg = serde_json::json!({
             "tag": "runtime-data",
             "payload": {
@@ -130,7 +145,10 @@ mod tests {
 
     #[test]
     fn test_apply_keeps_title_and_ignores_other_tags() {
-        let mut t = TimerState { title: "Keynote".into(), ..Default::default() };
+        let mut t = TimerState {
+            title: "Keynote".into(),
+            ..Default::default()
+        };
         let no_event = serde_json::json!({
             "tag": "runtime-data",
             "payload": { "timer": { "current": -5000, "playback": "play" }, "eventNow": null }

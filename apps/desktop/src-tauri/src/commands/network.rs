@@ -14,7 +14,11 @@ pub fn lan_url(port: u16, path: &str) -> String {
 #[tauri::command]
 pub fn get_local_ip() -> Option<String> {
     let ip = get_local_ip_internal();
-    if ip == "127.0.0.1" { None } else { Some(ip) }
+    if ip == "127.0.0.1" {
+        None
+    } else {
+        Some(ip)
+    }
 }
 
 /// Get all available network interfaces for mDNS service advertisement.

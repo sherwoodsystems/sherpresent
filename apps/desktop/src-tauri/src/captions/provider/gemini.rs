@@ -101,7 +101,11 @@ async fn run_loop(
                 let _ = events.send(ProviderEvent::Reconnecting {
                     reason: reason.clone(),
                 });
-                log::warn!("Gemini session failed ({}), retrying in {:?}", reason, backoff);
+                log::warn!(
+                    "Gemini session failed ({}), retrying in {:?}",
+                    reason,
+                    backoff
+                );
 
                 tokio::select! {
                     _ = tokio::time::sleep(backoff) => {}
@@ -181,7 +185,10 @@ async fn run_session(
         log::debug!("Dropped {} stale audio chunks on reconnect", dropped);
     }
     for chunk in &carryover {
-        if let Err(e) = sink.send(Message::text(audio_frame(chunk).to_string())).await {
+        if let Err(e) = sink
+            .send(Message::text(audio_frame(chunk).to_string()))
+            .await
+        {
             return SessionOutcome::Failed {
                 handle: resume_handle,
                 reason: format!("failed to send carryover audio: {}", e),
@@ -460,9 +467,9 @@ mod tests {
     #[test]
     fn test_setup_omits_source_language_when_auto() {
         let setup = build_setup(&cfg(), None);
-        assert!(setup["setup"]["generationConfig"]["translationConfig"]
-            ["sourceLanguageCode"]
-            .is_null());
+        assert!(
+            setup["setup"]["generationConfig"]["translationConfig"]["sourceLanguageCode"].is_null()
+        );
     }
 
     #[test]

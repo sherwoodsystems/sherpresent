@@ -19,7 +19,11 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
 
     // Start/stop/rename native outputs to match; unchanged ones are untouched.
     let sources = state.output_sources();
-    state.outputs.lock().unwrap().reconcile(&app, &sources, &config);
+    state
+        .outputs
+        .lock()
+        .unwrap()
+        .reconcile(&app, &sources, &config);
 
     Ok(())
 }

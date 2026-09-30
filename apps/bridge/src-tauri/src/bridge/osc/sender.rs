@@ -83,7 +83,13 @@ impl OscSender {
                 sleep(RETRY_GAP).await;
             }
         }
-        log::debug!("Sent {} -> {} ({}B x{})", address, self.target, bytes.len(), RETRIES + 1);
+        log::debug!(
+            "Sent {} -> {} ({}B x{})",
+            address,
+            self.target,
+            bytes.len(),
+            RETRIES + 1
+        );
     }
 }
 

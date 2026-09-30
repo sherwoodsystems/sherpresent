@@ -163,7 +163,8 @@ impl OscFeedback {
         ];
 
         // Build/animation step info (only sent when builds exist on this slide)
-        if let (Some(current_build), Some(total_builds)) = (state.current_build, state.total_builds) {
+        if let (Some(current_build), Some(total_builds)) = (state.current_build, state.total_builds)
+        {
             messages.push(OscMessage {
                 addr: "/clicker/slide/build".to_string(),
                 args: vec![OscType::Int(current_build)],
@@ -198,7 +199,10 @@ mod tests {
 
     #[test]
     fn test_command_parsing() {
-        assert_eq!(OscCommand::from_message("/clicker/next", &[]), OscCommand::Next);
+        assert_eq!(
+            OscCommand::from_message("/clicker/next", &[]),
+            OscCommand::Next
+        );
         assert_eq!(
             OscCommand::from_message("/clicker/prev", &[]),
             OscCommand::Previous
@@ -207,7 +211,10 @@ mod tests {
             OscCommand::from_message("/clicker/previous", &[]),
             OscCommand::Previous
         );
-        assert_eq!(OscCommand::from_message("/clicker/zoom", &[]), OscCommand::Zoom);
+        assert_eq!(
+            OscCommand::from_message("/clicker/zoom", &[]),
+            OscCommand::Zoom
+        );
         assert_eq!(
             OscCommand::from_message("/clicker/zoomIn", &[]),
             OscCommand::ZoomIn

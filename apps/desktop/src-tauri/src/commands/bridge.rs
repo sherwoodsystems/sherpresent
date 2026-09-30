@@ -7,7 +7,10 @@ pub async fn bridge_get_status(host: String, config_port: u16) -> Result<BridgeS
 }
 
 #[tauri::command]
-pub async fn bridge_get_config(host: String, config_port: u16) -> Result<BridgeGlobalConfig, String> {
+pub async fn bridge_get_config(
+    host: String,
+    config_port: u16,
+) -> Result<BridgeGlobalConfig, String> {
     BridgeApiClient::new(&host, config_port).get_config().await
 }
 
@@ -17,16 +20,23 @@ pub async fn bridge_save_config(
     config_port: u16,
     config: SaveGlobalConfigRequest,
 ) -> Result<BridgeApiResponse, String> {
-    BridgeApiClient::new(&host, config_port).save_config(config).await
+    BridgeApiClient::new(&host, config_port)
+        .save_config(config)
+        .await
 }
 
 #[tauri::command]
 pub async fn bridge_get_feedback(host: String, config_port: u16) -> Result<BridgeFeedback, String> {
-    BridgeApiClient::new(&host, config_port).get_feedback().await
+    BridgeApiClient::new(&host, config_port)
+        .get_feedback()
+        .await
 }
 
 #[tauri::command]
-pub async fn bridge_get_devices(host: String, config_port: u16) -> Result<BridgeConnectedDevices, String> {
+pub async fn bridge_get_devices(
+    host: String,
+    config_port: u16,
+) -> Result<BridgeConnectedDevices, String> {
     BridgeApiClient::new(&host, config_port).get_devices().await
 }
 
@@ -35,7 +45,9 @@ pub async fn bridge_get_registered_devices(
     host: String,
     config_port: u16,
 ) -> Result<BridgeRegisteredDevices, String> {
-    BridgeApiClient::new(&host, config_port).get_registered_devices().await
+    BridgeApiClient::new(&host, config_port)
+        .get_registered_devices()
+        .await
 }
 
 #[tauri::command]
@@ -44,7 +56,9 @@ pub async fn bridge_start_registration(
     config_port: u16,
     slot: String,
 ) -> Result<BridgeApiResponse, String> {
-    BridgeApiClient::new(&host, config_port).start_registration(&slot).await
+    BridgeApiClient::new(&host, config_port)
+        .start_registration(&slot)
+        .await
 }
 
 #[tauri::command]
@@ -52,7 +66,9 @@ pub async fn bridge_cancel_registration(
     host: String,
     config_port: u16,
 ) -> Result<BridgeApiResponse, String> {
-    BridgeApiClient::new(&host, config_port).cancel_registration().await
+    BridgeApiClient::new(&host, config_port)
+        .cancel_registration()
+        .await
 }
 
 #[tauri::command]
@@ -74,7 +90,9 @@ pub async fn bridge_get_registration_status(
     host: String,
     config_port: u16,
 ) -> Result<BridgeRegistrationStatus, String> {
-    BridgeApiClient::new(&host, config_port).get_registration_status().await
+    BridgeApiClient::new(&host, config_port)
+        .get_registration_status()
+        .await
 }
 
 #[tauri::command]
@@ -83,7 +101,9 @@ pub async fn bridge_unregister_device(
     config_port: u16,
     slot: String,
 ) -> Result<BridgeApiResponse, String> {
-    BridgeApiClient::new(&host, config_port).unregister_device(&slot).await
+    BridgeApiClient::new(&host, config_port)
+        .unregister_device(&slot)
+        .await
 }
 
 #[tauri::command]
@@ -93,7 +113,9 @@ pub async fn bridge_test_device(
     slot: String,
     command: String,
 ) -> Result<BridgeApiResponse, String> {
-    BridgeApiClient::new(&host, config_port).test_device(&slot, &command).await
+    BridgeApiClient::new(&host, config_port)
+        .test_device(&slot, &command)
+        .await
 }
 
 #[tauri::command]
@@ -111,5 +133,7 @@ pub async fn bridge_get_satellite_status(
     host: String,
     config_port: u16,
 ) -> Result<BridgeSatelliteStatus, String> {
-    BridgeApiClient::new(&host, config_port).get_satellite_status().await
+    BridgeApiClient::new(&host, config_port)
+        .get_satellite_status()
+        .await
 }

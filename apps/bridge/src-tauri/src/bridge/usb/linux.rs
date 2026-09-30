@@ -88,7 +88,9 @@ async fn scan_loop(state: Arc<LinuxState>) {
             } else {
                 log::info!("USB: input device access restored");
             }
-            let _ = state.event_tx.send(UsbEvent::AccessDenied { count: denied });
+            let _ = state
+                .event_tx
+                .send(UsbEvent::AccessDenied { count: denied });
         }
 
         // Clean up any reader tasks that have exited (device disconnected).
@@ -298,8 +300,9 @@ fn sysfs_reports_keys(path: &Path) -> bool {
     else {
         return false;
     };
-    let key_caps =
-        PathBuf::from(format!("/sys/class/input/event{event_num}/device/capabilities/key"));
+    let key_caps = PathBuf::from(format!(
+        "/sys/class/input/event{event_num}/device/capabilities/key"
+    ));
     match std::fs::read_to_string(key_caps) {
         // The capabilities bitmap is a space-separated list of hex words; if any
         // word is nonzero the device can emit keys.

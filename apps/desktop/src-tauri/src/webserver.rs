@@ -131,7 +131,11 @@ struct CommandResponse {
 }
 
 /// Execute a command on the StateManager
-fn execute_command(state_manager: &StateManager, action: &str, slide: Option<i32>) -> Result<(), String> {
+fn execute_command(
+    state_manager: &StateManager,
+    action: &str,
+    slide: Option<i32>,
+) -> Result<(), String> {
     match action {
         "next" => {
             state_manager.next_slide(CommandSource::Ws);
@@ -175,9 +179,7 @@ struct StateResponse {
     notes: HashMap<i32, String>,
 }
 
-async fn state_handler(
-    AxumState(state): AxumState<WebServerState>,
-) -> Json<StateResponse> {
+async fn state_handler(AxumState(state): AxumState<WebServerState>) -> Json<StateResponse> {
     let status = state.last_status.lock().unwrap().clone();
     let notes = state.notes_cache.lock().unwrap().clone();
 
@@ -200,18 +202,30 @@ async fn command_handler(
     match cmd.action.as_str() {
         "scrollUp" => {
             let _ = state.scroll_broadcast.send(ScrollDirection::Up);
-            return Json(CommandResponse { ok: true, error: None });
+            return Json(CommandResponse {
+                ok: true,
+                error: None,
+            });
         }
         "scrollDown" => {
             let _ = state.scroll_broadcast.send(ScrollDirection::Down);
-            return Json(CommandResponse { ok: true, error: None });
+            return Json(CommandResponse {
+                ok: true,
+                error: None,
+            });
         }
         _ => {}
     }
 
     match execute_command(sm, &cmd.action, cmd.slide) {
-        Ok(()) => Json(CommandResponse { ok: true, error: None }),
-        Err(e) => Json(CommandResponse { ok: false, error: Some(e) }),
+        Ok(()) => Json(CommandResponse {
+            ok: true,
+            error: None,
+        }),
+        Err(e) => Json(CommandResponse {
+            ok: false,
+            error: Some(e),
+        }),
     }
 }
 
@@ -242,10 +256,18 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
         "payload": initial_notes,
     });
 
-    if socket.send(Message::Text(status_json.to_string().into())).await.is_err() {
+    if socket
+        .send(Message::Text(status_json.to_string().into()))
+        .await
+        .is_err()
+    {
         return;
     }
-    if socket.send(Message::Text(notes_json.to_string().into())).await.is_err() {
+    if socket
+        .send(Message::Text(notes_json.to_string().into()))
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -356,9 +378,7 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
     log::info!("WebSocket client disconnected");
 }
 
-async fn page_handler(
-    AxumState(state): AxumState<WebServerState>,
-) -> Html<String> {
+async fn page_handler(AxumState(state): AxumState<WebServerState>) -> Html<String> {
     let ontime_host = html_escape(&state.ontime_host);
     let ontime_port = state.ontime_port;
     let font_size = state.font_size;
@@ -405,7 +425,11 @@ async fn captions_ws_handler(
 
 /// `pins` is the overlay page's own query string, forwarded by the page, so
 /// every `settings` message this socket sends has the URL's pins applied.
-async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState, pins: HashMap<String, String>) {
+async fn handle_captions_ws(
+    mut socket: WebSocket,
+    state: WebServerState,
+    pins: HashMap<String, String>,
+) {
     log::info!("Caption overlay connected");
 
     // Subscribe before snapshotting, so nothing published in between is lost.

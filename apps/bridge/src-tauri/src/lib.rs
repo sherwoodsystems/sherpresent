@@ -71,9 +71,7 @@ pub fn run() {
                             crate::bridge::BridgeEvent::UsbConnected(info) => {
                                 let _ = app_handle_events.emit("usb-connected", &info);
                             }
-                            crate::bridge::BridgeEvent::UsbDisconnected {
-                                device_id,
-                            } => {
+                            crate::bridge::BridgeEvent::UsbDisconnected { device_id } => {
                                 let _ = app_handle_events.emit("usb-disconnected", &device_id);
                             }
                             crate::bridge::BridgeEvent::UsbAccessDenied { count } => {

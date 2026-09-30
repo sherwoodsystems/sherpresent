@@ -99,7 +99,10 @@ impl OscServer {
     }
 
     /// Set the scroll broadcast channel for forwarding scroll commands to the web server.
-    pub fn with_scroll_broadcast(mut self, tx: tokio::sync::broadcast::Sender<ScrollDirection>) -> Self {
+    pub fn with_scroll_broadcast(
+        mut self,
+        tx: tokio::sync::broadcast::Sender<ScrollDirection>,
+    ) -> Self {
         self.scroll_broadcast = Some(tx);
         self
     }
@@ -262,10 +265,9 @@ impl OscServer {
         let mut addrs = Vec::with_capacity(destinations.len());
 
         for dest in destinations {
-            let addr: SocketAddr = dest
-                .to_addr_string()
-                .parse()
-                .map_err(|e| format!("Invalid feedback address {}: {}", dest.to_addr_string(), e))?;
+            let addr: SocketAddr = dest.to_addr_string().parse().map_err(|e| {
+                format!("Invalid feedback address {}: {}", dest.to_addr_string(), e)
+            })?;
             addrs.push(addr);
         }
 
@@ -282,8 +284,14 @@ impl OscServer {
     ) {
         match packet {
             OscPacket::Message(msg) => {
-                Self::handle_message(&msg, state_manager, feedback_socket, feedback_addrs, scroll_tx)
-                    .await;
+                Self::handle_message(
+                    &msg,
+                    state_manager,
+                    feedback_socket,
+                    feedback_addrs,
+                    scroll_tx,
+                )
+                .await;
             }
             OscPacket::Bundle(bundle) => {
                 for packet in bundle.content {
@@ -371,11 +379,7 @@ impl OscServer {
     // =========================================================================
 
     /// Send all state feedback messages to all destinations.
-    async fn send_feedback_to_all(
-        state: &CachedState,
-        socket: &UdpSocket,
-        addrs: &[SocketAddr],
-    ) {
+    async fn send_feedback_to_all(state: &CachedState, socket: &UdpSocket, addrs: &[SocketAddr]) {
         let messages = OscFeedback::from_state(state);
 
         for msg in messages {

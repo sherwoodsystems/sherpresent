@@ -125,9 +125,11 @@ pub(crate) fn validate_apple_config(config: &ProviderConfig) -> Result<(), Strin
     if source.is_empty() {
         // Gemini auto-detects; Apple's Speech and Translation frameworks both
         // need an explicit source locale up front.
-        return Err("The Apple provider cannot auto-detect the spoken language. \
+        return Err(
+            "The Apple provider cannot auto-detect the spoken language. \
                     Set a Spoken Language (for example en-US) in Settings."
-            .to_string());
+                .to_string(),
+        );
     }
     if config.target_language.trim().is_empty() {
         return Err("Set a Target Language in Settings.".to_string());
@@ -221,7 +223,11 @@ mod tests {
     #[test]
     fn test_validate_apple_config_requires_target_language() {
         let err = validate_apple_config(&apple_cfg(Some("en-US"), "  ")).unwrap_err();
-        assert!(err.contains("Target Language"), "unexpected message: {}", err);
+        assert!(
+            err.contains("Target Language"),
+            "unexpected message: {}",
+            err
+        );
     }
 
     #[test]

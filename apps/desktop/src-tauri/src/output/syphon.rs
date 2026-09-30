@@ -113,7 +113,11 @@ pub async fn run(
                 return;
             }
             SessionEnd::Failed { reason, was_ready } => {
-                log::warn!("Syphon {} output helper failed, restarting: {}", content, reason);
+                log::warn!(
+                    "Syphon {} output helper failed, restarting: {}",
+                    content,
+                    reason
+                );
                 if was_ready {
                     backoff = BACKOFF_START;
                 }
@@ -156,7 +160,11 @@ async fn run_session(
     // updates queue from here on; nothing is lost while the helper starts.
     let mut feed = feed();
 
-    log::info!("Starting output helper: {} {}", path.display(), args.join(" "));
+    log::info!(
+        "Starting output helper: {} {}",
+        path.display(),
+        args.join(" ")
+    );
     let mut child = match tokio::process::Command::new(path)
         .args(args)
         .stdin(Stdio::piped())
@@ -284,8 +292,13 @@ fn build_args(content: &str, name: &str) -> Vec<String> {
 #[derive(Debug, PartialEq)]
 enum HelperLine {
     /// `ready` or `sinks`: both report receiver state, which is all we use.
-    Sinks { has_clients: bool },
-    Error { fatal: bool, message: String },
+    Sinks {
+        has_clients: bool,
+    },
+    Error {
+        fatal: bool,
+        message: String,
+    },
     Ignore,
 }
 
@@ -296,12 +309,15 @@ fn parse_line(line: &str) -> HelperLine {
         return HelperLine::Ignore;
     };
     let any_clients = |v: &Value| {
-        v.get("sinks")
-            .and_then(Value::as_array)
-            .is_some_and(|s| s.iter().any(|s| s.get("hasClients") == Some(&Value::Bool(true))))
+        v.get("sinks").and_then(Value::as_array).is_some_and(|s| {
+            s.iter()
+                .any(|s| s.get("hasClients") == Some(&Value::Bool(true)))
+        })
     };
     match v.get("type").and_then(Value::as_str) {
-        Some("ready" | "sinks") => HelperLine::Sinks { has_clients: any_clients(&v) },
+        Some("ready" | "sinks") => HelperLine::Sinks {
+            has_clients: any_clients(&v),
+        },
         Some("error") => HelperLine::Error {
             fatal: v.get("fatal").and_then(Value::as_bool).unwrap_or(false),
             message: v
@@ -319,8 +335,8 @@ mod tests {
     use super::*;
     use crate::captions::{CaptionSegment, CaptionSinks, CaptionUpdate};
     use crate::output::feed;
-    use std::sync::Mutex;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
 
     #[test]
     fn test_parse_line() {
@@ -334,7 +350,10 @@ mod tests {
         );
         assert_eq!(
             parse_line(r#"{"type":"error","fatal":true,"message":"no Metal"}"#),
-            HelperLine::Error { fatal: true, message: "no Metal".into() }
+            HelperLine::Error {
+                fatal: true,
+                message: "no Metal".into()
+            }
         );
         assert_eq!(parse_line("garbage"), HelperLine::Ignore);
         assert_eq!(parse_line(r#"{"type":"future"}"#), HelperLine::Ignore);
@@ -344,10 +363,18 @@ mod tests {
     fn test_build_args() {
         assert_eq!(
             build_args("notes", "Stage Left"),
-            ["--protocol", "2", "--content", "notes", "--sink", "syphon", "--name", "Stage Left"]
+            [
+                "--protocol",
+                "2",
+                "--content",
+                "notes",
+                "--sink",
+                "syphon",
+                "--name",
+                "Stage Left"
+            ]
         );
     }
-
 
     /// An executable shell script standing in for the helper.
     fn fake_script(tag: &str, body: &str) -> PathBuf {
@@ -385,12 +412,17 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        panic!("{} never appeared in {}", needle, std::fs::read_to_string(log).unwrap_or_default());
+        panic!(
+            "{} never appeared in {}",
+            needle,
+            std::fs::read_to_string(log).unwrap_or_default()
+        );
     }
 
     #[tokio::test]
     async fn test_forwards_state_segments_and_settings() {
-        let log = std::env::temp_dir().join(format!("sp-output-forward-{}.log", std::process::id()));
+        let log =
+            std::env::temp_dir().join(format!("sp-output-forward-{}.log", std::process::id()));
         let _ = std::fs::remove_file(&log);
         let script = fake_helper(&log);
 
@@ -421,7 +453,12 @@ mod tests {
 
         // Wait for ready before publishing, so the subscription is live.
         for _ in 0..100 {
-            if statuses.lock().unwrap().iter().any(|s| s.state == OutputState::Running) {
+            if statuses
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|s| s.state == OutputState::Running)
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -445,8 +482,14 @@ mod tests {
         wait_for(&log, "\"fontSize\":99").await;
 
         stop_tx.send(true).unwrap();
-        timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
-        assert_eq!(statuses.lock().unwrap().last().unwrap().state, OutputState::Stopped);
+        timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            statuses.lock().unwrap().last().unwrap().state,
+            OutputState::Stopped
+        );
     }
 
     #[tokio::test]
@@ -457,9 +500,19 @@ mod tests {
         );
         let (statuses, report) = recorder();
         let (_stop_tx, stop_rx) = watch::channel(false);
-        timeout(Duration::from_secs(5), run(script, "captions", "Test".into(), feed::captions(CaptionSinks::default()), stop_rx, report))
-            .await
-            .expect("fatal error must end run() without retrying");
+        timeout(
+            Duration::from_secs(5),
+            run(
+                script,
+                "captions",
+                "Test".into(),
+                feed::captions(CaptionSinks::default()),
+                stop_rx,
+                report,
+            ),
+        )
+        .await
+        .expect("fatal error must end run() without retrying");
 
         let last = statuses.lock().unwrap().last().cloned().unwrap();
         assert_eq!(last.state, OutputState::Error);
