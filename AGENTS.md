@@ -17,7 +17,7 @@ Specialized knowledge areas for this codebase.
 - `#[cfg(target_os = "...")]` for platform-specific code
 - `Result<T, String>` at Tauri boundaries
 
-**Test**: `cd apps/desktop/src-tauri && cargo test`
+**Test**: `cargo test --workspace` (from the repo root); everything: `scripts/check-all.sh`
 
 ## Frontend
 

@@ -24,7 +24,13 @@ bun install
 bun tauri dev      # Development
 bun tauri build    # Production
 bun run check      # Type checking
+bun run lint       # ESLint + Prettier check (`bun run format` to fix)
+bun run test       # Vitest
+bun run macos:test # Swift helper tests (`macos:format` to format them)
 ```
+
+`scripts/check-all.sh` runs every check in the repo (Rust fmt/clippy/tests,
+both frontends, Swift lint/tests). Run it before committing.
 
 For Rust debugging: `RUST_LOG=debug bun tauri dev`
 

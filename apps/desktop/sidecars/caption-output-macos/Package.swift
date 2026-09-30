@@ -44,6 +44,12 @@ let package = Package(
                 .linkedFramework("CoreText"),
             ]
         ),
+        .testTarget(
+            name: "sherpresent-output-tests",
+            dependencies: ["sherpresent-output"],
+            path: "Tests/sherpresent-output-tests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         // Dev-only Syphon receiver for end-to-end checks; not bundled.
         .executableTarget(
             name: "syphon-probe",

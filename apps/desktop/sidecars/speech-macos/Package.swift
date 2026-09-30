@@ -12,6 +12,12 @@ let package = Package(
             name: "sherpresent-speech",
             path: "Sources/sherpresent-speech",
             swiftSettings: [.swiftLanguageMode(.v6)]
-        )
+        ),
+        .testTarget(
+            name: "sherpresent-speech-tests",
+            dependencies: ["sherpresent-speech"],
+            path: "Tests/sherpresent-speech-tests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )
