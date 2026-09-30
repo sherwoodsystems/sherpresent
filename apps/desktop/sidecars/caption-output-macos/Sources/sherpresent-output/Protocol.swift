@@ -30,6 +30,30 @@ struct OverlaySettings: Decodable, Equatable {
     var safeArea: Double = 5
     var width: Double = 80
     var shadow: Bool = false
+    var background: Bool = false
+    /// Seconds of silence before the lines clear; 0 = never
+    var clearAfter: Double = 8
+
+    init() {}
+
+    /// Field by field with defaults, so a newer or older app that adds or
+    /// drops a field can't make the whole settings message undecodable.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = OverlaySettings()
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize) ?? d.fontSize
+        maxLines = try c.decodeIfPresent(Int.self, forKey: .maxLines) ?? d.maxLines
+        chromaColor = try c.decodeIfPresent(String.self, forKey: .chromaColor) ?? d.chromaColor
+        safeArea = try c.decodeIfPresent(Double.self, forKey: .safeArea) ?? d.safeArea
+        width = try c.decodeIfPresent(Double.self, forKey: .width) ?? d.width
+        shadow = try c.decodeIfPresent(Bool.self, forKey: .shadow) ?? d.shadow
+        background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? d.background
+        clearAfter = try c.decodeIfPresent(Double.self, forKey: .clearAfter) ?? d.clearAfter
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fontSize, maxLines, chromaColor, safeArea, width, shadow, background, clearAfter
+    }
 }
 
 struct StatusPayload: Decodable {

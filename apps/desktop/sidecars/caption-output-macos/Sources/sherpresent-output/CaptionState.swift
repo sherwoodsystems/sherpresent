@@ -33,6 +33,14 @@ struct CaptionState {
         }
     }
 
+    /// Blank the screen (the silence timeout). The next segment starts fresh.
+    mutating func clear() {
+        finals = []
+        live = nil
+    }
+
+    var isEmpty: Bool { finals.isEmpty && live == nil }
+
     mutating func replay(_ segs: [Segment]) {
         finals = Array(segs.suffix(keepSegments))
         live = nil

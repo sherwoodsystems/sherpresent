@@ -197,6 +197,10 @@ export interface CaptionsConfig {
   width: number;
   /** Drop shadow behind caption text (default off) */
   shadow: boolean;
+  /** Closed-caption style opaque black box behind each row */
+  background: boolean;
+  /** Seconds without new speech before captions clear; 0 = never */
+  clearAfter: number;
   /** Native video outputs beyond the always-on web overlay */
   outputs: CaptionOutputsConfig;
   apiKeys: CaptionApiKeys;
@@ -353,6 +357,8 @@ export const defaultConfig: AppConfig = {
     safeArea: 5,
     width: 80,
     shadow: false,
+    background: false,
+    clearAfter: 8,
     outputs: { syphon: { enabled: false, serverName: 'SherPresent Captions' } },
     apiKeys: { gemini: '', openai: '' }
   }

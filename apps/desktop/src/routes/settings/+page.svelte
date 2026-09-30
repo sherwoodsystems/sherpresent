@@ -1,7 +1,6 @@
 <script lang="ts">
   import OscConfig from '$lib/components/OscConfig.svelte';
   import WebServerConfig from '$lib/components/WebServerConfig.svelte';
-  import CaptionsConfig from '$lib/components/CaptionsConfig.svelte';
   import { appStore } from '$lib/state.svelte';
 </script>
 
@@ -23,13 +22,6 @@
       <WebServerConfig
         config={appStore.config.webServer}
         onchange={(c) => appStore.updateWebServerConfig(c)}
-      />
-    </section>
-
-    <section class="section">
-      <CaptionsConfig
-        config={appStore.config.captions}
-        onchange={(c) => appStore.updateCaptionsConfig(c)}
       />
     </section>
 

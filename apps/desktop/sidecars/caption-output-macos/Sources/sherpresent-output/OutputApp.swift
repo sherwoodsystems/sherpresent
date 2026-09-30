@@ -13,6 +13,7 @@ final class OutputApp {
     private var settings = OverlaySettings()
     private var lastTexts: [String] = []
     private var lastSinkStatus: [SinkStatus] = []
+    private var clearTimer: Timer?
 
     init(args: Args) throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -43,13 +44,19 @@ final class OutputApp {
 
     func handle(_ line: String) {
         switch InMessage.parse(line) {
-        case .segment(let seg): state.apply(seg)
-        case .replay(let segs): state.replay(segs)
+        case .segment(let seg):
+            state.apply(seg)
+            armClear()
+        case .replay(let segs):
+            state.replay(segs)
+            armClear()
         case .status(let s): state.translateEnabled = s.translateEnabled ?? false
         case .settings(let s):
             let changed = s != settings
+            let timeoutChanged = s.clearAfter != settings.clearAfter
             settings = s
             state.keepSegments = s.maxLines * 2 + 2
+            if timeoutChanged { armClear() }
             if changed {
                 redraw(force: true)
                 return
@@ -71,6 +78,21 @@ final class OutputApp {
         }
         sinks.forEach { $0.stop() }
         exit(0)
+    }
+
+    /// Clear the screen after `clearAfter` seconds with no caption activity, so
+    /// a pause in the talk doesn't leave the last sentence hanging on air.
+    /// Mirrors `armClear` in the web overlay.
+    private func armClear() {
+        clearTimer?.invalidate()
+        clearTimer = nil
+        guard settings.clearAfter > 0, !state.isEmpty else { return }
+        clearTimer = Timer.scheduledTimer(withTimeInterval: settings.clearAfter, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                self.state.clear()
+                self.redraw(force: false)
+            }
+        }
     }
 
     private func redraw(force: Bool) {

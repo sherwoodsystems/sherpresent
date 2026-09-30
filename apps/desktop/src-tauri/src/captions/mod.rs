@@ -95,6 +95,10 @@ pub struct OverlaySettings {
     /// % of frame width
     pub width: f32,
     pub shadow: bool,
+    /// Opaque black box behind each row (closed-caption look)
+    pub background: bool,
+    /// Seconds of silence before the lines clear; 0 = never
+    pub clear_after: f32,
 }
 
 impl OverlaySettings {
@@ -106,6 +110,8 @@ impl OverlaySettings {
             safe_area: finite_clamp(c.safe_area, 0.0, 40.0, 5.0),
             width: finite_clamp(c.width, 20.0, 100.0, 80.0),
             shadow: c.shadow,
+            background: c.background,
+            clear_after: finite_clamp(c.clear_after, 0.0, 120.0, 8.0),
         }
     }
 }
@@ -487,7 +493,16 @@ mod tests {
     #[test]
     fn test_overlay_settings_serialize_camel_case() {
         let json = serde_json::to_value(OverlaySettings::default()).unwrap();
-        for key in ["fontSize", "maxLines", "chromaColor", "safeArea", "width", "shadow"] {
+        for key in [
+            "fontSize",
+            "maxLines",
+            "chromaColor",
+            "safeArea",
+            "width",
+            "shadow",
+            "background",
+            "clearAfter",
+        ] {
             assert!(json.get(key).is_some(), "missing {key}");
         }
     }

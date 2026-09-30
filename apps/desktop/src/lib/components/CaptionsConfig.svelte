@@ -33,20 +33,20 @@
     onchange(next);
   }
 
-  type OverlayField = 'fontSize' | 'maxLines' | 'safeArea' | 'width';
+  type OverlayField = 'fontSize' | 'maxLines' | 'safeArea' | 'width' | 'clearAfter';
   const overlaySliders: {
     field: OverlayField;
     label: string;
     min: number;
     max: number;
     step: number;
-    unit: string;
-    hint: string;
+    format: (v: number) => string;
   }[] = [
-    { field: 'fontSize', label: 'Caption Font Size', min: 12, max: 240, step: 2, unit: 'px', hint: 'At 1080p — scales with the frame' },
-    { field: 'maxLines', label: 'Lines On Screen', min: 1, max: 6, step: 1, unit: '', hint: 'Rows of text — long sentences roll up' },
-    { field: 'safeArea', label: 'Bottom Safe Area', min: 0, max: 40, step: 0.5, unit: '%', hint: 'Gap below the captions, of frame height' },
-    { field: 'width', label: 'Caption Width', min: 20, max: 100, step: 1, unit: '%', hint: 'Of frame width, centred' }
+    { field: 'fontSize', label: 'Font Size', min: 12, max: 240, step: 2, format: (v) => `${v}px` },
+    { field: 'maxLines', label: 'Lines', min: 1, max: 6, step: 1, format: (v) => `${v}` },
+    { field: 'safeArea', label: 'Bottom Margin', min: 0, max: 40, step: 0.5, format: (v) => `${v}%` },
+    { field: 'width', label: 'Width', min: 20, max: 100, step: 1, format: (v) => `${v}%` },
+    { field: 'clearAfter', label: 'Clear After', min: 0, max: 30, step: 1, format: (v) => (v === 0 ? 'Never' : `${v}s`) }
   ];
 
   function updateSyphon(patch: Partial<SyphonOutputConfig>) {
@@ -77,10 +77,9 @@
   const syphon = $derived(outputs?.syphon);
   const syphonSummary = $derived.by(() => {
     if (!syphon) return '';
-    if (!config.outputs.syphon.enabled) return 'Off';
     switch (syphon.state) {
       case 'running':
-        return syphon.hasClients ? 'Publishing — receiver connected' : 'Publishing — no receivers yet';
+        return syphon.hasClients ? 'Receiver connected' : 'No receivers';
       case 'starting':
         return 'Starting…';
       case 'error':
@@ -98,10 +97,10 @@
   // UI only to keep them off a projector during setup — not as protection.
   let showKeys = $state(false);
 
-  const providers: { id: CaptionProviderId; label: string; note: string }[] = [
-    { id: 'gemini', label: 'Google Gemini Live', note: 'Streaming translation in one hop — lowest latency' },
-    { id: 'apple', label: 'Apple On-Device (macOS 26+)', note: 'Free and offline — needs a downloaded translation language pack' },
-    { id: 'openai', label: 'OpenAI Realtime', note: 'Not implemented yet' }
+  const providers: { id: CaptionProviderId; label: string }[] = [
+    { id: 'apple', label: 'Apple On-Device' },
+    { id: 'gemini', label: 'Google Gemini Live' },
+    { id: 'openai', label: 'OpenAI Realtime (not implemented)' }
   ];
 
   const isApple = $derived(config.provider === 'apple');
@@ -188,11 +187,9 @@
 </script>
 
 <div class="captions-config">
-  <h3 class="section-title">Live Captions</h3>
-  <p class="description">Translates speech from a microphone into an overlay for your switcher</p>
-
+  <h3 class="section-title">Source</h3>
   <div class="config-grid">
-    <div class="field span">
+    <div class="field">
       <label class="label" for="cap-provider">Provider</label>
       <select
         id="cap-provider"
@@ -206,120 +203,9 @@
           </option>
         {/each}
       </select>
-      <span class="hint">
-        {#if config.provider === 'apple' && appleDisabledReason}
-          {appleDisabledReason}
-        {:else}
-          {providers.find((p) => p.id === config.provider)?.note ?? ''}
-        {/if}
-      </span>
     </div>
 
-    {#if isApple}
-      <div class="field span">
-        <span class="label">Apple On-Device Status</span>
-
-        {#if probing && !apple}
-          <span class="hint">Checking this Mac…</span>
-        {:else if !apple || !apple.osSupported || !apple.archSupported}
-          <span class="hint warn">
-            {apple?.message ?? appleDisabledReason ?? 'The Apple provider is unavailable on this machine.'}
-          </span>
-        {:else if !config.sourceLanguage}
-          <!-- Speech model / translation pack status is per-language and
-               meaningless before a Spoken Language is typed in, so skip
-               straight to the one thing the operator needs to do. -->
-          <span class="hint warn">
-            Spoken Language is required for the Apple provider — it can't auto-detect.
-          </span>
-        {:else}
-          <div class="status-row">
-            <span class="status-dot" class:ok={apple.speechModelInstalled}></span>
-            <span class="status-text">
-              Speech model ({config.sourceLanguage}):
-              {#if !apple.speechLocaleSupported}
-                not supported for this language
-              {:else if apple.speechModelInstalled}
-                installed
-              {:else}
-                downloads automatically on first start
-              {/if}
-            </span>
-          </div>
-
-          <div class="status-row">
-            <span class="status-dot" class:ok={apple.translationStatus === 'installed'}></span>
-            <span class="status-text">
-              Translation pack ({config.sourceLanguage} → {config.targetLanguage}):
-              {#if apple.translationStatus === 'installed'}
-                installed
-              {:else if apple.translationStatus === 'notInstalled'}
-                not installed
-              {:else}
-                this language pair is not supported
-              {/if}
-            </span>
-            {#if apple.translationStatus === 'notInstalled'}
-              <button type="button" class="reveal" onclick={openTranslationSettings}>
-                Open Settings…
-              </button>
-            {/if}
-          </div>
-
-          {#if apple.translationStatus === 'notInstalled'}
-            <span class="hint warn">
-              Apple can't download translation packs for us. Install it under
-              System Settings › General › Language &amp; Region › Translation Languages,
-              then re-check.
-            </span>
-          {/if}
-
-          {#if !appleUsable && apple.message}
-            <span class="hint warn">{apple.message}</span>
-          {/if}
-        {/if}
-      </div>
-    {/if}
-
-    {#if needsKey}
-    <div class="field span">
-      <div class="key-header">
-        <span class="label">API Keys</span>
-        <button type="button" class="reveal" onclick={() => (showKeys = !showKeys)}>
-          {showKeys ? 'Hide' : 'Show'}
-        </button>
-      </div>
-
-      <label class="sub-label" for="cap-key-gemini">Google Gemini</label>
-      <input
-        id="cap-key-gemini"
-        type={showKeys ? 'text' : 'password'}
-        class="input"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="AIza…"
-        value={config.apiKeys.gemini}
-        onchange={(e) => updateKey('gemini', e.currentTarget.value)}
-      />
-
-      <label class="sub-label" for="cap-key-openai">OpenAI</label>
-      <input
-        id="cap-key-openai"
-        type={showKeys ? 'text' : 'password'}
-        class="input"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="sk-…"
-        value={config.apiKeys.openai}
-        onchange={(e) => updateKey('openai', e.currentTarget.value)}
-      />
-      <span class="hint warn">
-        Stored unencrypted in config.json — don't sync or share that file
-      </span>
-    </div>
-    {/if}
-
-    <div class="field span">
+    <div class="field">
       <label class="label" for="cap-language-mode">Language</label>
       <select
         id="cap-language-mode"
@@ -333,11 +219,86 @@
       </select>
     </div>
 
+    {#if isApple}
+      <div class="field span">
+        {#if probing && !apple}
+          <span class="hint">Checking this Mac…</span>
+        {:else if !apple || !apple.osSupported || !apple.archSupported}
+          <span class="hint warn">
+            {apple?.message ?? appleDisabledReason ?? 'Not available on this machine.'}
+          </span>
+        {:else if config.sourceLanguage}
+          <div class="status-row">
+            <span class="status-dot" class:ok={apple.speechModelInstalled}></span>
+            <span class="status-text">
+              Speech model:
+              {#if !apple.speechLocaleSupported}
+                language not supported
+              {:else if apple.speechModelInstalled}
+                installed
+              {:else}
+                downloads on first start
+              {/if}
+            </span>
+          </div>
+          <div class="status-row">
+            <span class="status-dot" class:ok={apple.translationStatus === 'installed'}></span>
+            <span class="status-text">
+              Translation pack:
+              {#if apple.translationStatus === 'installed'}
+                installed
+              {:else if apple.translationStatus === 'notInstalled'}
+                not installed
+              {:else}
+                language pair not supported
+              {/if}
+            </span>
+            {#if apple.translationStatus === 'notInstalled'}
+              <button type="button" class="reveal" onclick={openTranslationSettings}>
+                Install…
+              </button>
+            {/if}
+          </div>
+          {#if !appleUsable && apple.message}
+            <span class="hint warn">{apple.message}</span>
+          {/if}
+        {/if}
+      </div>
+    {/if}
+
+    {#if needsKey}
+      <div class="field span">
+        <div class="key-header">
+          <label class="label" for="cap-key">
+            {config.provider === 'openai' ? 'OpenAI' : 'Gemini'} API Key
+          </label>
+          <button type="button" class="reveal" onclick={() => (showKeys = !showKeys)}>
+            {showKeys ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        <input
+          id="cap-key"
+          type={showKeys ? 'text' : 'password'}
+          class="input mono"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder={config.provider === 'openai' ? 'sk-…' : 'AIza…'}
+          value={config.provider === 'openai' ? config.apiKeys.openai : config.apiKeys.gemini}
+          onchange={(e) =>
+            updateKey(config.provider === 'openai' ? 'openai' : 'gemini', e.currentTarget.value)}
+        />
+        <span class="hint">Stored unencrypted in config.json</span>
+      </div>
+    {/if}
+  </div>
+
+  <h3 class="section-title">Appearance</h3>
+  <div class="config-grid">
     {#each overlaySliders as s (s.field)}
       <div class="field">
         <div class="slider-header">
           <label class="label" for="cap-{s.field}">{s.label}</label>
-          <span class="slider-value">{config[s.field]}{s.unit}</span>
+          <span class="slider-value">{s.format(config[s.field])}</span>
         </div>
         <input
           id="cap-{s.field}"
@@ -349,11 +310,10 @@
           value={config[s.field]}
           oninput={(e) => live(s.field, e.currentTarget.valueAsNumber)}
         />
-        <span class="hint">{s.hint}</span>
       </div>
     {/each}
 
-    <div class="field span">
+    <div class="field">
       <label class="label" for="cap-chroma">Key Colour</label>
       <div class="colour-row">
         <input
@@ -365,47 +325,51 @@
         />
         <input
           type="text"
-          class="input"
+          class="input mono"
           aria-label="Key colour hex value"
           value={config.chromaColor}
           onchange={(e) => live('chromaColor', e.currentTarget.value.trim() || '#00B140')}
         />
       </div>
-      <span class="hint">#00B140 is broadcast green. Use "transparent" for OBS browser sources</span>
     </div>
 
-    <label class="field span check-row">
-      <input
-        type="checkbox"
-        checked={config.shadow}
-        onchange={(e) => live('shadow', e.currentTarget.checked)}
-      />
-      <span class="label">Text drop shadow</span>
-      <span class="hint">Helps over busy, bright sources; off keys cleanest</span>
-    </label>
-  </div>
-
-  <h4 class="sub-title">Video Outputs</h4>
-  <div class="grid">
-    <div class="field span">
-      <span class="label">Web Overlay</span>
-      <span class="hint">Always on at <code>/captions</code> — a browser source or fullscreen browser, keyed on the colour above</span>
-    </div>
-
-    {#if syphon?.supported}
-      <label class="field span check-row">
+    <div class="field span check-group">
+      <label class="check-row">
         <input
           type="checkbox"
-          checked={config.outputs.syphon.enabled}
-          onchange={(e) => updateSyphon({ enabled: e.currentTarget.checked })}
+          checked={config.shadow}
+          onchange={(e) => live('shadow', e.currentTarget.checked)}
         />
-        <span class="label">Syphon</span>
-        <span class="hint">Text only, on real transparency — no key needed. 1920×1080.</span>
+        <span class="label">Drop shadow</span>
       </label>
+      <label class="check-row">
+        <input
+          type="checkbox"
+          checked={config.background}
+          onchange={(e) => live('background', e.currentTarget.checked)}
+        />
+        <span class="label">Black background box</span>
+      </label>
+    </div>
+  </div>
+
+  {#if syphon?.supported}
+    <h3 class="section-title">Outputs</h3>
+    <div class="config-grid">
+      <div class="field span">
+        <label class="check-row">
+          <input
+            type="checkbox"
+            checked={config.outputs.syphon.enabled}
+            onchange={(e) => updateSyphon({ enabled: e.currentTarget.checked })}
+          />
+          <span class="label">Syphon</span>
+        </label>
+      </div>
 
       {#if config.outputs.syphon.enabled}
-        <div class="field span">
-          <label class="label" for="cap-syphon-name">Syphon Source Name</label>
+        <div class="field">
+          <label class="label" for="cap-syphon-name">Source Name</label>
           <input
             id="cap-syphon-name"
             class="input"
@@ -413,6 +377,8 @@
             onchange={(e) =>
               updateSyphon({ serverName: e.currentTarget.value.trim() || 'SherPresent Captions' })}
           />
+        </div>
+        <div class="field status-field">
           <div class="status-row">
             <span
               class="status-dot"
@@ -422,16 +388,10 @@
             ></span>
             <span class="status-text">{syphonSummary}</span>
           </div>
-          <span class="hint">Pick it in OBS (Syphon Client source), Resolume, QLab, Millumin…</span>
         </div>
       {/if}
-    {:else if syphon}
-      <div class="field span">
-        <span class="label">Syphon</span>
-        <span class="hint">Needs an Apple Silicon Mac</span>
-      </div>
-    {/if}
-  </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -449,13 +409,6 @@
     padding-bottom: 0.25rem;
   }
 
-  .description {
-    font-size: 0.75rem;
-    color: #888;
-    margin: 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid #eee;
-  }
 
   .config-grid {
     display: grid;
@@ -479,11 +432,6 @@
     color: #666;
   }
 
-  .sub-label {
-    font-size: 0.7rem;
-    color: #888;
-    margin-top: 0.25rem;
-  }
 
   .key-header {
     display: flex;
@@ -533,12 +481,6 @@
     background: #ff3b30;
   }
 
-  .sub-title {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #333;
-    margin: 0.5rem 0 0;
-  }
 
   .status-dot.ok {
     background: #34c759;
@@ -555,8 +497,13 @@
     border-radius: 6px;
     background: #fff;
     font-size: 0.875rem;
-    font-family: monospace;
+    font-family: inherit;
     width: 100%;
+    box-sizing: border-box;
+  }
+
+  .mono {
+    font-family: monospace;
   }
 
   .input:focus {
@@ -571,9 +518,19 @@
   }
 
   .check-row {
-    flex-direction: row;
+    display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+
+  .check-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+  }
+
+  .status-field {
+    justify-content: flex-end;
   }
 
   .slider-header {
@@ -609,10 +566,6 @@
       color: #eee;
     }
 
-    .description {
-      color: #777;
-      border-bottom-color: #444;
-    }
 
     .hint {
       color: #777;
@@ -630,9 +583,6 @@
       color: #ddd;
     }
 
-    .sub-title {
-      color: #eee;
-    }
 
     .status-dot {
       background: #d9a441;
@@ -642,9 +592,6 @@
       color: #aaa;
     }
 
-    .sub-label {
-      color: #777;
-    }
 
     .reveal {
       color: #0a84ff;

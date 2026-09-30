@@ -75,6 +75,25 @@ final class FrameRenderer {
         // CSS half-leading: the glyph box sits centred in its row.
         let baselineInRow = (rowHeight - (ascent + descent)) / 2 + descent
 
+        if layout.settings.background {
+            // Closed-caption boxes, one per row, sized like the web overlay's
+            // inline background: the glyph box plus 0.3em each side. Opaque,
+            // matching the web overlay, and drawn before the shadow is set so
+            // the boxes themselves cast none.
+            let pad = (0.3 * layout.fontSize).rounded()
+            let boxHeight = ascent + descent
+            ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+            for (i, row) in rows.reversed().enumerated() where row.width > 0 {
+                let rowBottom = layout.bottomInset + CGFloat(i) * rowHeight
+                ctx.fill(
+                    CGRect(
+                        x: ((w - row.width) / 2 - pad).rounded(),
+                        y: (rowBottom + (rowHeight - boxHeight) / 2).rounded(),
+                        width: (row.width + 2 * pad).rounded(),
+                        height: boxHeight.rounded()))
+            }
+        }
+
         ctx.saveGState()
         ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         if layout.settings.shadow {

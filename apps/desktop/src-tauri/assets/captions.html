@@ -104,6 +104,17 @@
       0 0 0.28em rgba(0, 0, 0, 0.55);
   }
 
+  /* Opt-in (Settings, or ?box=1): closed-caption style. Opaque on purpose —
+     a translucent plate would show the key colour through and key out with
+     it. `clone` gives every wrapped row its own box instead of one ragged
+     shape spanning the rows. */
+  body.boxed .line .text {
+    background: #000;
+    padding: 0 0.3em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
   .line .source {
     display: block;
     font-size: 0.62em;
@@ -144,6 +155,10 @@
   var SHOW_SOURCE = params.get('source') === '1' || params.get('text') === 'both';
   var TEXT_MODE = params.get('text') === 'source' ? 'source' : 'translated';
 
+  // Seconds of silence before the lines clear; 0 = never. See armClear.
+  var clearAfter = params.has('clear') ? Math.max(0, parseFloat(params.get('clear')) || 0) : {{CLEAR_AFTER}};
+  var clearTimer = null;
+
   // How many segments to keep in the DOM. The row-height window in CSS does
   // the real limiting; this just bounds the work, generously, since a single
   // segment is rarely shorter than one row.
@@ -161,6 +176,9 @@
   if (params.has('shadow')) {
     document.body.classList.toggle('shadow', params.get('shadow') === '1');
   }
+  if (params.has('box')) {
+    document.body.classList.toggle('boxed', params.get('box') === '1');
+  }
 
   // Live styling from Settings. The server already sanitized and clamped
   // every field; anything pinned in the URL keeps its URL value, so an OBS
@@ -176,6 +194,11 @@
     if (!params.has('width') && s.width) root.setProperty('--width', s.width + '%');
     if (!params.has('bg') && s.chromaColor) setChroma(s.chromaColor);
     if (!params.has('shadow')) document.body.classList.toggle('shadow', !!s.shadow);
+    if (!params.has('box')) document.body.classList.toggle('boxed', !!s.background);
+    if (!params.has('clear') && s.clearAfter != null && s.clearAfter !== clearAfter) {
+      clearAfter = s.clearAfter;
+      armClear();
+    }
   }
 
   var linesEl = document.getElementById('lines');
@@ -220,9 +243,27 @@
         div.appendChild(src);
       }
 
-      div.appendChild(document.createTextNode(textOf(seg)));
+      var text = document.createElement('span');
+      text.className = 'text';
+      text.textContent = textOf(seg);
+      div.appendChild(text);
       linesEl.appendChild(div);
     });
+  }
+
+  // Clear the screen after `clearAfter` seconds with no caption activity, so a
+  // pause in the talk doesn't leave the last sentence hanging on air. Only the
+  // display clears; the next words start a fresh screen.
+  function armClear() {
+    if (clearTimer) clearTimeout(clearTimer);
+    clearTimer = null;
+    if (clearAfter > 0 && (finals.length || live)) {
+      clearTimer = setTimeout(function () {
+        finals = [];
+        live = null;
+        render();
+      }, clearAfter * 1000);
+    }
   }
 
   function applySegment(seg) {
@@ -240,6 +281,7 @@
       live = seg;
     }
     render();
+    armClear();
   }
 
   function showStatus(text) {
@@ -295,6 +337,7 @@
         finals = msg.segments.slice(-keepSegments);
         live = null;
         render();
+        armClear();
       } else if (msg.type === 'settings' && msg.settings) {
         applySettings(msg.settings);
       }

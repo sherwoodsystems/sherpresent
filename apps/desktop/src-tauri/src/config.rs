@@ -224,6 +224,12 @@ pub struct CaptionsConfig {
     /// best; the shadow is for keying over busy, bright sources.
     #[serde(default)]
     pub shadow: bool,
+    /// Closed-caption style: an opaque black box behind each row
+    #[serde(default)]
+    pub background: bool,
+    /// Seconds without new speech before the captions clear; 0 = never
+    #[serde(rename = "clearAfter", default = "default_caption_clear_after")]
+    pub clear_after: f32,
     /// Video outputs beyond the always-on web overlay
     #[serde(default)]
     pub outputs: CaptionOutputsConfig,
@@ -297,6 +303,10 @@ fn default_caption_safe_area() -> f32 {
     5.0
 }
 
+fn default_caption_clear_after() -> f32 {
+    8.0
+}
+
 fn default_caption_width() -> f32 {
     80.0
 }
@@ -320,6 +330,8 @@ impl Default for CaptionsConfig {
             safe_area: default_caption_safe_area(),
             width: default_caption_width(),
             shadow: false,
+            background: false,
+            clear_after: default_caption_clear_after(),
             outputs: CaptionOutputsConfig::default(),
             api_keys: CaptionApiKeys::default(),
         }
@@ -593,5 +605,7 @@ mod tests {
         assert_eq!(c.font_size, 72);
         assert_eq!(c.safe_area, 5.0);
         assert_eq!(c.width, 80.0);
+        assert!(!c.background);
+        assert_eq!(c.clear_after, 8.0);
     }
 }

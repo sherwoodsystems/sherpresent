@@ -62,14 +62,16 @@ Microphone → streaming translation → chroma-key overlay served on the LAN.
 window. `/captions` renders the HTML; `/api/captions/ws` is a separate socket
 from `/api/ws` so the overlay never receives slide/notes traffic.
 
-Styling (size, lines, safe area, width, key colour, shadow) is pushed live
+Styling (size, lines, safe area, width, key colour, shadow, CC box, clear
+timeout) is pushed live
 over the socket as a `settings` message whenever Settings changes — sliders
 call `preview_caption_overlay` per tick, ahead of the debounced save. `lines`
 means visual rows: the caption box is exactly that many rows tall and long
 sentences roll up out of the top.
 
 Pin any value per-URL (a pinned value ignores live updates):
-`/captions?bg=00b140&size=64&lines=2&safe=5&width=80&shadow=1`, plus
+`/captions?bg=00b140&size=64&lines=2&safe=5&width=80&shadow=1&box=1&clear=8`
+(`clear=0` never clears), plus
 `bg=transparent` for OBS, `text=source|both` and `clean=1`.
 
 **Native outputs** (`captions/output/`): optional video outputs alongside the

@@ -399,13 +399,15 @@ async fn captions_page_handler(
     let max_lines = num("lines").map_or(s.max_lines as f32, |v| finite_clamp(v, 1.0, 6.0, 2.0));
     let safe = num("safe").map_or(s.safe_area, |v| finite_clamp(v, 0.0, 40.0, 5.0));
     let width = num("width").map_or(s.width, |v| finite_clamp(v, 20.0, 100.0, 80.0));
+    let clear_after = num("clear").map_or(s.clear_after, |v| finite_clamp(v, 0.0, 120.0, 8.0));
 
     let html = CAPTIONS_HTML
         .replace("{{CHROMA}}", &chroma)
         .replace("{{FONT_SIZE}}", &format!("{}", font_size.round()))
         .replace("{{MAX_LINES}}", &format!("{}", max_lines.round()))
         .replace("{{SAFE}}", &format!("{:.2}", safe))
-        .replace("{{WIDTH}}", &format!("{:.2}", width));
+        .replace("{{WIDTH}}", &format!("{:.2}", width))
+        .replace("{{CLEAR_AFTER}}", &format!("{}", clear_after));
 
     Html(html)
 }

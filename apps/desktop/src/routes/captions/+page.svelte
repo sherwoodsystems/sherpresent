@@ -3,6 +3,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { appStore } from '$lib/state.svelte';
   import ConnectionInfo from '$lib/components/ConnectionInfo.svelte';
+  import CaptionsConfig from '$lib/components/CaptionsConfig.svelte';
 
   let startError = $state<string | null>(null);
   let busy = $state(false);
@@ -78,7 +79,6 @@
 <main class="container">
   <header class="header">
     <h1>Live Captions</h1>
-    <p class="subtitle">Speech in, translated overlay out</p>
   </header>
 
   <section class="section">
@@ -119,7 +119,7 @@
     {#if !hasKey}
       <p class="notice">
         No API key for {captions.provider === 'openai' ? 'OpenAI' : 'Gemini'} —
-        add one in <a href="/settings">Settings</a> first.
+        add one in <a href="#caption-settings">Caption Settings</a> below first.
       </p>
     {/if}
 
@@ -149,14 +149,6 @@
         <span class="stat-value">{status?.reconnects ?? 0}</span>
       </div>
     </div>
-    <p class="hint">
-      {#if isOnDevice}
-        Runs entirely on this Mac — no network, no API key. Reconnects mean the
-        speech helper restarted.
-      {:else}
-        Reconnects are normal — the provider recycles the session every few minutes.
-      {/if}
-    </p>
   </section>
 
   {#if appStore.captionsUrl}
@@ -165,10 +157,6 @@
       <div class="overlay-actions">
         <button class="secondary" onclick={openOverlay}>Open Overlay</button>
       </div>
-      <p class="hint">
-        Add <code>?bg=transparent</code> for an OBS browser source, or
-        <code>?size=80&amp;lines=1&amp;safe=8</code> to retune on the fly.
-      </p>
     </section>
   {/if}
 
@@ -194,6 +182,15 @@
       </ul>
     {/if}
   </section>
+
+  {#if appStore.configLoaded}
+    <section class="section" id="caption-settings">
+      <CaptionsConfig
+        config={appStore.config.captions}
+        onchange={(c) => appStore.updateCaptionsConfig(c)}
+      />
+    </section>
+  {/if}
 </main>
 
 <style>
@@ -214,11 +211,6 @@
     color: #333;
   }
 
-  .subtitle {
-    margin: 0.25rem 0 0;
-    font-size: 0.875rem;
-    color: #888;
-  }
 
   .section {
     background: #fff;
@@ -388,17 +380,7 @@
     color: #d93025;
   }
 
-  .hint {
-    margin: 0;
-    font-size: 0.7rem;
-    color: #888;
-  }
 
-  .hint code {
-    background: #f0f0f0;
-    padding: 0.05rem 0.25rem;
-    border-radius: 3px;
-  }
 
   .overlay-actions {
     display: flex;
@@ -495,9 +477,6 @@
 
     .stat,
     .line,
-    .hint code {
-      background: #333;
-    }
 
     .translated {
       color: #eee;
