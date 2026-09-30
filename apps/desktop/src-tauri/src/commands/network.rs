@@ -1,15 +1,13 @@
 use sherpresent_core::{get_network_interfaces, NetworkInterface};
 
-/// Internal helper to get the local LAN IP address.
+/// Local LAN IP address, or 127.0.0.1 when offline.
 pub fn get_local_ip_internal() -> String {
-    use std::net::UdpSocket;
-    UdpSocket::bind("0.0.0.0:0")
-        .and_then(|socket| {
-            socket.connect("8.8.8.8:80")?;
-            socket.local_addr()
-        })
-        .map(|addr| addr.ip().to_string())
-        .unwrap_or_else(|_| "127.0.0.1".to_string())
+    sherpresent_core::get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string())
+}
+
+/// `http://<lan-ip>:<port><path>`, the address other machines reach us at.
+pub fn lan_url(port: u16, path: &str) -> String {
+    format!("http://{}:{}{}", get_local_ip_internal(), port, path)
 }
 
 /// Get the local LAN IP address of this machine.

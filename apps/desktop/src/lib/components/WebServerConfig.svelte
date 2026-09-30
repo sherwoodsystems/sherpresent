@@ -2,6 +2,7 @@
   import type { WebServerConfig } from '../types';
   import { appStore } from '$lib/state.svelte';
   import ConnectionInfo from './ConnectionInfo.svelte';
+  import SyphonOutputField from './SyphonOutputField.svelte';
 
   interface Props {
     config: WebServerConfig;
@@ -9,6 +10,8 @@
   }
 
   let { config, onchange }: Props = $props();
+
+  const syphonStatus = $derived(appStore.outputsStatus?.notes);
 
   function updateField(field: keyof WebServerConfig, value: string | number | boolean) {
     const updated = { ...config, [field]: value };
@@ -79,6 +82,20 @@
       />
     </div>
   </div>
+
+  {#if syphonStatus?.supported}
+    <SyphonOutputField
+      id="ws-syphon"
+      label="Syphon notes output"
+      config={config.syphon}
+      status={syphonStatus}
+      defaultName="SherPresent Notes"
+      onchange={(syphon) => onchange({ ...config, syphon })}
+    />
+    <span class="hint">
+      Current slide's notes, plus the Ontime timer when a host is set, as a 1920×1080 source
+    </span>
+  {/if}
 </div>
 
 <style>

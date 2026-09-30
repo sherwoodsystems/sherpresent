@@ -4,6 +4,7 @@
   import { appStore } from '$lib/state.svelte';
   import ConnectionInfo from '$lib/components/ConnectionInfo.svelte';
   import CaptionsConfig from '$lib/components/CaptionsConfig.svelte';
+  import { API_KEY_LABELS, apiKeyProvider, translates } from '$lib/captions';
 
   let startError = $state<string | null>(null);
   let busy = $state(false);
@@ -27,17 +28,11 @@
     return s && typeof s === 'object' ? s.error : null;
   });
 
-  // The Apple provider runs on-device and needs no key, so it must not be
-  // gated on one — otherwise Start is permanently disabled.
-  const hasKey = $derived(
-    captions.provider === 'apple'
-      ? true
-      : captions.provider === 'openai'
-        ? captions.apiKeys.openai.length > 0
-        : captions.apiKeys.gemini.length > 0
-  );
-
-  const isOnDevice = $derived(captions.provider === 'apple');
+  // On-device providers need no key, so they must not be gated on one —
+  // otherwise Start is permanently disabled.
+  const keyProvider = $derived(apiKeyProvider(captions.provider));
+  const hasKey = $derived(!keyProvider || captions.apiKeys[keyProvider].length > 0);
+  const isOnDevice = $derived(keyProvider === null);
 
   // Gemini Live translate bills by audio token — roughly $0.037/min at the
   // preview rate. Shown so an operator can see burn without leaving the app.
@@ -118,7 +113,7 @@
 
     {#if !hasKey}
       <p class="notice">
-        No API key for {captions.provider === 'openai' ? 'OpenAI' : 'Gemini'} —
+        No API key for {keyProvider ? API_KEY_LABELS[keyProvider] : ''} —
         add one in <a href="#caption-settings">Caption Settings</a> below first.
       </p>
     {/if}
@@ -162,7 +157,9 @@
 
   <section class="section monitor">
     <h3 class="section-title">
-      Monitor <span class="lang-tag">{captions.targetLanguage}</span>
+      Monitor <span class="lang-tag">
+        {translates(captions) ? captions.targetLanguage : `${captions.sourceLanguage} · no translation`}
+      </span>
     </h3>
 
     {#if displayed.length === 0}
@@ -173,8 +170,9 @@
       <ul class="lines">
         {#each displayed as seg (seg.id)}
           <li class="line" class:interim={!seg.final}>
-            <span class="translated">{seg.translated || '…'}</span>
-            {#if seg.source}
+            <!-- Straight captions carry no translation: the source is the line. -->
+            <span class="translated">{seg.translated || seg.source || '…'}</span>
+            {#if seg.translated && seg.source}
               <span class="source">{seg.source}</span>
             {/if}
           </li>
@@ -210,7 +208,6 @@
     font-weight: 700;
     color: #333;
   }
-
 
   .section {
     background: #fff;
@@ -380,8 +377,6 @@
     color: #d93025;
   }
 
-
-
   .overlay-actions {
     display: flex;
     gap: 0.5rem;
@@ -441,8 +436,6 @@
       color: #eee;
     }
 
-    .subtitle,
-    .hint,
     .empty,
     .source,
     .stat-label {
@@ -476,7 +469,9 @@
     }
 
     .stat,
-    .line,
+    .line {
+      background: #333;
+    }
 
     .translated {
       color: #eee;

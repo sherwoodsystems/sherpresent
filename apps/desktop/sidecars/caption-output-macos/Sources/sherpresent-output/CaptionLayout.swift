@@ -14,9 +14,15 @@ struct Row {
 struct CaptionLayout {
     static let leading: CGFloat = 1.22
 
-    let frameWidth: CGFloat
-    let frameHeight: CGFloat
+    let frameWidth = CGFloat(Args.width)
+    let frameHeight = CGFloat(Args.height)
     let settings: OverlaySettings
+    let font: CTFont
+
+    init(settings: OverlaySettings) {
+        self.settings = settings
+        self.font = Self.makeFont(size: CGFloat(settings.fontSize) * CGFloat(Args.width) / 1920)
+    }
 
     var fontSize: CGFloat { CGFloat(settings.fontSize) * frameWidth / 1920 }
     var rowHeight: CGFloat { fontSize * Self.leading }
@@ -25,13 +31,13 @@ struct CaptionLayout {
 
     /// The overlay's font stack is Inter, then Helvetica Neue, at weight 650.
     /// Bold is the nearest static face.
-    func font() -> CTFont {
+    private static func makeFont(size: CGFloat) -> CTFont {
         for name in ["Inter-Bold", "HelveticaNeue-Bold"] {
-            let f = CTFontCreateWithName(name as CFString, fontSize, nil)
+            let f = CTFontCreateWithName(name as CFString, size, nil)
             if (CTFontCopyPostScriptName(f) as String) == name { return f }
         }
-        return CTFontCreateUIFontForLanguage(.emphasizedSystem, fontSize, nil)
-            ?? CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
+        return CTFontCreateUIFontForLanguage(.emphasizedSystem, size, nil)
+            ?? CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
     }
 
     func attributed(_ text: String, font: CTFont) -> NSAttributedString {
@@ -43,14 +49,16 @@ struct CaptionLayout {
             ])
     }
 
-    /// Newest `maxLines` rows across all texts, oldest first.
+    /// Newest `maxLines` rows across all texts, oldest first. Wraps from the
+    /// newest text back and stops once the window is full, so older lines
+    /// that would only be clipped off the top are never typeset.
     func rows(for texts: [String]) -> [Row] {
-        let font = font()
-        var all: [Row] = []
-        for text in texts {
-            all.append(contentsOf: wrap(attributed(text, font: font)))
+        let limit = max(1, settings.maxLines)
+        var rows: [Row] = []
+        for text in texts.reversed() where rows.count < limit {
+            rows.insert(contentsOf: wrap(attributed(text, font: font)), at: 0)
         }
-        return Array(all.suffix(max(1, settings.maxLines)))
+        return Array(rows.suffix(limit))
     }
 
     /// Greedy wrap, then balance: shrink the measure as far as it goes without

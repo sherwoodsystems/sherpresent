@@ -50,6 +50,7 @@ use tokio::time::timeout;
 
 use super::{drain_backlog, CaptionProvider, ProviderConfig, ProviderEvent};
 use crate::captions::audio::{samples_to_le_bytes, TARGET_SAMPLE_RATE};
+use crate::sidecar::{snapshot_tail, spawn_stderr_pump, with_stderr_tail};
 
 /// Name of the helper binary, as placed next to the app executable.
 const SIDECAR_NAME: &str = "sherpresent-speech";
@@ -81,11 +82,6 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 /// strictly better than leaking.
 const STDIN_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Lines of sidecar stderr kept for diagnostics.
-const STDERR_TAIL_LINES: usize = 20;
-
-/// Lines of stderr appended to a failure message.
-const STDERR_TAIL_REPORTED: usize = 5;
 
 pub struct AppleProvider {
     config: ProviderConfig,
@@ -225,7 +221,7 @@ async fn run_session(
 
     let tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
     if let Some(stderr) = child.stderr.take() {
-        spawn_stderr_pump(stderr, Arc::clone(&tail));
+        spawn_stderr_pump(stderr, Arc::clone(&tail), "speech-sidecar");
     }
 
     let mut lines = BufReader::new(stdout).lines();
@@ -339,38 +335,6 @@ async fn run_session(
             }
         }
     }
-}
-
-/// Forward sidecar stderr to the log and keep a rolling tail for diagnostics.
-fn spawn_stderr_pump(stderr: tokio::process::ChildStderr, tail: Arc<Mutex<VecDeque<String>>>) {
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if line.trim().is_empty() {
-                continue;
-            }
-            if line.contains("[error]") {
-                log::error!("[speech-sidecar] {}", line);
-            } else if line.contains("[warn]") {
-                log::warn!("[speech-sidecar] {}", line);
-            } else {
-                log::info!("[speech-sidecar] {}", line);
-            }
-
-            if let Ok(mut buf) = tail.lock() {
-                buf.push_back(line);
-                while buf.len() > STDERR_TAIL_LINES {
-                    buf.pop_front();
-                }
-            }
-        }
-    });
-}
-
-fn snapshot_tail(tail: &Arc<Mutex<VecDeque<String>>>) -> Vec<String> {
-    tail.lock()
-        .map(|buf| buf.iter().cloned().collect())
-        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -495,16 +459,6 @@ fn classify_exit(status: Option<ExitStatus>, was_ready: bool, tail: &[String]) -
     }
 }
 
-/// Append the last few stderr lines so a failure is diagnosable from a log.
-fn with_stderr_tail(message: String, tail: &[String]) -> String {
-    let start = tail.len().saturating_sub(STDERR_TAIL_REPORTED);
-    let recent = &tail[start..];
-    if recent.is_empty() {
-        return message;
-    }
-    format!("{} — {}", message, recent.join(" | "))
-}
-
 /// Normalize an operator-typed BCP-47 tag.
 ///
 /// The Settings field is free text, so "EN", " fr ", and "en-us" all arrive.
@@ -567,7 +521,11 @@ fn build_args(config: &ProviderConfig) -> Vec<String> {
 }
 
 /// Arguments for a one-shot capability probe.
+///
+/// Straight captions (same language both sides) need no translation pack, so
+/// the target is left blank and the helper skips that check.
 pub(crate) fn probe_args(source: &str, target: &str) -> Vec<String> {
+    let target = if super::same_language(source, target) { "" } else { target };
     vec![
         "--probe".to_string(),
         "--protocol".to_string(),
@@ -1028,6 +986,14 @@ mod tests {
         assert!(args.contains(&"--probe".to_string()));
         assert!(args.contains(&"en-US".to_string()));
         assert!(args.contains(&"fr".to_string()));
+    }
+
+    #[test]
+    fn test_probe_args_skip_translation_check_for_straight_captions() {
+        // A blank target makes the helper report no translation pack needed.
+        let args = probe_args("en-US", "en");
+        let target = args.iter().position(|a| a == "--target").unwrap();
+        assert_eq!(args[target + 1], "");
     }
 
     // -- exit classification ------------------------------------------------

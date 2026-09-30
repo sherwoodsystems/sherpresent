@@ -16,6 +16,7 @@ import {
   type CaptionsConfig,
   type CaptionSegment,
   type CaptionStatus,
+  type OutputsStatus,
   type AudioDevice,
   defaultConfig
 } from '$lib/types';
@@ -40,6 +41,8 @@ class AppStore {
   captionsRunning = $state(false);
   captionsUrl = $state('');
   captionStatus = $state<CaptionStatus | null>(null);
+  /** Native video outputs (Syphon captions and notes); pushed as receivers come and go */
+  outputsStatus = $state<OutputsStatus | null>(null);
   /** Newest last. The trailing entry may be an interim line still being spoken. */
   captionSegments = $state<CaptionSegment[]>([]);
   audioDevices = $state<AudioDevice[]>([]);
@@ -52,6 +55,7 @@ class AppStore {
   private unlistenLatency: UnlistenFn | null = null;
   private unlistenCaptionSegment: UnlistenFn | null = null;
   private unlistenCaptionStatus: UnlistenFn | null = null;
+  private unlistenOutputsStatus: UnlistenFn | null = null;
   private navigatingUntil = 0;
 
   async init() {
@@ -128,6 +132,11 @@ class AppStore {
       this.captionsRunning = state === 'running' || state === 'starting' || state === 'reconnecting';
     });
 
+    this.unlistenOutputsStatus = await listen<OutputsStatus>(
+      'outputs-status',
+      (event) => (this.outputsStatus = event.payload)
+    );
+
     await this.refreshCaptionStatus();
 
     // Load any existing latency events
@@ -149,6 +158,7 @@ class AppStore {
     this.unlistenLatency?.();
     this.unlistenCaptionSegment?.();
     this.unlistenCaptionStatus?.();
+    this.unlistenOutputsStatus?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
@@ -519,6 +529,7 @@ class AppStore {
     try {
       this.captionsRunning = await invoke<boolean>('is_captions_running');
       this.captionStatus = await invoke<CaptionStatus>('get_caption_status');
+      this.outputsStatus = await invoke<OutputsStatus>('get_outputs_status');
       await this.refreshCaptionsUrl();
     } catch (e) {
       console.error('Failed to read caption status:', e);

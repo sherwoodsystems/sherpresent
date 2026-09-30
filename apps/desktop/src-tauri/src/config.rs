@@ -158,6 +158,16 @@ pub struct WebServerConfig {
     /// Font size in px for stage view notes (default: 32)
     #[serde(rename = "fontSize", default = "default_font_size")]
     pub font_size: u16,
+    /// The current slide's notes and the Ontime timer as a Syphon source
+    #[serde(default = "default_notes_syphon")]
+    pub syphon: SyphonOutputConfig,
+}
+
+fn default_notes_syphon() -> SyphonOutputConfig {
+    SyphonOutputConfig {
+        enabled: false,
+        server_name: "SherPresent Notes".to_string(),
+    }
 }
 
 fn default_font_size() -> u16 {
@@ -171,6 +181,7 @@ impl Default for WebServerConfig {
             ontime_host: String::new(),
             ontime_port: 4001,
             font_size: default_font_size(),
+            syphon: default_notes_syphon(),
         }
     }
 }
@@ -218,15 +229,19 @@ pub struct CaptionsConfig {
     #[serde(rename = "safeArea", default = "default_caption_safe_area")]
     pub safe_area: f32,
     /// Width of the caption block, in % of frame width (centred)
-    #[serde(rename = "width", default = "default_caption_width")]
+    #[serde(default = "default_caption_width")]
     pub width: f32,
     /// Drop shadow behind caption text. Off by default: clean white text keys
     /// best; the shadow is for keying over busy, bright sources.
     #[serde(default)]
     pub shadow: bool,
-    /// Closed-caption style: an opaque black box behind each row
+    /// Closed-caption style: an opaque box behind each row
     #[serde(default)]
     pub background: bool,
+    /// Fill of the closed-caption box. Hex colour; opaque, since a translucent
+    /// plate would key out along with the chroma behind it.
+    #[serde(rename = "boxColor", default = "default_caption_box_color")]
+    pub box_color: String,
     /// Seconds without new speech before the captions clear; 0 = never
     #[serde(rename = "clearAfter", default = "default_caption_clear_after")]
     pub clear_after: f32,
@@ -246,8 +261,8 @@ pub struct CaptionOutputsConfig {
     pub syphon: SyphonOutputConfig,
 }
 
-/// Transparent 1920x1080 caption frames over Syphon (macOS only), for OBS,
-/// Resolume, QLab and other receivers on the same Mac.
+/// A 1920x1080 Syphon source (macOS only), for OBS, Resolume, QLab and other
+/// receivers on the same Mac. Used for captions and for notes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SyphonOutputConfig {
     #[serde(default)]
@@ -291,29 +306,49 @@ fn default_source_language() -> Option<String> {
     Some("en-US".to_string())
 }
 
-fn default_caption_font_size() -> u16 {
+pub(crate) fn default_caption_font_size() -> u16 {
     56
 }
 
-fn default_caption_max_lines() -> u8 {
+pub(crate) fn default_caption_max_lines() -> u8 {
     2
 }
 
-fn default_caption_safe_area() -> f32 {
+pub(crate) fn default_caption_safe_area() -> f32 {
     5.0
 }
 
-fn default_caption_clear_after() -> f32 {
+pub(crate) fn default_caption_clear_after() -> f32 {
     8.0
 }
 
-fn default_caption_width() -> f32 {
+pub(crate) fn default_caption_width() -> f32 {
     80.0
 }
 
+/// Broadcast chroma green
+pub(crate) const DEFAULT_CHROMA_COLOR: &str = "#00B140";
+pub(crate) const DEFAULT_CAPTION_BOX_COLOR: &str = "#000000";
+
 fn default_chroma_color() -> String {
-    // Broadcast chroma green
-    "#00B140".to_string()
+    DEFAULT_CHROMA_COLOR.to_string()
+}
+
+fn default_caption_box_color() -> String {
+    DEFAULT_CAPTION_BOX_COLOR.to_string()
+}
+
+impl CaptionsConfig {
+    /// Whether this session translates at all. Same source and target (region
+    /// aside) means straight captions. Auto-detect (`None`) always counts as
+    /// translating: the provider can't know yet whether the detected language
+    /// will match the target.
+    pub fn translates(&self) -> bool {
+        match self.source_language.as_deref() {
+            Some(src) => !crate::captions::provider::same_language(src, &self.target_language),
+            None => true,
+        }
+    }
 }
 
 impl Default for CaptionsConfig {
@@ -331,6 +366,7 @@ impl Default for CaptionsConfig {
             width: default_caption_width(),
             shadow: false,
             background: false,
+            box_color: default_caption_box_color(),
             clear_after: default_caption_clear_after(),
             outputs: CaptionOutputsConfig::default(),
             api_keys: CaptionApiKeys::default(),
@@ -422,6 +458,20 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    use super::CaptionsConfig;
+
+    #[test]
+    fn test_captions_translates() {
+        let cfg = |src: Option<&str>, target: &str| CaptionsConfig {
+            source_language: src.map(str::to_string),
+            target_language: target.to_string(),
+            ..CaptionsConfig::default()
+        };
+        assert!(cfg(Some("en-US"), "fr").translates());
+        assert!(!cfg(Some("en-US"), "en").translates(), "straight captions");
+        assert!(cfg(None, "en").translates(), "auto-detect may still translate");
+    }
+
     use super::*;
 
     #[test]

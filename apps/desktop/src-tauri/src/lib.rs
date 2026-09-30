@@ -4,7 +4,9 @@ mod bridge;
 mod captions;
 mod config;
 mod generated_constants;
+mod ontime;
 mod osc;
+mod output;
 mod sidecar;
 mod state;
 mod commands;
@@ -97,7 +99,7 @@ pub fn run() {
             commands::captions::get_caption_status,
             commands::captions::get_captions_url,
             commands::captions::preview_caption_overlay,
-            commands::captions::get_caption_outputs_status,
+            commands::config::get_outputs_status,
             commands::captions::check_apple_captions_support,
             commands::captions::open_translation_settings,
             // Debug
@@ -127,18 +129,13 @@ pub fn run() {
             // first page load rather than a hardcoded default.
             {
                 let state = app.state::<AppState>();
-                state
-                    .caption_overlay
-                    .send_replace(captions::OverlaySettings::from_config(&config.captions));
+                state.captions.set_overlay(&config.captions);
+                tauri::async_runtime::spawn(captions::run_silence_clear(state.captions.clone()));
 
-                // Native outputs run independently of the caption engine, so a
-                // receiver stays wired up (showing transparency) between talks.
-                let sinks = state.caption_sinks();
-                state
-                    .caption_outputs
-                    .lock()
-                    .unwrap()
-                    .reconcile(app.handle(), &sinks, &config.captions.outputs);
+                // Native outputs run independently of the caption engine and
+                // the presentation, so a receiver stays wired up between talks.
+                let sources = state.output_sources();
+                state.outputs.lock().unwrap().reconcile(app.handle(), &sources, &config);
             }
 
             let app_handle = app.handle().clone();
@@ -281,32 +278,9 @@ pub fn run() {
                     log::info!("Auto-starting web server on port {}", web_server_config.port);
 
                     let state = app_handle3.state::<AppState>();
-                    let notes_cache = state.notes_cache.clone();
-                    let status_broadcast = state.status_broadcast.clone();
-                    let notes_broadcast = state.notes_broadcast.clone();
-                    let scroll_broadcast = state.scroll_broadcast.clone();
-                    let state_manager = state.state_manager.lock().unwrap().clone();
-                    let caption_sinks = state.caption_sinks();
-
-                    match webserver::start(
-                        web_server_config,
-                        notes_cache,
-                        status_broadcast,
-                        notes_broadcast,
-                        scroll_broadcast,
-                        state_manager,
-                        caption_sinks,
-                    )
-                    .await
-                    {
-                        Ok(handle) => {
-                            let mut ws_handle = state.web_server_handle.lock().unwrap();
-                            *ws_handle = Some(handle);
-                            log::info!("Web server auto-started successfully");
-                        }
-                        Err(e) => {
-                            log::error!("Failed to auto-start web server: {}", e);
-                        }
+                    match state.start_web_server(web_server_config).await {
+                        Ok(()) => log::info!("Web server auto-started successfully"),
+                        Err(e) => log::error!("Failed to auto-start web server: {}", e),
                     }
                 });
             }
@@ -323,16 +297,8 @@ pub fn run() {
                     log::info!("Auto-starting captions ({})", captions_config.provider);
 
                     let state = app_handle4.state::<AppState>();
-                    let sinks = state.caption_sinks();
-
-                    match captions::start(app_handle4.clone(), &captions_config, sinks) {
-                        Ok(engine) => {
-                            let mut slot = state.caption_engine.lock().unwrap();
-                            *slot = Some(engine);
-                        }
-                        Err(e) => {
-                            log::error!("Failed to auto-start captions: {}", e);
-                        }
+                    if let Err(e) = state.start_captions(&app_handle4, &captions_config) {
+                        log::error!("Failed to auto-start captions: {}", e);
                     }
                 });
             }
@@ -381,12 +347,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = window.set_focus();
                 }
             }
-            "quit" => {
-                // Let the output helper close its Syphon server cleanly;
-                // receivers otherwise see the source vanish mid-frame.
-                app.state::<AppState>().caption_outputs.lock().unwrap().stop_all();
-                app.exit(0)
-            }
+            "quit" => app.exit(0),
             _ => {}
         })
         .build(app)?;

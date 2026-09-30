@@ -1,25 +1,34 @@
-//! Caption video outputs besides the web overlay.
+//! Native video outputs: helper processes publishing frames to receivers on
+//! this Mac (Syphon). Each output is its own helper and Syphon server:
 //!
-//! Each output is a helper process fed the *same* NDJSON messages the web
-//! overlay's `/api/captions/ws` socket carries — segments, replay, status and
-//! [`OverlaySettings`](super::OverlaySettings) — so every output renders the
-//! same lines with the same styling, and adding one (NDI, say) means a new
-//! renderer/sink on the helper side plus a sibling of [`syphon`] here, with no
-//! change to the caption engine.
+//! - **captions**: fed the same NDJSON the web overlay's `/api/captions/ws`
+//!   socket carries — segments, replay, status and
+//!   [`OverlaySettings`](crate::captions::OverlaySettings) — so it renders the
+//!   same lines with the same styling.
+//! - **notes**: the current slide's notes and the Ontime timer, fed the stage
+//!   view's `/api/ws` messages plus [`crate::ontime`].
 //!
-//! Outputs run independently of the caption engine: a receiver stays
-//! connected, showing a transparent frame, while captions are stopped.
+//! What each is fed lives in [`feed`]; adding a sink (NDI, say) means a new
+//! sink on the helper side plus a sibling of [`syphon`] here.
+//!
+//! Outputs run independently of the caption engine and the presentation: a
+//! receiver stays connected between talks.
 
+pub mod feed;
 pub mod syphon;
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::watch;
 
-use super::CaptionSinks;
-use crate::config::{CaptionOutputsConfig, SyphonOutputConfig};
+use crate::captions::CaptionSinks;
+use crate::config::{AppConfig, SyphonOutputConfig, WebServerConfig};
+use crate::ontime::{self, TimerState};
+use feed::NotesSources;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -56,19 +65,19 @@ impl OutputStatus {
     }
 }
 
-/// Every output's status. One field per output kind.
+/// Every output's status. One field per output.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct OutputsStatus {
-    pub syphon: OutputStatus,
+    pub captions: OutputStatus,
+    pub notes: OutputStatus,
 }
 
 impl Default for OutputsStatus {
     fn default() -> Self {
+        let supported = syphon::is_supported();
         Self {
-            syphon: OutputStatus::stopped(
-                syphon::is_supported(),
-                &SyphonOutputConfig::default().server_name,
-            ),
+            captions: OutputStatus::stopped(supported, &SyphonOutputConfig::default().server_name),
+            notes: OutputStatus::stopped(supported, &WebServerConfig::default().syphon.server_name),
         }
     }
 }
@@ -76,82 +85,149 @@ impl Default for OutputsStatus {
 /// How an output task reports status changes.
 pub type StatusReporter = Arc<dyn Fn(OutputStatus) + Send + Sync>;
 
-struct Running {
-    config: SyphonOutputConfig,
+/// Everything the outputs are fed from.
+#[derive(Clone)]
+pub struct OutputSources {
+    pub captions: CaptionSinks,
+    pub notes: NotesSources,
+}
+
+/// A running output, and the settings it was started with.
+struct Running<K> {
+    key: K,
     shutdown: watch::Sender<bool>,
+    /// Cleared when replaced, so the old task's final "stopped" report can't
+    /// land after its replacement's "running".
+    live: Arc<AtomicBool>,
+}
+
+/// What the notes output restarts on: its Syphon settings and where Ontime is.
+#[derive(Clone, PartialEq)]
+struct NotesKey {
+    syphon: SyphonOutputConfig,
+    ontime: Option<(String, u16)>,
 }
 
 /// The running outputs, reconciled against config on startup and every save.
 #[derive(Default)]
-pub struct CaptionOutputs {
-    syphon: Option<Running>,
+pub struct Outputs {
+    captions: Option<Running<SyphonOutputConfig>>,
+    notes: Option<Running<NotesKey>>,
     status: Arc<Mutex<OutputsStatus>>,
 }
 
-impl CaptionOutputs {
+impl Outputs {
     pub fn status(&self) -> OutputsStatus {
         self.status.lock().unwrap().clone()
     }
 
     /// Start, stop or restart outputs so they match `cfg`. Idempotent, so it's
     /// safe to call on every config save: unchanged outputs are left alone.
-    pub fn reconcile(&mut self, app: &AppHandle, sinks: &CaptionSinks, cfg: &CaptionOutputsConfig) {
-        let want = cfg.syphon.enabled.then(|| cfg.syphon.clone());
-        let have = self.syphon.as_ref().map(|r| &r.config);
-        if want.as_ref() == have {
-            return;
-        }
+    pub fn reconcile(&mut self, app: &AppHandle, sources: &OutputSources, cfg: &AppConfig) {
+        let syphon_cfg = &cfg.captions.outputs.syphon;
+        let captions = sources.captions.clone();
+        let report = self.reporter(app, |all| &mut all.captions);
+        reconcile_slot(
+            &mut self.captions,
+            syphon_cfg.enabled.then(|| syphon_cfg.clone()),
+            &syphon_cfg.server_name,
+            report,
+            |key, path, shutdown, report| {
+                let feed = feed::captions(captions);
+                let name = key.server_name.clone();
+                tauri::async_runtime::spawn(syphon::run(path, "captions", name, feed, shutdown, report));
+            },
+        );
 
-        // Changed or disabled: stop the old one first. A rename restarts,
-        // since a Syphon server's name is fixed at creation.
-        if let Some(old) = self.syphon.take() {
-            let _ = old.shutdown.send(true);
-        }
+        let ws = &cfg.web_server;
+        let host = ws.ontime_host.trim();
+        let notes = sources.notes.clone();
+        let report = self.reporter(app, |all| &mut all.notes);
+        reconcile_slot(
+            &mut self.notes,
+            ws.syphon.enabled.then(|| NotesKey {
+                syphon: ws.syphon.clone(),
+                ontime: (!host.is_empty()).then(|| (host.to_string(), ws.ontime_port)),
+            }),
+            &ws.syphon.server_name,
+            report,
+            |key, path, shutdown, report| {
+                // Ontime is followed only while the notes output runs.
+                let timer = key.ontime.clone().map(|(host, port)| {
+                    let (tx, rx) = watch::channel(TimerState::default());
+                    tauri::async_runtime::spawn(ontime::run(host, port, tx, shutdown.clone()));
+                    rx
+                });
+                let feed = feed::notes(notes, timer);
+                let name = key.syphon.server_name.clone();
+                tauri::async_runtime::spawn(syphon::run(path, "notes", name, feed, shutdown, report));
+            },
+        );
+    }
 
+    /// Reports into one field of the shared status, and pushes the whole
+    /// snapshot to the frontend.
+    fn reporter(&self, app: &AppHandle, field: fn(&mut OutputsStatus) -> &mut OutputStatus) -> StatusReporter {
         let status = Arc::clone(&self.status);
-        let app_for_report = app.clone();
-        let report: StatusReporter = Arc::new(move |s: OutputStatus| {
+        let app = app.clone();
+        Arc::new(move |s: OutputStatus| {
             let snapshot = {
                 let mut all = status.lock().unwrap();
-                all.syphon = s;
+                *field(&mut all) = s;
                 all.clone()
             };
-            let _ = app_for_report.emit("caption-outputs-status", &snapshot);
-        });
+            let _ = app.emit("outputs-status", &snapshot);
+        })
+    }
+}
 
-        let Some(config) = want else {
-            report(OutputStatus::stopped(syphon::is_supported(), &cfg.syphon.server_name));
+/// Bring one output in line with `want` (`None` = disabled). A changed key
+/// restarts it: a Syphon server's name is fixed at creation.
+fn reconcile_slot<K: PartialEq>(
+    slot: &mut Option<Running<K>>,
+    want: Option<K>,
+    name: &str,
+    report: StatusReporter,
+    start: impl FnOnce(&K, PathBuf, watch::Receiver<bool>, StatusReporter),
+) {
+    if want.as_ref() == slot.as_ref().map(|r| &r.key) {
+        return;
+    }
+    if let Some(old) = slot.take() {
+        old.live.store(false, Ordering::Relaxed);
+        let _ = old.shutdown.send(true);
+    }
+
+    let Some(key) = want else {
+        report(OutputStatus::stopped(syphon::is_supported(), name));
+        return;
+    };
+    let path = match syphon::preflight() {
+        Ok(p) => p,
+        Err(message) => {
+            report(OutputStatus {
+                state: OutputState::Error,
+                message: Some(message),
+                ..OutputStatus::stopped(syphon::is_supported(), name)
+            });
             return;
-        };
-
-        let path = match syphon::preflight() {
-            Ok(p) => p,
-            Err(message) => {
-                report(OutputStatus {
-                    state: OutputState::Error,
-                    message: Some(message),
-                    ..OutputStatus::stopped(syphon::is_supported(), &config.server_name)
-                });
-                return;
-            }
-        };
-
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let name = config.server_name.clone();
-        let sinks = sinks.clone();
-        tauri::async_runtime::spawn(async move {
-            syphon::run(path, name, sinks, shutdown_rx, report).await;
-        });
-        self.syphon = Some(Running {
-            config,
-            shutdown: shutdown_tx,
-        });
-    }
-
-    /// Stop everything, e.g. on app exit.
-    pub fn stop_all(&mut self) {
-        if let Some(r) = self.syphon.take() {
-            let _ = r.shutdown.send(true);
         }
-    }
+    };
+
+    let live = Arc::new(AtomicBool::new(true));
+    let gated: StatusReporter = {
+        let live = Arc::clone(&live);
+        Arc::new(move |s| {
+            if live.load(Ordering::Relaxed) {
+                report(s)
+            }
+        })
+    };
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    start(&key, path, shutdown_rx, gated);
+    *slot = Some(Running {
+        key,
+        shutdown: shutdown_tx,
+        live,
+    });
 }

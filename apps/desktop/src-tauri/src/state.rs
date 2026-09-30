@@ -1,13 +1,12 @@
 use sherpresent_core::DiscoveryService;
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
-use crate::captions::output::CaptionOutputs;
-use crate::captions::{
-    CaptionEngine, CaptionSegment, CaptionSinks, CaptionStatus, CaptionUpdate, OverlaySettings,
-};
-use crate::config::AdapterConfig;
+use crate::captions::{CaptionEngine, CaptionSinks};
+use crate::config::{AdapterConfig, CaptionsConfig, WebServerConfig};
 use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
-use std::collections::{HashMap, VecDeque};
+use crate::output::feed::NotesSources;
+use crate::output::{OutputSources, Outputs};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// Application state
@@ -68,31 +67,58 @@ pub struct AppState {
     /// Handle to the running caption engine (if any)
     pub caption_engine: Mutex<Option<CaptionEngine>>,
 
-    /// Broadcast channel for caption updates (consumed by the overlay page)
-    pub caption_broadcast: tokio::sync::broadcast::Sender<CaptionUpdate>,
+    /// Caption fan-out: overlay broadcast, replay buffer, engine status, and
+    /// live overlay styling (synced from config at startup, on every save, and
+    /// on every preview tick from Settings).
+    pub captions: CaptionSinks,
 
-    /// Recent finalized caption lines, replayed to late-joining overlays
-    pub caption_buffer: Arc<Mutex<VecDeque<CaptionSegment>>>,
-
-    /// Latest caption engine status, for the REST/initial-WS snapshot
-    pub caption_status: Arc<Mutex<CaptionStatus>>,
-
-    /// Live overlay styling, synced from config at startup, on every save, and
-    /// on every preview tick from Settings; see `CaptionSinks::overlay`.
-    pub caption_overlay: tokio::sync::watch::Sender<OverlaySettings>,
-
-    /// Native caption video outputs (Syphon), reconciled against config
-    pub caption_outputs: Mutex<CaptionOutputs>,
+    /// Native video outputs (Syphon captions and notes), reconciled against config
+    pub outputs: Mutex<Outputs>,
 }
 
 impl AppState {
-    /// Bundle the caption publishing handles for the engine.
-    pub fn caption_sinks(&self) -> CaptionSinks {
-        CaptionSinks {
-            broadcast: self.caption_broadcast.clone(),
-            buffer: self.caption_buffer.clone(),
-            status: self.caption_status.clone(),
-            overlay: self.caption_overlay.clone(),
+    /// Start the caption engine. Shared by the Start button and auto-start.
+    pub fn start_captions(&self, app: &tauri::AppHandle, config: &CaptionsConfig) -> Result<(), String> {
+        let mut slot = self.caption_engine.lock().unwrap();
+        if slot.is_some() {
+            return Err("Captions are already running".to_string());
+        }
+        // Clear stale lines so a new session doesn't open with the last one's text.
+        self.captions.buffer.lock().unwrap().clear();
+        *slot = Some(crate::captions::start(app.clone(), config, self.captions.clone())?);
+        Ok(())
+    }
+
+    /// Start the LAN web server. Shared by the Start button and auto-start.
+    pub async fn start_web_server(&self, config: WebServerConfig) -> Result<(), String> {
+        if self.web_server_handle.lock().unwrap().is_some() {
+            return Err("Web server is already running".to_string());
+        }
+        let state_manager = self.state_manager.lock().unwrap().clone();
+        let handle = crate::webserver::start(
+            config,
+            self.notes_cache.clone(),
+            self.status_broadcast.clone(),
+            self.notes_broadcast.clone(),
+            self.scroll_broadcast.clone(),
+            state_manager,
+            self.captions.clone(),
+        )
+        .await?;
+        *self.web_server_handle.lock().unwrap() = Some(handle);
+        Ok(())
+    }
+
+    /// Everything the native video outputs are fed from.
+    pub fn output_sources(&self) -> OutputSources {
+        OutputSources {
+            captions: self.captions.clone(),
+            notes: NotesSources {
+                notes: self.notes_cache.clone(),
+                notes_broadcast: self.notes_broadcast.clone(),
+                status_broadcast: self.status_broadcast.clone(),
+                state_manager: self.state_manager.clone(),
+            },
         }
     }
 }
@@ -116,11 +142,8 @@ impl Default for AppState {
             last_command_at: Arc::new(Mutex::new(0)),
             scroll_broadcast: tokio::sync::broadcast::channel(16).0,
             caption_engine: Mutex::new(None),
-            caption_broadcast: tokio::sync::broadcast::channel(64).0,
-            caption_buffer: Arc::new(Mutex::new(VecDeque::new())),
-            caption_status: Arc::new(Mutex::new(CaptionStatus::default())),
-            caption_overlay: tokio::sync::watch::channel(OverlaySettings::default()).0,
-            caption_outputs: Mutex::new(CaptionOutputs::default()),
+            captions: CaptionSinks::default(),
+            outputs: Mutex::new(Outputs::default()),
         }
     }
 }

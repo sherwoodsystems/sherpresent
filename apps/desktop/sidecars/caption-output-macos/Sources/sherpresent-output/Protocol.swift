@@ -1,15 +1,18 @@
 import Foundation
 
-/// Wire protocol with `captions/output/` in Rust.
+/// Wire protocol with `output/` in Rust.
 ///
-/// - **stdin**: NDJSON. The same messages the web overlay's
-///   `/api/captions/ws` socket carries (`segment`, `replay`, `status`,
-///   `settings`), so there is one caption message format for every output.
+/// - **stdin**: NDJSON, depending on `--content`:
+///   - `captions`: the same messages the web overlay's `/api/captions/ws`
+///     socket carries (`segment`, `replay`, `status`, `settings`, `clear`),
+///     so there is one caption message format for every output.
+///   - `notes`: the stage view's `/api/ws` messages (`status`, `notes`), plus
+///     `timer` from the app's Ontime client.
 ///   EOF = graceful stop.
 /// - **stdout**: NDJSON — `ready`, `sinks`, `error`.
 /// - **stderr**: plain-text logs.
 enum WireProtocol {
-    static let version = 1
+    static let version = 2
 }
 
 // MARK: - Inbound
@@ -21,18 +24,18 @@ struct Segment: Decodable, Equatable {
     var final: Bool
 }
 
-/// Mirrors `OverlaySettings` in `captions/mod.rs`. Rust has already clamped
-/// and sanitized every field.
+/// The fields of `OverlaySettings` (`captions/mod.rs`) that affect the
+/// picture; the rest (key colour, silence timeout) don't apply here. Rust has
+/// already clamped every field.
 struct OverlaySettings: Decodable, Equatable {
     var fontSize: Double = 56
     var maxLines: Int = 2
-    var chromaColor: String = "#00B140"
     var safeArea: Double = 5
     var width: Double = 80
     var shadow: Bool = false
     var background: Bool = false
-    /// Seconds of silence before the lines clear; 0 = never
-    var clearAfter: Double = 8
+    /// Fill of the background box, `0xRRGGBB`
+    var boxColor: UInt32 = 0x000000
 
     init() {}
 
@@ -43,16 +46,15 @@ struct OverlaySettings: Decodable, Equatable {
         let d = OverlaySettings()
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize) ?? d.fontSize
         maxLines = try c.decodeIfPresent(Int.self, forKey: .maxLines) ?? d.maxLines
-        chromaColor = try c.decodeIfPresent(String.self, forKey: .chromaColor) ?? d.chromaColor
         safeArea = try c.decodeIfPresent(Double.self, forKey: .safeArea) ?? d.safeArea
         width = try c.decodeIfPresent(Double.self, forKey: .width) ?? d.width
         shadow = try c.decodeIfPresent(Bool.self, forKey: .shadow) ?? d.shadow
         background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? d.background
-        clearAfter = try c.decodeIfPresent(Double.self, forKey: .clearAfter) ?? d.clearAfter
+        boxColor = try c.decodeIfPresent(String.self, forKey: .boxColor).flatMap(hexColor) ?? d.boxColor
     }
 
     private enum CodingKeys: String, CodingKey {
-        case fontSize, maxLines, chromaColor, safeArea, width, shadow, background, clearAfter
+        case fontSize, maxLines, safeArea, width, shadow, background, boxColor
     }
 }
 
@@ -65,6 +67,7 @@ enum InMessage {
     case replay([Segment])
     case status(StatusPayload)
     case settings(OverlaySettings)
+    case clear
     case unknown
 
     private struct Envelope: Decodable {
@@ -87,7 +90,79 @@ enum InMessage {
         case "replay": return .replay(env.segments ?? [])
         case "status": return env.status.map(InMessage.status) ?? .unknown
         case "settings": return env.settings.map(InMessage.settings) ?? .unknown
+        case "clear": return .clear
         default: return .unknown
+        }
+    }
+}
+
+// MARK: - Inbound, notes
+
+/// The slice of Rust's `LiveStatus` the notes feed shows.
+struct SlideStatus: Decodable, Equatable {
+    var current = 0
+    var total = 0
+    var presenting = false
+
+    private enum CodingKeys: String, CodingKey {
+        case current = "current_slide"
+        case total = "total_slides"
+        case presenting = "is_presenting"
+    }
+}
+
+/// Rust's `ontime::TimerState`.
+struct TimerPayload: Decodable, Equatable {
+    var connected: Bool
+    /// Milliseconds remaining; negative is overtime
+    var current: Double?
+    /// Ontime playback state: `play`, `pause`, `stop`, `armed`, `roll`
+    var playback: String?
+    var title: String
+}
+
+enum NotesMessage {
+    case status(SlideStatus)
+    /// Every slide's notes, keyed by 1-based slide number
+    case notes([Int: String])
+    /// nil when Ontime isn't configured
+    case timer(TimerPayload?)
+    case unknown
+
+    private struct Envelope<P: Decodable>: Decodable {
+        var payload: P
+    }
+
+    private struct TypeOnly: Decodable {
+        var type: String
+    }
+
+    /// Unknown types and malformed lines are dropped, never fatal.
+    static func parse(_ line: String) -> NotesMessage {
+        let decoder = JSONDecoder()
+        guard let data = line.data(using: .utf8),
+            let kind = try? decoder.decode(TypeOnly.self, from: data).type
+        else { return .unknown }
+
+        switch kind {
+        case "status":
+            return (try? decoder.decode(Envelope<SlideStatus>.self, from: data)).map { .status($0.payload) }
+                ?? .unknown
+        case "notes":
+            // JSON object keys are strings; slide numbers are ints.
+            guard let env = try? decoder.decode(Envelope<[String: String]>.self, from: data) else {
+                return .unknown
+            }
+            var notes: [Int: String] = [:]
+            for (k, v) in env.payload {
+                if let n = Int(k) { notes[n] = v }
+            }
+            return .notes(notes)
+        case "timer":
+            return (try? decoder.decode(Envelope<TimerPayload?>.self, from: data)).map { .timer($0.payload) }
+                ?? .unknown
+        default:
+            return .unknown
         }
     }
 }

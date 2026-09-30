@@ -10,6 +10,7 @@
      CSS rejects length x length, which silently voids the whole rule. */
   :root {
     --chroma: {{CHROMA}};
+    --box: {{BOX}};
     --size: {{FONT_SIZE}};
     --lines: {{MAX_LINES}};
     --safe: {{SAFE}}%;
@@ -104,12 +105,12 @@
       0 0 0.28em rgba(0, 0, 0, 0.55);
   }
 
-  /* Opt-in (Settings, or ?box=1): closed-caption style. Opaque on purpose —
+  /* Opt-in (Settings, or ?box=1&boxcolor=222): closed-caption style. Opaque on purpose —
      a translucent plate would show the key colour through and key out with
      it. `clone` gives every wrapped row its own box instead of one ragged
      shape spanning the rows. */
   body.boxed .line .text {
-    background: #000;
+    background: var(--box);
     padding: 0 0.3em;
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
@@ -155,10 +156,6 @@
   var SHOW_SOURCE = params.get('source') === '1' || params.get('text') === 'both';
   var TEXT_MODE = params.get('text') === 'source' ? 'source' : 'translated';
 
-  // Seconds of silence before the lines clear; 0 = never. See armClear.
-  var clearAfter = params.has('clear') ? Math.max(0, parseFloat(params.get('clear')) || 0) : {{CLEAR_AFTER}};
-  var clearTimer = null;
-
   // How many segments to keep in the DOM. The row-height window in CSS does
   // the real limiting; this just bounds the work, generously, since a single
   // segment is rarely shorter than one row.
@@ -173,31 +170,23 @@
   if (params.get('clean') === '1') {
     document.body.classList.add('clean');
   }
-  if (params.has('shadow')) {
-    document.body.classList.toggle('shadow', params.get('shadow') === '1');
-  }
-  if (params.has('box')) {
-    document.body.classList.toggle('boxed', params.get('box') === '1');
-  }
 
-  // Live styling from Settings. The server already sanitized and clamped
-  // every field; anything pinned in the URL keeps its URL value, so an OBS
-  // source configured by hand is never retuned from the app.
+  // Live styling. The server has already applied this page's URL pins and
+  // clamped every field (it gets our query string on the socket), so this
+  // just applies what arrives.
   function applySettings(s) {
-    if (!params.has('size') && s.fontSize) root.setProperty('--size', s.fontSize);
-    if (!params.has('lines') && s.maxLines) {
+    root.setProperty('--size', s.fontSize);
+    root.setProperty('--safe', s.safeArea + '%');
+    root.setProperty('--width', s.width + '%');
+    root.setProperty('--box', s.boxColor);
+    setChroma(s.chromaColor);
+    document.body.classList.toggle('shadow', s.shadow);
+    document.body.classList.toggle('boxed', s.background);
+    var keep = s.maxLines * 2 + 2;
+    if (keep !== keepSegments) {
       root.setProperty('--lines', s.maxLines);
-      keepSegments = s.maxLines * 2 + 2;
+      keepSegments = keep;
       render();
-    }
-    if (!params.has('safe') && s.safeArea != null) root.setProperty('--safe', s.safeArea + '%');
-    if (!params.has('width') && s.width) root.setProperty('--width', s.width + '%');
-    if (!params.has('bg') && s.chromaColor) setChroma(s.chromaColor);
-    if (!params.has('shadow')) document.body.classList.toggle('shadow', !!s.shadow);
-    if (!params.has('box')) document.body.classList.toggle('boxed', !!s.background);
-    if (!params.has('clear') && s.clearAfter != null && s.clearAfter !== clearAfter) {
-      clearAfter = s.clearAfter;
-      armClear();
     }
   }
 
@@ -251,21 +240,6 @@
     });
   }
 
-  // Clear the screen after `clearAfter` seconds with no caption activity, so a
-  // pause in the talk doesn't leave the last sentence hanging on air. Only the
-  // display clears; the next words start a fresh screen.
-  function armClear() {
-    if (clearTimer) clearTimeout(clearTimer);
-    clearTimer = null;
-    if (clearAfter > 0 && (finals.length || live)) {
-      clearTimer = setTimeout(function () {
-        finals = [];
-        live = null;
-        render();
-      }, clearAfter * 1000);
-    }
-  }
-
   function applySegment(seg) {
     if (seg.final) {
       // The live line and the finalized line share an id; replace, never
@@ -281,7 +255,6 @@
       live = seg;
     }
     render();
-    armClear();
   }
 
   function showStatus(text) {
@@ -318,7 +291,9 @@
 
   function connect() {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(proto + '//' + location.host + '/api/captions/ws');
+    // Our query string goes along so the server applies the same URL pins
+    // to every settings message it sends us.
+    ws = new WebSocket(proto + '//' + location.host + '/api/captions/ws' + location.search);
 
     ws.onopen = function () {
       retry = 500;
@@ -337,7 +312,11 @@
         finals = msg.segments.slice(-keepSegments);
         live = null;
         render();
-        armClear();
+      } else if (msg.type === 'clear') {
+        // Silence timeout (owned by the app, so every output clears together).
+        finals = [];
+        live = null;
+        render();
       } else if (msg.type === 'settings' && msg.settings) {
         applySettings(msg.settings);
       }

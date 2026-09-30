@@ -11,7 +11,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::adapters::LiveStatus;
-use crate::captions::{finite_clamp, sanitize_chroma, CaptionSinks};
+use crate::captions::CaptionSinks;
 use crate::config::WebServerConfig;
 use crate::osc::latency::CommandSource;
 use crate::osc::state_manager::StateManager;
@@ -37,12 +37,8 @@ struct WebServerState {
     font_size: u16,
     /// StateManager for handling incoming commands via WebSocket/REST
     state_manager: Option<Arc<StateManager>>,
-    /// Live caption fan-out for the /captions overlay
+    /// Live caption fan-out and overlay styling for the /captions overlay
     captions: CaptionSinks,
-    /// Overlay styling defaults, each overridable per-URL by a query param. A
-    /// `watch` receiver so it reflects Settings changes without a server
-    /// restart — see `CaptionSinks::overlay`.
-    caption_overlay: tokio::sync::watch::Receiver<crate::captions::OverlaySettings>,
 }
 
 /// Start the web server on the given port. Returns a handle to stop it later.
@@ -55,8 +51,6 @@ pub async fn start(
     state_manager: Option<Arc<StateManager>>,
     captions: CaptionSinks,
 ) -> Result<WebServerHandle, String> {
-    let caption_overlay = captions.overlay.subscribe();
-
     let state = WebServerState {
         notes_cache,
         status_broadcast,
@@ -68,7 +62,6 @@ pub async fn start(
         font_size: config.font_size,
         state_manager,
         captions,
-        caption_overlay,
     };
 
     // Spawn a task to keep last_status updated for REST endpoint
@@ -387,27 +380,17 @@ async fn captions_page_handler(
     AxumState(state): AxumState<WebServerState>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Html<String> {
-    let s = state.caption_overlay.borrow().clone();
-
-    // Query params win over Settings, clamped the same way, so a typo in a URL
-    // can't produce an unreadable or invisible frame. The page also reads
-    // them to know which values it must *not* retune live.
-    let num = |key: &str| params.get(key).and_then(|v| v.parse::<f32>().ok());
-
-    let chroma = params.get("bg").map(|v| sanitize_chroma(v)).unwrap_or(s.chroma_color);
-    let font_size = num("size").map_or(s.font_size as f32, |v| finite_clamp(v, 12.0, 240.0, 56.0));
-    let max_lines = num("lines").map_or(s.max_lines as f32, |v| finite_clamp(v, 1.0, 6.0, 2.0));
-    let safe = num("safe").map_or(s.safe_area, |v| finite_clamp(v, 0.0, 40.0, 5.0));
-    let width = num("width").map_or(s.width, |v| finite_clamp(v, 20.0, 100.0, 80.0));
-    let clear_after = num("clear").map_or(s.clear_after, |v| finite_clamp(v, 0.0, 120.0, 8.0));
+    // First paint only: the socket's opening `settings` message (same
+    // overrides) is what the page actually runs on.
+    let s = state.captions.overlay.borrow().with_overrides(&params);
 
     let html = CAPTIONS_HTML
-        .replace("{{CHROMA}}", &chroma)
-        .replace("{{FONT_SIZE}}", &format!("{}", font_size.round()))
-        .replace("{{MAX_LINES}}", &format!("{}", max_lines.round()))
-        .replace("{{SAFE}}", &format!("{:.2}", safe))
-        .replace("{{WIDTH}}", &format!("{:.2}", width))
-        .replace("{{CLEAR_AFTER}}", &format!("{}", clear_after));
+        .replace("{{CHROMA}}", &s.chroma_color)
+        .replace("{{BOX}}", &s.box_color)
+        .replace("{{FONT_SIZE}}", &s.font_size.to_string())
+        .replace("{{MAX_LINES}}", &s.max_lines.to_string())
+        .replace("{{SAFE}}", &format!("{:.2}", s.safe_area))
+        .replace("{{WIDTH}}", &format!("{:.2}", s.width));
 
     Html(html)
 }
@@ -415,60 +398,35 @@ async fn captions_page_handler(
 async fn captions_ws_handler(
     ws: WebSocketUpgrade,
     AxumState(state): AxumState<WebServerState>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> axum::response::Response {
-    ws.on_upgrade(move |socket| handle_captions_ws(socket, state))
+    ws.on_upgrade(move |socket| handle_captions_ws(socket, state, params))
 }
 
-async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState) {
+/// `pins` is the overlay page's own query string, forwarded by the page, so
+/// every `settings` message this socket sends has the URL's pins applied.
+async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState, pins: HashMap<String, String>) {
     log::info!("Caption overlay connected");
 
-    // Replay what's on screen right now, so an overlay that reconnects
-    // mid-sentence doesn't go blank until the next turn completes.
-    let (replay, status) = {
-        let buf = state.captions.buffer.lock().unwrap();
-        let status = state.captions.status.lock().unwrap().clone();
-        (buf.iter().cloned().collect::<Vec<_>>(), status)
-    };
-
-    let replay_msg = serde_json::json!({ "type": "replay", "segments": replay });
-    let status_msg = serde_json::json!({ "type": "status", "status": status });
-
-    if socket
-        .send(Message::Text(replay_msg.to_string().into()))
-        .await
-        .is_err()
-    {
-        return;
-    }
-    if socket
-        .send(Message::Text(status_msg.to_string().into()))
-        .await
-        .is_err()
-    {
-        return;
-    }
-
-    // Send the current styling too: the page may have been rendered before a
-    // Settings change, and a tab that's been open a while needs this same
-    // message pushed again on every later change below.
-    let mut overlay_rx = state.caption_overlay.clone();
-    let settings_msg = |s: &crate::captions::OverlaySettings| {
-        serde_json::json!({ "type": "settings", "settings": s }).to_string()
-    };
-    let initial = settings_msg(&overlay_rx.borrow_and_update());
-    if socket.send(Message::Text(initial.into())).await.is_err() {
-        return;
-    }
-
+    // Subscribe before snapshotting, so nothing published in between is lost.
     let mut rx = state.captions.broadcast.subscribe();
+    let mut overlay_rx = state.captions.overlay.subscribe();
+
+    // Styling, status, and what's on screen right now, so an overlay that
+    // reconnects mid-sentence doesn't go blank until the next turn completes.
+    let settings = overlay_rx.borrow_and_update().with_overrides(&pins);
+    for msg in state.captions.opening_messages(&settings) {
+        if socket.send(Message::Text(msg.into())).await.is_err() {
+            return;
+        }
+    }
 
     loop {
         tokio::select! {
             result = rx.recv() => {
                 match result {
                     Ok(update) => {
-                        let Ok(text) = serde_json::to_string(&update) else { continue };
-                        if socket.send(Message::Text(text.into())).await.is_err() {
+                        if socket.send(Message::Text(update.to_json().into())).await.is_err() {
                             break;
                         }
                     }
@@ -481,7 +439,8 @@ async fn handle_captions_ws(mut socket: WebSocket, state: WebServerState) {
                 }
             }
             Ok(()) = overlay_rx.changed() => {
-                let msg = settings_msg(&overlay_rx.borrow_and_update());
+                let settings = overlay_rx.borrow_and_update().with_overrides(&pins);
+                let msg = crate::captions::settings_message(&settings);
                 if socket.send(Message::Text(msg.into())).await.is_err() {
                     break;
                 }

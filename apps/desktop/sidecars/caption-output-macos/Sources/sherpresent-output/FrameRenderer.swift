@@ -1,5 +1,4 @@
 import CoreGraphics
-import CoreText
 import Foundation
 import IOSurface
 import ImageIO
@@ -16,13 +15,12 @@ struct Frame {
     let height: Int
 }
 
-/// Draws caption rows onto a transparent frame.
+/// The frame a `FrameContent` draws onto.
 ///
 /// Only draws when asked; the caller renders on change, never on a timer, so
 /// an idle show costs nothing.
 @MainActor
 final class FrameRenderer {
-    let device: MTLDevice
     let frame: Frame
     private let context: CGContext
 
@@ -54,66 +52,21 @@ final class FrameRenderer {
                     | CGBitmapInfo.byteOrder32Little.rawValue)
         else { return nil }
 
-        self.device = device
         self.context = ctx
         self.frame = Frame(surface: surface, texture: texture, width: width, height: height)
     }
 
-    func render(rows: [Row], layout: CaptionLayout) {
+    /// Clear the frame to transparent, let `draw` paint it, and flush.
+    func render(_ draw: (CGContext, CGFloat, CGFloat) -> Void) {
         let surface = frame.surface
         surface.lock(options: [], seed: nil)
         defer { surface.unlock(options: [], seed: nil) }
 
-        let ctx = context
         let w = CGFloat(frame.width)
-        ctx.clear(CGRect(x: 0, y: 0, width: w, height: CGFloat(frame.height)))
-
-        let font = layout.font()
-        let ascent = CTFontGetAscent(font)
-        let descent = CTFontGetDescent(font)
-        let rowHeight = layout.rowHeight
-        // CSS half-leading: the glyph box sits centred in its row.
-        let baselineInRow = (rowHeight - (ascent + descent)) / 2 + descent
-
-        if layout.settings.background {
-            // Closed-caption boxes, one per row, sized like the web overlay's
-            // inline background: the glyph box plus 0.3em each side. Opaque,
-            // matching the web overlay, and drawn before the shadow is set so
-            // the boxes themselves cast none.
-            let pad = (0.3 * layout.fontSize).rounded()
-            let boxHeight = ascent + descent
-            ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-            for (i, row) in rows.reversed().enumerated() where row.width > 0 {
-                let rowBottom = layout.bottomInset + CGFloat(i) * rowHeight
-                ctx.fill(
-                    CGRect(
-                        x: ((w - row.width) / 2 - pad).rounded(),
-                        y: (rowBottom + (rowHeight - boxHeight) / 2).rounded(),
-                        width: (row.width + 2 * pad).rounded(),
-                        height: boxHeight.rounded()))
-            }
-        }
-
-        ctx.saveGState()
-        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-        if layout.settings.shadow {
-            // One pass of the web overlay's three-layer text-shadow; close
-            // enough on a key, and cheap.
-            ctx.setShadow(
-                offset: CGSize(width: 0, height: -0.035 * layout.fontSize),
-                blur: 0.18 * layout.fontSize,
-                color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.9))
-        }
-
-        // Core Graphics is bottom-up: row 0 from the bottom is the newest.
-        for (i, row) in rows.reversed().enumerated() {
-            let y = layout.bottomInset + CGFloat(i) * rowHeight + baselineInRow
-            let x = (w - row.width) / 2
-            ctx.textPosition = CGPoint(x: x.rounded(), y: y.rounded())
-            CTLineDraw(row.line, ctx)
-        }
-        ctx.restoreGState()
-        ctx.flush()
+        let h = CGFloat(frame.height)
+        context.clear(CGRect(x: 0, y: 0, width: w, height: h))
+        draw(context, w, h)
+        context.flush()
     }
 
     /// PNG of the current frame, for `--render-png` and tests.

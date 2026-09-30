@@ -105,6 +105,8 @@ export interface WebServerConfig {
   ontimePort: number;
   /** Font size in px for stage view notes (default: 32) */
   fontSize: number;
+  /** Current slide's notes and the Ontime timer as a Syphon source */
+  syphon: SyphonOutputConfig;
 }
 
 /** Live caption provider id */
@@ -151,28 +153,29 @@ export interface CaptionOutputsConfig {
   syphon: SyphonOutputConfig;
 }
 
-/** Transparent 1920x1080 caption frames over Syphon (macOS) */
+/** A 1920x1080 Syphon source (macOS), for captions or notes */
 export interface SyphonOutputConfig {
   enabled: boolean;
   /** Name receivers list the source under */
   serverName: string;
 }
 
-export type CaptionOutputState = 'stopped' | 'starting' | 'running' | 'error';
+export type OutputState = 'stopped' | 'starting' | 'running' | 'error';
 
-export interface CaptionOutputStatus {
+export interface OutputStatus {
   /** Whether this machine can run the output at all */
   supported: boolean;
-  state: CaptionOutputState;
+  state: OutputState;
   name: string;
   /** Whether any receiver is connected right now */
   hasClients: boolean;
   message: string | null;
 }
 
-/** Payload of `get_caption_outputs_status` and the `caption-outputs-status` event */
-export interface CaptionOutputsStatus {
-  syphon: CaptionOutputStatus;
+/** Payload of `get_outputs_status` and the `outputs-status` event */
+export interface OutputsStatus {
+  captions: OutputStatus;
+  notes: OutputStatus;
 }
 
 export interface CaptionsConfig {
@@ -183,7 +186,8 @@ export interface CaptionsConfig {
   inputDevice: string | null;
   /** BCP-47 source language; null = provider auto-detects */
   sourceLanguage: string | null;
-  /** BCP-47 target language for caption output (default: 'fr') */
+  /** BCP-47 target language for caption output (default: 'fr'). Same
+   *  language as the source = straight captions, no translation. */
   targetLanguage: string;
   /** Caption font size in px, relative to a 1080p frame */
   fontSize: number;
@@ -197,8 +201,10 @@ export interface CaptionsConfig {
   width: number;
   /** Drop shadow behind caption text (default off) */
   shadow: boolean;
-  /** Closed-caption style opaque black box behind each row */
+  /** Closed-caption style opaque box behind each row */
   background: boolean;
+  /** Fill of that box, hex (default '#000000') */
+  boxColor: string;
   /** Seconds without new speech before captions clear; 0 = never */
   clearAfter: number;
   /** Native video outputs beyond the always-on web overlay */
@@ -343,7 +349,8 @@ export const defaultConfig: AppConfig = {
     port: 8080,
     ontimeHost: '',
     ontimePort: 4001,
-    fontSize: 32
+    fontSize: 32,
+    syphon: { enabled: false, serverName: 'SherPresent Notes' }
   },
   captions: {
     enabled: false,
@@ -358,6 +365,7 @@ export const defaultConfig: AppConfig = {
     width: 80,
     shadow: false,
     background: false,
+    boxColor: '#000000',
     clearAfter: 8,
     outputs: { syphon: { enabled: false, serverName: 'SherPresent Captions' } },
     apiKeys: { gemini: '', openai: '' }

@@ -62,29 +62,45 @@ Microphone → streaming translation → chroma-key overlay served on the LAN.
 window. `/captions` renders the HTML; `/api/captions/ws` is a separate socket
 from `/api/ws` so the overlay never receives slide/notes traffic.
 
-Styling (size, lines, safe area, width, key colour, shadow, CC box, clear
-timeout) is pushed live
-over the socket as a `settings` message whenever Settings changes — sliders
-call `preview_caption_overlay` per tick, ahead of the debounced save. `lines`
-means visual rows: the caption box is exactly that many rows tall and long
-sentences roll up out of the top.
+Styling (`OverlaySettings`: size, lines, safe area, width, key colour, shadow,
+CC box and its colour, clear timeout) is pushed live over the socket as a `settings` message
+whenever Settings changes — sliders call `preview_caption_overlay` (one per
+animation frame) ahead of the debounced save. `OverlaySettings::clamped` is
+the only place ranges live. `lines` means visual rows: the caption box is
+exactly that many rows tall and long sentences roll up out of the top.
 
 Pin any value per-URL (a pinned value ignores live updates):
-`/captions?bg=00b140&size=64&lines=2&safe=5&width=80&shadow=1&box=1&clear=8`
-(`clear=0` never clears), plus
-`bg=transparent` for OBS, `text=source|both` and `clean=1`.
+`/captions?bg=00b140&size=64&lines=2&safe=5&width=80&shadow=1&box=1&boxcolor=222`, plus
+`bg=transparent` for OBS, `text=source|both` and `clean=1`. The clear timeout
+is deliberately not pinnable: it's one app-wide timer (see below). Pins are applied server-side by
+`OverlaySettings::with_overrides` — the page forwards its query string on the
+socket — so the page itself never parses styling params.
 
-**Native outputs** (`captions/output/`): optional video outputs alongside the
-web overlay, each a helper process fed the *same* NDJSON the overlay socket
-carries (segments, replay, status, `OverlaySettings`), so they match it line
-for line. `CaptionOutputs::reconcile` starts/stops/renames them on startup and
-every `save_config`; they run independently of the caption engine so
-receivers stay wired up between talks. Status is pushed as
-`caption-outputs-status`.
+The silence timeout is owned by Rust (`captions::run_silence_clear`): it
+empties the replay buffer and broadcasts `clear`, so every output blanks
+together and a reconnecting overlay doesn't resurrect stale lines. Renderers
+just handle the message. Opening messages (settings, status, replay) come from
+`CaptionSinks::opening_messages` for the overlay socket and native outputs
+alike.
+
+**Native outputs** (`src/output/`): optional Syphon video sources, each a
+helper process with its own server, fed the *same* NDJSON as the matching web
+page (`output/feed.rs`) so they match it line for line:
+- **captions** (`captions.outputs.syphon`): the overlay socket's messages
+  (segments, replay, status, `OverlaySettings`), transparent frame.
+- **notes** (`webServer.syphon`): the stage view's `/api/ws` `status` + `notes`,
+  plus `timer` from `src/ontime.rs` (a Rust Ontime client reading the same
+  `runtime-data` the stage page does). Opaque frame: current slide's notes,
+  auto-fitted, with a timer strip when an Ontime host is set.
+
+`Outputs::reconcile` starts/stops/renames them on startup and every
+`save_config`; they run independently of the caption engine and the
+presentation so receivers stay wired up between talks. Status is pushed as
+`outputs-status`.
 
 - `output/syphon.rs` drives `sherpresent-output`
-  (`apps/desktop/sidecars/caption-output-macos/`): Core Text render onto a
-  transparent 1920x1080 IOSurface, published via a vendored, source-built
+  (`apps/desktop/sidecars/caption-output-macos/`, `--content captions|notes`):
+  Core Text render onto a 1920x1080 IOSurface, published via a vendored, source-built
   Syphon (`Sources/Syphon/VENDORED.md` — one patch, shaders compiled at
   runtime so no Xcode is needed). macOS 13+, Apple Silicon.
   `SHERPRESENT_OUTPUT_BIN` overrides discovery.
@@ -104,6 +120,11 @@ no C ABI, so `apple.rs` drives a helper process built from
 cpal PCM into the helper's stdin — the helper never opens the mic, so there is
 still one device claim and one TCC prompt. `bun run macos:sidecar` builds it;
 the script no-ops off macOS so Linux `cargo build` stays clean.
+
+**Straight captions**: target = source language (region ignored) means no
+translation — `CaptionsConfig::translates`. Apple skips its
+`TranslationSession` (`--no-translate`), and the engine drops any `translated`
+text so every renderer shows the verbatim transcript.
 
 **`Delta` vs `Replace`**: `ProviderEvent::Delta` appends (Gemini);
 `ProviderEvent::Replace` assigns the whole line (Apple). On-device recognizers

@@ -9,10 +9,11 @@ struct CaptionState {
     private(set) var finals: [Segment] = []
     private(set) var live: Segment?
     var translateEnabled = false
+    var maxLines = OverlaySettings().maxLines
     /// Segments kept around. The row window in `CaptionLayout` does the real
     /// limiting; this only bounds work, generously, since a segment is rarely
-    /// shorter than one row.
-    var keepSegments = 6
+    /// shorter than one row. Same formula as the web overlay.
+    var keepSegments: Int { maxLines * 2 + 2 }
 
     /// The last non-empty translation, held so a new partial that hasn't been
     /// translated yet doesn't blank the line (or flash the source language).
@@ -60,7 +61,7 @@ struct CaptionState {
     mutating func visibleTexts() -> [String] {
         var shown = finals
         if let live { shown.append(live) }
-        return shown.suffix(keepSegments).map { text(of: $0) }
+        return shown.map { text(of: $0) }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
     }

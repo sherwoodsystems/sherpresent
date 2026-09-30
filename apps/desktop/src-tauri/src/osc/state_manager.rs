@@ -100,6 +100,21 @@ fn current_time_ms() -> u64 {
         .as_millis() as u64
 }
 
+impl From<&CachedState> for LiveStatus {
+    fn from(state: &CachedState) -> Self {
+        Self {
+            is_open: state.is_open,
+            is_presenting: state.is_presenting,
+            current_slide: state.current_slide,
+            total_slides: state.total_slides,
+            zoom_level: state.zoom_level,
+            presenter_notes: None,
+            current_build: state.current_build,
+            total_builds: state.total_builds,
+        }
+    }
+}
+
 // =============================================================================
 // STATE MANAGER
 // =============================================================================
@@ -245,17 +260,7 @@ impl StateManager {
 
         // Also broadcast to web server so stage view updates instantly
         if let Some(ref tx) = self.status_broadcast {
-            let live_status = LiveStatus {
-                is_open: state.is_open,
-                is_presenting: state.is_presenting,
-                current_slide: state.current_slide,
-                total_slides: state.total_slides,
-                zoom_level: state.zoom_level,
-                presenter_notes: None,
-                current_build: state.current_build,
-                total_builds: state.total_builds,
-            };
-            let _ = tx.send(live_status);
+            let _ = tx.send(LiveStatus::from(&state));
         }
     }
 

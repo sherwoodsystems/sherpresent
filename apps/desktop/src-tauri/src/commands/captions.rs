@@ -15,31 +15,8 @@ pub async fn start_captions(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    // Scoped so the guard drops before any await, since MutexGuard is !Send.
-    {
-        let engine = state.caption_engine.lock().unwrap();
-        if engine.is_some() {
-            return Err("Captions are already running".to_string());
-        }
-    }
-
     let cfg = config::load_config(&app)?;
-    let sinks = state.caption_sinks();
-
-    // Clear stale lines so a new session doesn't open with the last one's text.
-    {
-        let mut buf = sinks.buffer.lock().unwrap();
-        buf.clear();
-    }
-
-    let engine = captions::start(app.clone(), &cfg.captions, sinks)?;
-
-    {
-        let mut slot = state.caption_engine.lock().unwrap();
-        *slot = Some(engine);
-    }
-
-    Ok(())
+    state.start_captions(&app, &cfg.captions)
 }
 
 /// Stop live captions.
@@ -67,7 +44,7 @@ pub fn is_captions_running(state: tauri::State<AppState>) -> bool {
 
 #[tauri::command]
 pub fn get_caption_status(state: tauri::State<AppState>) -> CaptionStatus {
-    state.caption_status.lock().unwrap().clone()
+    state.captions.status.lock().unwrap().clone()
 }
 
 /// Ask the Apple speech helper what it can actually do on this machine.
@@ -110,11 +87,7 @@ pub fn open_translation_settings() -> Result<(), String> {
 #[tauri::command]
 pub fn get_captions_url(app: tauri::AppHandle) -> Result<String, String> {
     let cfg = config::load_config(&app)?;
-    let local_ip = crate::commands::network::get_local_ip_internal();
-    Ok(format!(
-        "http://{}:{}/captions",
-        local_ip, cfg.web_server.port
-    ))
+    Ok(crate::commands::network::lan_url(cfg.web_server.port, "/captions"))
 }
 
 /// Restyle open overlays immediately, without saving.
@@ -127,22 +100,6 @@ pub fn preview_caption_overlay(
     state: tauri::State<'_, AppState>,
     captions: config::CaptionsConfig,
 ) {
-    let next = captions::OverlaySettings::from_config(&captions);
-    state.caption_overlay.send_if_modified(|cur| {
-        if *cur == next {
-            false
-        } else {
-            *cur = next;
-            true
-        }
-    });
+    state.captions.set_overlay(&captions);
 }
 
-/// Status of the native caption outputs (Syphon), for Settings. Changes are
-/// also pushed as `caption-outputs-status` events.
-#[tauri::command]
-pub fn get_caption_outputs_status(
-    state: tauri::State<'_, AppState>,
-) -> captions::output::OutputsStatus {
-    state.caption_outputs.lock().unwrap().status()
-}

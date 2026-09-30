@@ -1,10 +1,11 @@
 //! Syphon output: drives the `sherpresent-output` Swift helper, which renders
-//! caption frames with alpha and publishes them as a Syphon server.
+//! frames (captions with alpha, or notes) and publishes them as a Syphon
+//! server. One helper process per output.
 //!
-//! ## Protocol (version 1)
+//! ## Protocol (version 2)
 //!
-//! - **stdin**: NDJSON, the overlay socket's message set (`settings`,
-//!   `status`, `replay`, `segment`). EOF = graceful stop.
+//! - **args**: `--content captions|notes` picks what the helper draws.
+//! - **stdin**: NDJSON from the output's [`Feed`]. EOF = graceful stop.
 //! - **stdout**: NDJSON — `ready`, `sinks` (receiver connect/disconnect),
 //!   `error`.
 //! - **stderr**: plain-text logs, forwarded to ours.
@@ -15,20 +16,21 @@
 
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::ChildStdin;
-use tokio::sync::{broadcast, watch};
+use tokio::process::{Child, ChildStdin};
+use tokio::sync::watch;
 use tokio::time::timeout;
+use tokio_stream::StreamExt;
 
+use super::feed::Feed;
 use super::{OutputState, OutputStatus, StatusReporter};
-use crate::captions::{CaptionSinks, OverlaySettings};
+use crate::sidecar::{snapshot_tail, spawn_stderr_pump, with_stderr_tail, StderrTail};
 
 /// Helper binary name, as placed next to the app executable.
 pub const HELPER_NAME: &str = "sherpresent-output";
@@ -36,7 +38,7 @@ pub const HELPER_NAME: &str = "sherpresent-output";
 /// Overrides helper discovery (development, and tests with a scripted fake).
 const HELPER_ENV: &str = "SHERPRESENT_OUTPUT_BIN";
 
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 
 /// The helper's deployment target. Syphon itself goes back much further; 13 is
 /// just the floor for the Swift concurrency the helper uses.
@@ -47,7 +49,6 @@ const BACKOFF_MAX: Duration = Duration::from_secs(10);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 /// A write that blocks this long means the helper is wedged; respawn.
 const STDIN_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
-const STDERR_TAIL_LINES: usize = 5;
 
 /// Whether this Mac can run the helper. Apple Silicon only, because that's the
 /// only architecture the build script produces.
@@ -73,7 +74,7 @@ pub fn preflight() -> Result<PathBuf, String> {
 }
 
 enum SessionEnd {
-    /// Asked to stop, or the caption feed is gone for good.
+    /// Asked to stop, or the feed is gone for good.
     Shutdown,
     /// Crashed or wedged; worth a respawn.
     Failed { reason: String, was_ready: bool },
@@ -82,28 +83,28 @@ enum SessionEnd {
 }
 
 /// Run the output until `shutdown` flips, respawning the helper with backoff.
+/// `content` is the helper's `--content`; `name` the Syphon server name.
 pub async fn run(
     path: PathBuf,
+    content: &'static str,
     name: String,
-    sinks: CaptionSinks,
+    feed: Feed,
     mut shutdown: watch::Receiver<bool>,
     report: StatusReporter,
 ) {
     let base = OutputStatus {
-        supported: true,
         state: OutputState::Starting,
-        name: name.clone(),
-        has_clients: false,
-        message: None,
+        ..OutputStatus::stopped(true, &name)
     };
     let mut backoff = BACKOFF_START;
 
     loop {
         report(base.clone());
-        match run_session(&path, &name, &sinks, &mut shutdown, &report, &base).await {
+        let args = build_args(content, &name);
+        match run_session(&path, &args, &feed, &mut shutdown, &report, &base).await {
             SessionEnd::Shutdown => break,
             SessionEnd::Fatal(message) => {
-                log::error!("Syphon output stopped: {}", message);
+                log::error!("Syphon {} output stopped: {}", content, message);
                 report(OutputStatus {
                     state: OutputState::Error,
                     message: Some(message),
@@ -112,7 +113,7 @@ pub async fn run(
                 return;
             }
             SessionEnd::Failed { reason, was_ready } => {
-                log::warn!("Syphon output helper failed, restarting: {}", reason);
+                log::warn!("Syphon {} output helper failed, restarting: {}", content, reason);
                 if was_ready {
                     backoff = BACKOFF_START;
                 }
@@ -141,8 +142,8 @@ pub async fn run(
 
 async fn run_session(
     path: &Path,
-    name: &str,
-    sinks: &CaptionSinks,
+    args: &[String],
+    feed: &Feed,
     shutdown: &mut watch::Receiver<bool>,
     report: &StatusReporter,
     base: &OutputStatus,
@@ -151,14 +152,13 @@ async fn run_session(
         return SessionEnd::Shutdown;
     }
 
-    // Subscribe before snapshotting, so nothing published in between is lost.
-    let mut updates = sinks.broadcast.subscribe();
-    let mut overlay = sinks.overlay.subscribe();
+    // Opened before the spawn, so the opening state is snapshotted and live
+    // updates queue from here on; nothing is lost while the helper starts.
+    let mut feed = feed();
 
-    let args = build_args(name);
-    log::info!("Starting caption output helper: {} {}", path.display(), args.join(" "));
+    log::info!("Starting output helper: {} {}", path.display(), args.join(" "));
     let mut child = match tokio::process::Command::new(path)
-        .args(&args)
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -168,7 +168,7 @@ async fn run_session(
         Ok(c) => c,
         Err(e) => {
             return SessionEnd::Fatal(format!(
-                "Could not start the caption output helper at {}: {}",
+                "Could not start the output helper at {}: {}",
                 path.display(),
                 e
             ))
@@ -181,19 +181,9 @@ async fn run_session(
             was_ready: false,
         };
     };
-    let tail = Arc::new(Mutex::new(VecDeque::new()));
+    let tail = StderrTail::default();
     if let Some(stderr) = child.stderr.take() {
-        spawn_stderr_pump(stderr, Arc::clone(&tail));
-    }
-
-    // Initial state: styling, engine status, and whatever is on screen now.
-    // Snapshot first: a watch borrow is a lock guard and must not live
-    // across the awaits below.
-    let settings = overlay.borrow_and_update().clone();
-    for line in initial_lines(sinks, &settings) {
-        if let Err(reason) = write_line(&mut stdin, &line).await {
-            return SessionEnd::Failed { reason, was_ready: false };
-        }
+        spawn_stderr_pump(stderr, Arc::clone(&tail), "output-sidecar");
     }
 
     let mut lines = BufReader::new(stdout).lines();
@@ -204,32 +194,15 @@ async fn run_session(
         tokio::select! {
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
-                    drop(stdin);
-                    if timeout(SHUTDOWN_GRACE, child.wait()).await.is_err() {
-                        let _ = child.kill().await;
-                    }
+                    stop(child, stdin).await;
                     return SessionEnd::Shutdown;
                 }
             }
-            update = updates.recv() => {
-                let line = match update {
-                    Ok(u) => serde_json::to_string(&u).ok(),
-                    // Behind: only the newest lines matter, so resync from the
-                    // replay buffer rather than replaying the backlog.
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        log::warn!("Caption output lagged, skipped {} updates", n);
-                        Some(replay_line(sinks))
-                    }
-                    Err(broadcast::error::RecvError::Closed) => return SessionEnd::Shutdown,
+            line = feed.next() => {
+                let Some(line) = line else {
+                    stop(child, stdin).await;
+                    return SessionEnd::Shutdown;
                 };
-                if let Some(line) = line {
-                    if let Err(reason) = write_line(&mut stdin, &line).await {
-                        return SessionEnd::Failed { reason, was_ready };
-                    }
-                }
-            }
-            Ok(()) = overlay.changed() => {
-                let line = settings_line(&overlay.borrow_and_update());
                 if let Err(reason) = write_line(&mut stdin, &line).await {
                     return SessionEnd::Failed { reason, was_ready };
                 }
@@ -237,7 +210,7 @@ async fn run_session(
             line = lines.next_line() => {
                 match line {
                     Ok(Some(line)) => match parse_line(&line) {
-                        HelperLine::Ready { has_clients } | HelperLine::Sinks { has_clients } => {
+                        HelperLine::Sinks { has_clients } => {
                             was_ready = true;
                             current = OutputStatus {
                                 state: OutputState::Running,
@@ -248,19 +221,19 @@ async fn run_session(
                             report(current.clone());
                         }
                         HelperLine::Error { fatal: true, message } => {
-                            return SessionEnd::Fatal(with_tail(message, &tail));
+                            return SessionEnd::Fatal(with_stderr_tail(message, &snapshot_tail(&tail)));
                         }
                         HelperLine::Error { fatal: false, message } => {
-                            log::warn!("Caption output helper: {}", message);
+                            log::warn!("Output helper: {}", message);
                         }
                         HelperLine::Ignore => {}
                     },
                     Ok(None) | Err(_) => {
                         let status = child.wait().await.ok();
                         return SessionEnd::Failed {
-                            reason: with_tail(
+                            reason: with_stderr_tail(
                                 format!("helper exited ({})", status.map_or("unknown".into(), |s| s.to_string())),
-                                &tail,
+                                &snapshot_tail(&tail),
                             ),
                             was_ready,
                         };
@@ -268,6 +241,15 @@ async fn run_session(
                 }
             }
         }
+    }
+}
+
+/// Close stdin so the helper stops its Syphon server cleanly, then give it a
+/// moment before killing it.
+async fn stop(mut child: Child, stdin: ChildStdin) {
+    drop(stdin);
+    if timeout(SHUTDOWN_GRACE, child.wait()).await.is_err() {
+        let _ = child.kill().await;
     }
 }
 
@@ -282,40 +264,16 @@ async fn write_line(stdin: &mut ChildStdin, line: &str) -> Result<(), String> {
     }
 }
 
-fn spawn_stderr_pump(stderr: tokio::process::ChildStderr, tail: Arc<Mutex<VecDeque<String>>>) {
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if line.trim().is_empty() {
-                continue;
-            }
-            log::info!("[output-sidecar] {}", line);
-            let mut buf = tail.lock().unwrap();
-            buf.push_back(line);
-            while buf.len() > STDERR_TAIL_LINES {
-                buf.pop_front();
-            }
-        }
-    });
-}
-
-fn with_tail(message: String, tail: &Arc<Mutex<VecDeque<String>>>) -> String {
-    let buf = tail.lock().unwrap();
-    if buf.is_empty() {
-        message
-    } else {
-        format!("{} — {}", message, buf.iter().cloned().collect::<Vec<_>>().join(" | "))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-fn build_args(name: &str) -> Vec<String> {
+fn build_args(content: &str, name: &str) -> Vec<String> {
     vec![
         "--protocol".into(),
         PROTOCOL_VERSION.to_string(),
+        "--content".into(),
+        content.into(),
         "--sink".into(),
         "syphon".into(),
         "--name".into(),
@@ -323,27 +281,9 @@ fn build_args(name: &str) -> Vec<String> {
     ]
 }
 
-fn settings_line(s: &OverlaySettings) -> String {
-    serde_json::json!({ "type": "settings", "settings": s }).to_string()
-}
-
-fn replay_line(sinks: &CaptionSinks) -> String {
-    let segments: Vec<_> = sinks.buffer.lock().unwrap().iter().cloned().collect();
-    serde_json::json!({ "type": "replay", "segments": segments }).to_string()
-}
-
-fn initial_lines(sinks: &CaptionSinks, settings: &OverlaySettings) -> Vec<String> {
-    let status = sinks.status.lock().unwrap().clone();
-    vec![
-        settings_line(settings),
-        serde_json::json!({ "type": "status", "status": status }).to_string(),
-        replay_line(sinks),
-    ]
-}
-
 #[derive(Debug, PartialEq)]
 enum HelperLine {
-    Ready { has_clients: bool },
+    /// `ready` or `sinks`: both report receiver state, which is all we use.
     Sinks { has_clients: bool },
     Error { fatal: bool, message: String },
     Ignore,
@@ -361,8 +301,7 @@ fn parse_line(line: &str) -> HelperLine {
             .is_some_and(|s| s.iter().any(|s| s.get("hasClients") == Some(&Value::Bool(true))))
     };
     match v.get("type").and_then(Value::as_str) {
-        Some("ready") => HelperLine::Ready { has_clients: any_clients(&v) },
-        Some("sinks") => HelperLine::Sinks { has_clients: any_clients(&v) },
+        Some("ready" | "sinks") => HelperLine::Sinks { has_clients: any_clients(&v) },
         Some("error") => HelperLine::Error {
             fatal: v.get("fatal").and_then(Value::as_bool).unwrap_or(false),
             message: v
@@ -378,14 +317,16 @@ fn parse_line(line: &str) -> HelperLine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::captions::{CaptionSegment, CaptionStatus, CaptionUpdate};
+    use crate::captions::{CaptionSegment, CaptionSinks, CaptionUpdate};
+    use crate::output::feed;
+    use std::sync::Mutex;
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn test_parse_line() {
         assert_eq!(
             parse_line(r#"{"type":"ready","sinks":[{"kind":"syphon","hasClients":false}]}"#),
-            HelperLine::Ready { has_clients: false }
+            HelperLine::Sinks { has_clients: false }
         );
         assert_eq!(
             parse_line(r#"{"type":"sinks","sinks":[{"kind":"syphon","hasClients":true}]}"#),
@@ -402,39 +343,38 @@ mod tests {
     #[test]
     fn test_build_args() {
         assert_eq!(
-            build_args("Stage Left"),
-            ["--protocol", "1", "--sink", "syphon", "--name", "Stage Left"]
+            build_args("notes", "Stage Left"),
+            ["--protocol", "2", "--content", "notes", "--sink", "syphon", "--name", "Stage Left"]
         );
     }
 
-    fn sinks() -> CaptionSinks {
-        CaptionSinks {
-            broadcast: broadcast::channel(16).0,
-            buffer: Arc::new(Mutex::new(VecDeque::new())),
-            status: Arc::new(Mutex::new(CaptionStatus::default())),
-            overlay: watch::channel(OverlaySettings::default()).0,
-        }
+
+    /// An executable shell script standing in for the helper.
+    fn fake_script(tag: &str, body: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("sp-output-{}-{}", tag, std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("fake-output");
+        std::fs::write(&script, format!("#!/bin/sh\n{}", body)).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
     }
 
     /// A fake helper: announces ready, then copies stdin to `log`.
     fn fake_helper(log: &Path) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "sherpresent-output-test-{}-{}",
-            std::process::id(),
-            log.file_name().unwrap().to_string_lossy()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("fake-output");
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\necho '{{\"type\":\"ready\",\"sinks\":[{{\"kind\":\"syphon\",\"hasClients\":true}}]}}'\ncat > '{}'\n",
+        fake_script(
+            &log.file_name().unwrap().to_string_lossy(),
+            &format!(
+                "echo '{{\"type\":\"ready\",\"sinks\":[{{\"kind\":\"syphon\",\"hasClients\":true}}]}}'\ncat > '{}'\n",
                 log.display()
             ),
         )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        script
+    }
+
+    /// A reporter that records every status it's given.
+    fn recorder() -> (Arc<Mutex<Vec<OutputStatus>>>, StatusReporter) {
+        let statuses: Arc<Mutex<Vec<OutputStatus>>> = Arc::default();
+        let seen = Arc::clone(&statuses);
+        (statuses, Arc::new(move |s| seen.lock().unwrap().push(s)))
     }
 
     async fn wait_for(log: &Path, needle: &str) -> String {
@@ -454,7 +394,7 @@ mod tests {
         let _ = std::fs::remove_file(&log);
         let script = fake_helper(&log);
 
-        let sinks = sinks();
+        let sinks = CaptionSinks::default();
         sinks.buffer.lock().unwrap().push_back(CaptionSegment {
             id: 1,
             source: "earlier".into(),
@@ -463,11 +403,16 @@ mod tests {
             timestamp: 0,
         });
 
-        let statuses: Arc<Mutex<Vec<OutputStatus>>> = Arc::default();
-        let seen = Arc::clone(&statuses);
-        let report: StatusReporter = Arc::new(move |s| seen.lock().unwrap().push(s));
+        let (statuses, report) = recorder();
         let (stop_tx, stop_rx) = watch::channel(false);
-        let task = tokio::spawn(run(script, "Test".into(), sinks.clone(), stop_rx, report));
+        let task = tokio::spawn(run(
+            script,
+            "captions",
+            "Test".into(),
+            feed::captions(sinks.clone()),
+            stop_rx,
+            report,
+        ));
 
         // Initial state arrives first, including the replay buffer.
         let text = wait_for(&log, "\"earlier\"").await;
@@ -506,21 +451,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_fatal_error_stops_without_respawn() {
-        let dir = std::env::temp_dir().join(format!("sp-output-fatal-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("fake-output");
-        std::fs::write(
-            &script,
-            "#!/bin/sh\necho '{\"type\":\"error\",\"fatal\":true,\"message\":\"No Metal device\"}'\nexit 3\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-        let statuses: Arc<Mutex<Vec<OutputStatus>>> = Arc::default();
-        let seen = Arc::clone(&statuses);
-        let report: StatusReporter = Arc::new(move |s| seen.lock().unwrap().push(s));
+        let script = fake_script(
+            "fatal",
+            "echo '{\"type\":\"error\",\"fatal\":true,\"message\":\"No Metal device\"}'\nexit 3\n",
+        );
+        let (statuses, report) = recorder();
         let (_stop_tx, stop_rx) = watch::channel(false);
-        timeout(Duration::from_secs(5), run(script, "Test".into(), sinks(), stop_rx, report))
+        timeout(Duration::from_secs(5), run(script, "captions", "Test".into(), feed::captions(CaptionSinks::default()), stop_rx, report))
             .await
             .expect("fatal error must end run() without retrying");
 

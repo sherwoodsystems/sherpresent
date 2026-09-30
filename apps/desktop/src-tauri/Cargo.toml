@@ -116,3 +116,7 @@ windows = { version = "0.62", features = [
 ] }
 
 
+
+[dev-dependencies]
+# Paused-clock tests (captions::run_silence_clear).
+tokio = { version = "1", features = ["test-util"] }

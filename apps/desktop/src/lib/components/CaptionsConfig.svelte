@@ -1,14 +1,9 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
-  import type {
-    AppleCaptionSupport,
-    CaptionOutputsStatus,
-    SyphonOutputConfig,
-    CaptionApiKeyProviderId,
-    CaptionsConfig,
-    CaptionProviderId
-  } from '../types';
+  import { appStore } from '$lib/state.svelte';
+  import SyphonOutputField from './SyphonOutputField.svelte';
+  import { API_KEY_LABELS, CAPTION_LANGUAGES, apiKeyProvider, translates } from '../captions';
+  import type { AppleCaptionSupport, CaptionsConfig, CaptionProviderId } from '../types';
 
   interface Props {
     config: CaptionsConfig;
@@ -22,14 +17,21 @@
   }
 
   /**
-   * Overlay styling: push to open overlays on every input tick, ahead of the
-   * debounced save, so the overlay tracks the control in real time. Previews
-   * are fire-and-forget — a dropped one is superseded by the next tick or the
-   * save that follows.
+   * Overlay styling: push to open overlays ahead of the debounced save, so the
+   * overlay tracks the control in real time. Coalesced to one preview per
+   * animation frame — a drag fires far more input events than the overlay can
+   * show — and fire-and-forget, since the next frame or the save supersedes it.
    */
+  let pendingPreview: CaptionsConfig | null = null;
   function live<K extends keyof CaptionsConfig>(field: K, value: CaptionsConfig[K]) {
     const next = { ...config, [field]: value };
-    invoke('preview_caption_overlay', { captions: next }).catch(() => {});
+    if (pendingPreview === null) {
+      requestAnimationFrame(() => {
+        invoke('preview_caption_overlay', { captions: pendingPreview }).catch(() => {});
+        pendingPreview = null;
+      });
+    }
+    pendingPreview = next;
     onchange(next);
   }
 
@@ -49,48 +51,11 @@
     { field: 'clearAfter', label: 'Clear After', min: 0, max: 30, step: 1, format: (v) => (v === 0 ? 'Never' : `${v}s`) }
   ];
 
-  function updateSyphon(patch: Partial<SyphonOutputConfig>) {
-    onchange({
-      ...config,
-      outputs: { ...config.outputs, syphon: { ...config.outputs.syphon, ...patch } }
-    });
-  }
+  const syphonStatus = $derived(appStore.outputsStatus?.captions);
 
-  // Output status is pushed from Rust as receivers connect and disconnect.
-  let outputs = $state<CaptionOutputsStatus | null>(null);
-  $effect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    invoke<CaptionOutputsStatus>('get_caption_outputs_status')
-      .then((s) => (outputs = s))
-      .catch(() => {});
-    listen<CaptionOutputsStatus>('caption-outputs-status', (e) => (outputs = e.payload)).then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  });
-
-  const syphon = $derived(outputs?.syphon);
-  const syphonSummary = $derived.by(() => {
-    if (!syphon) return '';
-    switch (syphon.state) {
-      case 'running':
-        return syphon.hasClients ? 'Receiver connected' : 'No receivers';
-      case 'starting':
-        return 'Starting…';
-      case 'error':
-        return syphon.message ?? 'Error';
-      default:
-        return 'Stopped';
-    }
-  });
-
-  function updateKey(provider: CaptionApiKeyProviderId, value: string) {
-    onchange({ ...config, apiKeys: { ...config.apiKeys, [provider]: value.trim() } });
+  const keyProvider = $derived(apiKeyProvider(config.provider));
+  function updateKey(value: string) {
+    if (keyProvider) onchange({ ...config, apiKeys: { ...config.apiKeys, [keyProvider]: value.trim() } });
   }
 
   // Keys are stored in plaintext in config.json, so the field is masked in the
@@ -104,21 +69,29 @@
   ];
 
   const isApple = $derived(config.provider === 'apple');
-  const needsKey = $derived(config.provider === 'gemini' || config.provider === 'openai');
 
-  const languageModes = [
-    { id: 'en-fr', source: 'en-US', target: 'fr', label: 'English → French' },
-    { id: 'fr-en', source: 'fr', target: 'en-US', label: 'French → English' },
-    { id: 'en-only', source: 'en-US', target: 'en-US', label: 'English (captions only)' },
-    { id: 'fr-only', source: 'fr', target: 'fr', label: 'French (captions only)' }
-  ];
-  const selectedLanguageMode = $derived(
-    languageModes.find((m) => m.source === config.sourceLanguage && m.target === config.targetLanguage)
-      ?.id ?? 'en-fr'
-  );
-  function updateLanguageMode(id: string) {
-    const mode = languageModes.find((m) => m.id === id);
-    if (mode) onchange({ ...config, sourceLanguage: mode.source, targetLanguage: mode.target });
+  // Straight captions are stored as target = source, which is what every
+  // backend already treats as "don't translate" (`CaptionsConfig::translates`).
+  const translating = $derived(translates(config));
+  const NO_TRANSLATION = '';
+
+  /** The offered languages, plus whatever an older config holds, so it isn't
+   *  silently replaced just by opening Settings. */
+  function languageOptions(current: string | null) {
+    return !current || CAPTION_LANGUAGES.some((l) => l.code === current)
+      ? CAPTION_LANGUAGES
+      : [...CAPTION_LANGUAGES, { code: current, label: current }];
+  }
+
+  function updateSource(source: string) {
+    // Keep straight captions straight when the spoken language changes.
+    const targetLanguage = translating ? config.targetLanguage : source;
+    onchange({ ...config, sourceLanguage: source, targetLanguage });
+  }
+
+  function updateTarget(target: string) {
+    const source = config.sourceLanguage ?? CAPTION_LANGUAGES[0].code;
+    onchange({ ...config, sourceLanguage: source, targetLanguage: target || source });
   }
 
   let apple = $state<AppleCaptionSupport | null>(null);
@@ -206,15 +179,35 @@
     </div>
 
     <div class="field">
-      <label class="label" for="cap-language-mode">Language</label>
+      <label class="label" for="cap-source">Spoken Language</label>
       <select
-        id="cap-language-mode"
+        id="cap-source"
         class="input"
-        value={selectedLanguageMode}
-        onchange={(e) => updateLanguageMode(e.currentTarget.value)}
+        value={config.sourceLanguage ?? ''}
+        onchange={(e) => updateSource(e.currentTarget.value)}
       >
-        {#each languageModes as m (m.id)}
-          <option value={m.id}>{m.label}</option>
+        {#if config.sourceLanguage === null}
+          <option value="" disabled>Auto-detect</option>
+        {/if}
+        {#each languageOptions(config.sourceLanguage) as l (l.code)}
+          <option value={l.code}>{l.label}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="field">
+      <label class="label" for="cap-target">Captions In</label>
+      <select
+        id="cap-target"
+        class="input"
+        value={translating ? config.targetLanguage : NO_TRANSLATION}
+        onchange={(e) => updateTarget(e.currentTarget.value)}
+      >
+        <option value={NO_TRANSLATION}>Same language (no translation)</option>
+        {#each languageOptions(config.targetLanguage) as l (l.code)}
+          {#if !config.sourceLanguage || l.code !== config.sourceLanguage}
+            <option value={l.code}>{l.label}</option>
+          {/if}
         {/each}
       </select>
     </div>
@@ -241,24 +234,26 @@
               {/if}
             </span>
           </div>
-          <div class="status-row">
-            <span class="status-dot" class:ok={apple.translationStatus === 'installed'}></span>
-            <span class="status-text">
-              Translation pack:
-              {#if apple.translationStatus === 'installed'}
-                installed
-              {:else if apple.translationStatus === 'notInstalled'}
-                not installed
-              {:else}
-                language pair not supported
+          {#if translating}
+            <div class="status-row">
+              <span class="status-dot" class:ok={apple.translationStatus === 'installed'}></span>
+              <span class="status-text">
+                Translation pack:
+                {#if apple.translationStatus === 'installed'}
+                  installed
+                {:else if apple.translationStatus === 'notInstalled'}
+                  not installed
+                {:else}
+                  language pair not supported
+                {/if}
+              </span>
+              {#if apple.translationStatus === 'notInstalled'}
+                <button type="button" class="reveal" onclick={openTranslationSettings}>
+                  Install…
+                </button>
               {/if}
-            </span>
-            {#if apple.translationStatus === 'notInstalled'}
-              <button type="button" class="reveal" onclick={openTranslationSettings}>
-                Install…
-              </button>
-            {/if}
-          </div>
+            </div>
+          {/if}
           {#if !appleUsable && apple.message}
             <span class="hint warn">{apple.message}</span>
           {/if}
@@ -266,12 +261,10 @@
       </div>
     {/if}
 
-    {#if needsKey}
+    {#if keyProvider}
       <div class="field span">
         <div class="key-header">
-          <label class="label" for="cap-key">
-            {config.provider === 'openai' ? 'OpenAI' : 'Gemini'} API Key
-          </label>
+          <label class="label" for="cap-key">{API_KEY_LABELS[keyProvider]} API Key</label>
           <button type="button" class="reveal" onclick={() => (showKeys = !showKeys)}>
             {showKeys ? 'Hide' : 'Show'}
           </button>
@@ -282,10 +275,9 @@
           class="input mono"
           autocomplete="off"
           spellcheck="false"
-          placeholder={config.provider === 'openai' ? 'sk-…' : 'AIza…'}
-          value={config.provider === 'openai' ? config.apiKeys.openai : config.apiKeys.gemini}
-          onchange={(e) =>
-            updateKey(config.provider === 'openai' ? 'openai' : 'gemini', e.currentTarget.value)}
+          placeholder={keyProvider === 'openai' ? 'sk-…' : 'AIza…'}
+          value={config.apiKeys[keyProvider]}
+          onchange={(e) => updateKey(e.currentTarget.value)}
         />
         <span class="hint">Stored unencrypted in config.json</span>
       </div>
@@ -313,25 +305,32 @@
       </div>
     {/each}
 
-    <div class="field">
-      <label class="label" for="cap-chroma">Key Colour</label>
-      <div class="colour-row">
-        <input
-          id="cap-chroma"
-          type="color"
-          class="swatch"
-          value={config.chromaColor.startsWith('#') ? config.chromaColor : '#00B140'}
-          oninput={(e) => live('chromaColor', e.currentTarget.value)}
-        />
-        <input
-          type="text"
-          class="input mono"
-          aria-label="Key colour hex value"
-          value={config.chromaColor}
-          onchange={(e) => live('chromaColor', e.currentTarget.value.trim() || '#00B140')}
-        />
+    {#snippet colourField(field: 'chromaColor' | 'boxColor', label: string, fallback: string)}
+      <div class="field">
+        <label class="label" for="cap-{field}">{label}</label>
+        <div class="colour-row">
+          <input
+            id="cap-{field}"
+            type="color"
+            class="swatch"
+            value={config[field].startsWith('#') ? config[field] : fallback}
+            oninput={(e) => live(field, e.currentTarget.value)}
+          />
+          <input
+            type="text"
+            class="input mono"
+            aria-label="{label} hex value"
+            value={config[field]}
+            onchange={(e) => live(field, e.currentTarget.value.trim() || fallback)}
+          />
+        </div>
       </div>
-    </div>
+    {/snippet}
+
+    {@render colourField('chromaColor', 'Key Colour', '#00B140')}
+    {#if config.background}
+      {@render colourField('boxColor', 'Box Colour', '#000000')}
+    {/if}
 
     <div class="field span check-group">
       <label class="check-row">
@@ -348,49 +347,21 @@
           checked={config.background}
           onchange={(e) => live('background', e.currentTarget.checked)}
         />
-        <span class="label">Black background box</span>
+        <span class="label">Background box</span>
       </label>
     </div>
   </div>
 
-  {#if syphon?.supported}
+  {#if syphonStatus?.supported}
     <h3 class="section-title">Outputs</h3>
-    <div class="config-grid">
-      <div class="field span">
-        <label class="check-row">
-          <input
-            type="checkbox"
-            checked={config.outputs.syphon.enabled}
-            onchange={(e) => updateSyphon({ enabled: e.currentTarget.checked })}
-          />
-          <span class="label">Syphon</span>
-        </label>
-      </div>
-
-      {#if config.outputs.syphon.enabled}
-        <div class="field">
-          <label class="label" for="cap-syphon-name">Source Name</label>
-          <input
-            id="cap-syphon-name"
-            class="input"
-            value={config.outputs.syphon.serverName}
-            onchange={(e) =>
-              updateSyphon({ serverName: e.currentTarget.value.trim() || 'SherPresent Captions' })}
-          />
-        </div>
-        <div class="field status-field">
-          <div class="status-row">
-            <span
-              class="status-dot"
-              class:ok={syphon.state === 'running' && syphon.hasClients}
-              class:idle={syphon.state === 'running' && !syphon.hasClients}
-              class:bad={syphon.state === 'error'}
-            ></span>
-            <span class="status-text">{syphonSummary}</span>
-          </div>
-        </div>
-      {/if}
-    </div>
+    <SyphonOutputField
+      id="cap-syphon"
+      label="Syphon"
+      config={config.outputs.syphon}
+      status={syphonStatus}
+      defaultName="SherPresent Captions"
+      onchange={(syphon) => update('outputs', { ...config.outputs, syphon })}
+    />
   {/if}
 </div>
 
@@ -408,7 +379,6 @@
     margin: 0;
     padding-bottom: 0.25rem;
   }
-
 
   .config-grid {
     display: grid;
@@ -431,7 +401,6 @@
     font-weight: 500;
     color: #666;
   }
-
 
   .key-header {
     display: flex;
@@ -472,15 +441,6 @@
     border-radius: 50%;
     background: #b8860b;
   }
-
-  .status-dot.idle {
-    background: #8e8e93;
-  }
-
-  .status-dot.bad {
-    background: #ff3b30;
-  }
-
 
   .status-dot.ok {
     background: #34c759;
@@ -529,10 +489,6 @@
     gap: 0.5rem 1.5rem;
   }
 
-  .status-field {
-    justify-content: flex-end;
-  }
-
   .slider-header {
     display: flex;
     align-items: baseline;
@@ -566,7 +522,6 @@
       color: #eee;
     }
 
-
     .hint {
       color: #777;
     }
@@ -583,7 +538,6 @@
       color: #ddd;
     }
 
-
     .status-dot {
       background: #d9a441;
     }
@@ -591,7 +545,6 @@
     .label {
       color: #aaa;
     }
-
 
     .reveal {
       color: #0a84ff;

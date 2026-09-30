@@ -12,19 +12,21 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     config::save_config(&app, &config)?;
 
     // Re-sync the live overlay styling so any open overlay tab picks up the
-    // change without an app restart.
+    // change without an app restart. Unrelated saves (OSC, web server...)
+    // push nothing.
     let state = app.state::<AppState>();
-    state
-        .caption_overlay
-        .send_replace(crate::captions::OverlaySettings::from_config(&config.captions));
+    state.captions.set_overlay(&config.captions);
 
     // Start/stop/rename native outputs to match; unchanged ones are untouched.
-    let sinks = state.caption_sinks();
-    state
-        .caption_outputs
-        .lock()
-        .unwrap()
-        .reconcile(&app, &sinks, &config.captions.outputs);
+    let sources = state.output_sources();
+    state.outputs.lock().unwrap().reconcile(&app, &sources, &config);
 
     Ok(())
+}
+
+/// Status of the native video outputs (Syphon captions and notes), for
+/// Settings. Changes are also pushed as `outputs-status` events.
+#[tauri::command]
+pub fn get_outputs_status(state: tauri::State<'_, AppState>) -> crate::output::OutputsStatus {
+    state.outputs.lock().unwrap().status()
 }

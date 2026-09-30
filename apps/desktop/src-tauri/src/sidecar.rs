@@ -1,9 +1,23 @@
 //! Locating the Swift helper binaries (`externalBin` in `tauri.macos.conf.json`).
 //!
 //! Shared by the Apple speech provider and the caption video output, which
-//! each drive their own helper process.
+//! each drive their own helper process: discovery, plus the stderr handling
+//! both supervisors use.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+/// Lines of helper stderr kept for diagnostics.
+const STDERR_TAIL_LINES: usize = 20;
+
+/// Lines of stderr appended to a failure message.
+const STDERR_TAIL_REPORTED: usize = 5;
+
+/// Rolling tail of a helper's stderr.
+pub type StderrTail = Arc<Mutex<VecDeque<String>>>;
 
 /// Locate a bundled helper by name.
 ///
@@ -52,4 +66,48 @@ pub fn env_override(var: &str) -> Result<Option<PathBuf>, String> {
         return Err(format!("{} points at a missing file: {}", var, path.display()));
     }
     Ok(Some(path))
+}
+
+/// Forward helper stderr to the log under `[tag]`, honouring the `[error]` /
+/// `[warn]` prefixes the Swift helpers write, and keep a rolling tail for
+/// failure messages.
+pub fn spawn_stderr_pump(stderr: tokio::process::ChildStderr, tail: StderrTail, tag: &'static str) {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if line.contains("[error]") {
+                log::error!("[{}] {}", tag, line);
+            } else if line.contains("[warn]") {
+                log::warn!("[{}] {}", tag, line);
+            } else {
+                log::info!("[{}] {}", tag, line);
+            }
+
+            if let Ok(mut buf) = tail.lock() {
+                buf.push_back(line);
+                while buf.len() > STDERR_TAIL_LINES {
+                    buf.pop_front();
+                }
+            }
+        }
+    });
+}
+
+pub fn snapshot_tail(tail: &StderrTail) -> Vec<String> {
+    tail.lock()
+        .map(|buf| buf.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Append the last few stderr lines to a failure message.
+pub fn with_stderr_tail(message: String, tail: &[String]) -> String {
+    let start = tail.len().saturating_sub(STDERR_TAIL_REPORTED);
+    let recent = &tail[start..];
+    if recent.is_empty() {
+        return message;
+    }
+    format!("{} — {}", message, recent.join(" | "))
 }

@@ -15,8 +15,8 @@ protocol FrameSink: AnyObject {
 }
 
 @MainActor
-func makeSinks(_ kinds: [String], args: Args, device: MTLDevice) throws -> [FrameSink] {
-    try kinds.map { kind in
+func makeSinks(args: Args, device: MTLDevice) throws -> [FrameSink] {
+    try args.sinks.map { kind in
         switch kind {
         case "syphon": return SyphonSink(name: args.serverName, device: device)
         default: throw Args.ParseError.badValue("--sink", kind)
@@ -51,6 +51,11 @@ final class SyphonSink: FrameSink {
             imageRegion: NSRect(x: 0, y: 0, width: frame.width, height: frame.height),
             flipped: true)
         buffer.commit()
+        // The copy reads the same IOSurface the renderer draws the next frame
+        // into on the CPU; finish it first so a quick follow-up update can't
+        // tear. A 1080p blit is well under a millisecond, and frames only come
+        // on change.
+        buffer.waitUntilCompleted()
     }
 
     func stop() {

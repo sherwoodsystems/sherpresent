@@ -1,16 +1,19 @@
 import Foundation
 
-/// Command-line options. Everything that changes during a show (font size,
-/// lines, safe area...) arrives over stdin as `settings` instead, so these are
-/// only the things fixed for the life of the process.
+/// Command-line options. Everything that changes during a show (styling,
+/// slides, timer...) arrives over stdin instead, so these are only the things
+/// fixed for the life of the process.
 struct Args {
     var protocolVersion = 0
     /// Frame sinks to publish to. Only `syphon` exists today; NDI would be
     /// another value here plus another `FrameSink`.
     var sinks: [String] = ["syphon"]
     var serverName = "SherPresent Captions"
-    var width = 1920
-    var height = 1080
+    /// What to draw: `captions` or `notes`. See `makeContent`.
+    var content = "captions"
+    /// Fixed frame size; not a flag because nothing needs another size yet.
+    static let width = 1920
+    static let height = 1080
     /// Render the final state to a PNG at EOF instead of publishing anywhere.
     /// Used by tests and for eyeballing layout against the web overlay.
     var renderPNG: String?
@@ -39,11 +42,6 @@ struct Args {
             guard i < argv.count else { throw ParseError.missingValue(flag) }
             return argv[i]
         }
-        func int(_ flag: String) throws -> Int {
-            let v = try value(flag)
-            guard let n = Int(v), n > 0 else { throw ParseError.badValue(flag, v) }
-            return n
-        }
 
         while i < argv.count {
             let flag = argv[i]
@@ -55,8 +53,7 @@ struct Args {
             case "--sink":
                 args.sinks = try value(flag).split(separator: ",").map { String($0) }
             case "--name": args.serverName = try value(flag)
-            case "--width": args.width = try int(flag)
-            case "--height": args.height = try int(flag)
+            case "--content": args.content = try value(flag)
             case "--render-png": args.renderPNG = try value(flag)
             default: throw ParseError.unknownFlag(flag)
             }

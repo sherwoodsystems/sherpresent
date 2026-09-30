@@ -8,18 +8,17 @@
 //! - a replay buffer so a browser that connects late sees current captions
 //! - Tauri events for the in-app monitor
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::config::CaptionsConfig;
 
 pub mod audio;
-pub mod output;
 pub mod provider;
 
 use provider::{ProviderConfig, ProviderEvent};
@@ -95,8 +94,10 @@ pub struct OverlaySettings {
     /// % of frame width
     pub width: f32,
     pub shadow: bool,
-    /// Opaque black box behind each row (closed-caption look)
+    /// Opaque box behind each row (closed-caption look)
     pub background: bool,
+    /// `#rrggbb` / `#rgb` fill of that box
+    pub box_color: String,
     /// Seconds of silence before the lines clear; 0 = never
     pub clear_after: f32,
 }
@@ -104,15 +105,84 @@ pub struct OverlaySettings {
 impl OverlaySettings {
     pub fn from_config(c: &CaptionsConfig) -> Self {
         Self {
-            font_size: c.font_size.clamp(12, 240),
-            max_lines: c.max_lines.clamp(1, 6),
-            chroma_color: sanitize_chroma(&c.chroma_color),
-            safe_area: finite_clamp(c.safe_area, 0.0, 40.0, 5.0),
-            width: finite_clamp(c.width, 20.0, 100.0, 80.0),
+            font_size: c.font_size,
+            max_lines: c.max_lines,
+            chroma_color: c.chroma_color.clone(),
+            safe_area: c.safe_area,
+            width: c.width,
             shadow: c.shadow,
             background: c.background,
-            clear_after: finite_clamp(c.clear_after, 0.0, 120.0, 8.0),
+            box_color: c.box_color.clone(),
+            clear_after: c.clear_after,
         }
+        .clamped()
+    }
+
+    /// The one place every range lives. Applied to config values and to URL
+    /// overrides alike, so neither path can drift from the other.
+    fn clamped(self) -> Self {
+        use crate::config::{
+            default_caption_clear_after, default_caption_safe_area, default_caption_width,
+            DEFAULT_CAPTION_BOX_COLOR, DEFAULT_CHROMA_COLOR,
+        };
+        let chroma_color = if self.chroma_color.trim().eq_ignore_ascii_case("transparent") {
+            "transparent".to_string()
+        } else {
+            sanitize_hex_color(&self.chroma_color, DEFAULT_CHROMA_COLOR)
+        };
+        Self {
+            font_size: self.font_size.clamp(12, 240),
+            max_lines: self.max_lines.clamp(1, 6),
+            chroma_color,
+            // No `transparent`: the box is opaque by design.
+            box_color: sanitize_hex_color(&self.box_color, DEFAULT_CAPTION_BOX_COLOR),
+            safe_area: finite_clamp(self.safe_area, 0.0, 40.0, default_caption_safe_area()),
+            width: finite_clamp(self.width, 20.0, 100.0, default_caption_width()),
+            clear_after: finite_clamp(self.clear_after, 0.0, 120.0, default_caption_clear_after()),
+            ..self
+        }
+    }
+
+    /// These settings with an overlay URL's query-string pins applied
+    /// (`size`, `lines`, `safe`, `width`, `bg`, `shadow`, `box`, `boxcolor`).
+    ///
+    /// Not `clear_after`: the silence timeout is one app-wide timer
+    /// ([`run_silence_clear`]) that blanks every overlay and output together,
+    /// so a per-page value couldn't be honoured.
+    ///
+    /// Applied server-side to the page template *and* to every `settings`
+    /// message on that page's socket, so a pinned value simply never changes
+    /// there. Unparseable values are ignored rather than pinning anything.
+    pub fn with_overrides(&self, query: &HashMap<String, String>) -> Self {
+        let num = |key: &str| query.get(key).and_then(|v| v.trim().parse::<f32>().ok());
+        let flag = |key: &str| query.get(key).map(|v| v == "1");
+        let mut s = self.clone();
+        // `as` saturates (and maps NaN to 0), and `clamped` does the rest.
+        if let Some(v) = num("size") {
+            s.font_size = v.round() as u16;
+        }
+        if let Some(v) = num("lines") {
+            s.max_lines = v.round() as u8;
+        }
+        if let Some(v) = num("safe") {
+            s.safe_area = v;
+        }
+        if let Some(v) = num("width") {
+            s.width = v;
+        }
+        if let Some(v) = query.get("bg") {
+            s.chroma_color = v.clone();
+        }
+        if let Some(v) = flag("shadow") {
+            s.shadow = v;
+        }
+        if let Some(v) = flag("box") {
+            s.background = v;
+        }
+        if let Some(v) = query.get("boxcolor") {
+            s.box_color = v.clone();
+        }
+        s.clamped()
     }
 }
 
@@ -133,20 +203,16 @@ pub(crate) fn finite_clamp(v: f32, min: f32, max: f32, fallback: f32) -> f32 {
 
 /// Normalize a colour into something safe to drop into a CSS declaration.
 ///
-/// Only `#rgb` / `#rrggbb` / `transparent` are accepted; anything else falls
-/// back to broadcast green. This is a stylesheet injection guard, since the
+/// Only `#rgb` / `#rrggbb` (with or without the `#`) is accepted; anything
+/// else becomes `fallback`. This is a stylesheet injection guard, since the
 /// value reaches the page from both config and an untrusted query string.
-pub(crate) fn sanitize_chroma(raw: &str) -> String {
+pub(crate) fn sanitize_hex_color(raw: &str, fallback: &str) -> String {
     let s = raw.trim();
-    if s.eq_ignore_ascii_case("transparent") {
-        return "transparent".to_string();
-    }
-
     let hex = s.strip_prefix('#').unwrap_or(s);
     if matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
         format!("#{}", hex)
     } else {
-        "#00B140".to_string()
+        fallback.to_string()
     }
 }
 
@@ -156,6 +222,20 @@ pub(crate) fn sanitize_chroma(raw: &str) -> String {
 pub enum CaptionUpdate {
     Segment { segment: CaptionSegment },
     Status { status: CaptionStatus },
+    /// The silence timeout fired: blank the screen. See [`run_silence_clear`].
+    Clear,
+}
+
+impl CaptionUpdate {
+    /// The wire form every overlay socket and native output receives.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
+/// The `settings` message every overlay and output receives.
+pub fn settings_message(settings: &OverlaySettings) -> String {
+    serde_json::json!({ "type": "settings", "settings": settings }).to_string()
 }
 
 /// Shared handles the engine publishes through.
@@ -170,7 +250,32 @@ pub struct CaptionSinks {
     pub overlay: tokio::sync::watch::Sender<OverlaySettings>,
 }
 
+impl Default for CaptionSinks {
+    fn default() -> Self {
+        Self {
+            broadcast: broadcast::channel(64).0,
+            buffer: Arc::default(),
+            status: Arc::default(),
+            overlay: watch::channel(OverlaySettings::default()).0,
+        }
+    }
+}
+
 impl CaptionSinks {
+    /// Restyle every open overlay and output to match `config`. A no-op when
+    /// nothing visible changed, so it's cheap to call on every save and on
+    /// every slider tick.
+    pub fn set_overlay(&self, config: &CaptionsConfig) {
+        let next = OverlaySettings::from_config(config);
+        self.overlay.send_if_modified(|cur| {
+            let changed = *cur != next;
+            if changed {
+                *cur = next;
+            }
+            changed
+        });
+    }
+
     fn publish(&self, app: &AppHandle, update: CaptionUpdate) {
         // A send error just means no overlay browser is connected.
         let _ = self.broadcast.send(update.clone());
@@ -181,6 +286,74 @@ impl CaptionSinks {
             }
             CaptionUpdate::Status { status } => {
                 let _ = app.emit("caption-status", status);
+            }
+            CaptionUpdate::Clear => {}
+        }
+    }
+
+    /// The `replay` message: whatever is on screen right now.
+    pub fn replay_message(&self) -> String {
+        let segments: Vec<_> = self.buffer.lock().unwrap().iter().cloned().collect();
+        serde_json::json!({ "type": "replay", "segments": segments }).to_string()
+    }
+
+    /// What a newly connected overlay or output needs before live updates:
+    /// styling, engine status, and the current lines. One definition, so the
+    /// web overlay and every native output start from the same state.
+    pub fn opening_messages(&self, settings: &OverlaySettings) -> Vec<String> {
+        let status = self.status.lock().unwrap().clone();
+        vec![
+            settings_message(settings),
+            CaptionUpdate::Status { status }.to_json(),
+            self.replay_message(),
+        ]
+    }
+}
+
+/// Blank every overlay and output after `clear_after` seconds without new
+/// speech, so a pause doesn't leave the last sentence hanging on air.
+///
+/// Owned here rather than by each renderer: it also empties the replay
+/// buffer, so an overlay that reconnects (or a helper that respawns) after
+/// the timeout doesn't bring the stale lines back.
+pub async fn run_silence_clear(sinks: CaptionSinks) {
+    let mut updates = sinks.broadcast.subscribe();
+    let mut overlay = sinks.overlay.subscribe();
+    let mut on_screen = false;
+    let mut deadline: Option<tokio::time::Instant> = None;
+
+    let arm = |overlay: &watch::Receiver<OverlaySettings>| {
+        let secs = overlay.borrow().clear_after;
+        (secs > 0.0).then(|| tokio::time::Instant::now() + std::time::Duration::from_secs_f32(secs))
+    };
+
+    loop {
+        let expiry = async move {
+            match deadline {
+                Some(d) => tokio::time::sleep_until(d).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            update = updates.recv() => match update {
+                Ok(CaptionUpdate::Segment { .. }) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                    on_screen = true;
+                    deadline = arm(&overlay);
+                }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Closed) => return,
+            },
+            // A new timeout applies from now to whatever is showing.
+            Ok(()) = overlay.changed() => {
+                if on_screen {
+                    deadline = arm(&overlay);
+                }
+            }
+            () = expiry => {
+                on_screen = false;
+                deadline = None;
+                sinks.buffer.lock().unwrap().clear();
+                let _ = sinks.broadcast.send(CaptionUpdate::Clear);
             }
         }
     }
@@ -205,7 +378,8 @@ impl CaptionEngine {
     }
 }
 
-/// Start capture and streaming translation.
+/// Start capture and streaming translation (or plain captions, when the
+/// source and target are the same language).
 pub fn start(
     app: AppHandle,
     config: &CaptionsConfig,
@@ -230,16 +404,6 @@ pub fn start(
         },
     )?;
 
-    let provider_name = provider.name().to_string();
-
-    // Auto-detect (`source_language: None`) always means "translate": the
-    // provider doesn't know yet whether the detected language will match the
-    // target, so the overlay must not assume captions-only mode.
-    let translate_enabled = match config.source_language.as_deref() {
-        Some(src) => !provider::same_language(src, &config.target_language),
-        None => true,
-    };
-
     let (audio_tx, audio_rx) = mpsc::unbounded_channel::<Vec<i16>>();
     let (event_tx, event_rx) = mpsc::unbounded_channel::<ProviderEvent>();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -252,31 +416,17 @@ pub fn start(
         "Captions starting: '{}' @ {} Hz -> {} ({} -> {})",
         audio.device_name,
         audio.device_sample_rate,
-        provider_name,
+        provider.name(),
         config.source_language.as_deref().unwrap_or("auto"),
         config.target_language,
     );
 
-    set_status(
-        &app,
-        &sinks,
-        CaptionEngineState::Starting,
-        &provider_name,
-        translate_enabled,
-        None,
-    );
+    let status = StatusReporter::new(app, sinks, provider.name(), config.translates());
+    status.set(CaptionEngineState::Starting);
 
-    let sinks_for_task = sinks.clone();
-    let app_for_task = app.clone();
-
-    let provider_shutdown = shutdown_rx.clone();
-    let provider_fut = provider.run(audio_rx, event_tx, provider_shutdown);
-
+    let provider_fut = provider.run(audio_rx, event_tx, shutdown_rx);
     let task = tokio::spawn(async move {
-        tokio::join!(
-            provider_fut,
-            consume_events(app_for_task, sinks_for_task, event_rx, provider_name, translate_enabled),
-        );
+        tokio::join!(provider_fut, consume_events(status, event_rx));
     });
 
     Ok(CaptionEngine {
@@ -286,56 +436,62 @@ pub fn start(
     })
 }
 
-/// Accumulate provider deltas into lines and publish them.
-async fn consume_events(
+/// Publishes engine status, carrying the per-session fields every update
+/// repeats.
+struct StatusReporter {
     app: AppHandle,
     sinks: CaptionSinks,
-    mut events: mpsc::UnboundedReceiver<ProviderEvent>,
-    provider_name: String,
+    provider: String,
     translate_enabled: bool,
-) {
-    let mut next_id: u64 = 1;
-    let mut current = CaptionSegment {
-        id: next_id,
-        source: String::new(),
-        translated: String::new(),
-        is_final: false,
-        timestamp: now_ms(),
-    };
-    let mut reconnects: u32 = 0;
-    let started = std::time::Instant::now();
+    started: std::time::Instant,
+    reconnects: u32,
+}
+
+impl StatusReporter {
+    fn new(app: AppHandle, sinks: CaptionSinks, provider: &str, translate_enabled: bool) -> Self {
+        Self {
+            app,
+            sinks,
+            provider: provider.to_string(),
+            translate_enabled,
+            started: std::time::Instant::now(),
+            reconnects: 0,
+        }
+    }
+
+    fn set(&self, state: CaptionEngineState) {
+        let status = CaptionStatus {
+            state,
+            elapsed_seconds: self.started.elapsed().as_secs(),
+            reconnects: self.reconnects,
+            provider: self.provider.clone(),
+            translate_enabled: self.translate_enabled,
+        };
+        *self.sinks.status.lock().unwrap() = status.clone();
+        self.publish(CaptionUpdate::Status { status });
+    }
+
+    fn publish(&self, update: CaptionUpdate) {
+        self.sinks.publish(&self.app, update);
+    }
+}
+
+/// Accumulate provider deltas into lines and publish them.
+async fn consume_events(mut status: StatusReporter, mut events: mpsc::UnboundedReceiver<ProviderEvent>) {
+    let mut current = CaptionSegment::blank(1);
 
     while let Some(event) = events.recv().await {
         match event {
-            ProviderEvent::Connected => {
-                set_status(
-                    &app,
-                    &sinks,
-                    CaptionEngineState::Running,
-                    &provider_name,
-                    translate_enabled,
-                    Some((started.elapsed().as_secs(), reconnects)),
-                );
-            }
+            ProviderEvent::Connected => status.set(CaptionEngineState::Running),
 
             ProviderEvent::Delta { source, translated } => {
-                apply_delta(&mut current, &source, &translated);
-                sinks.publish(
-                    &app,
-                    CaptionUpdate::Segment {
-                        segment: current.clone(),
-                    },
-                );
+                current.apply_delta(&source, &translated);
+                publish_segment(&status, &mut current);
             }
 
             ProviderEvent::Replace { source, translated } => {
-                apply_replace(&mut current, source, translated);
-                sinks.publish(
-                    &app,
-                    CaptionUpdate::Segment {
-                        segment: current.clone(),
-                    },
-                );
+                current.apply_replace(source, translated);
+                publish_segment(&status, &mut current);
             }
 
             ProviderEvent::TurnComplete => {
@@ -346,107 +502,68 @@ async fn consume_events(
 
                 current.is_final = true;
                 current.timestamp = now_ms();
-
                 {
-                    let mut buf = sinks.buffer.lock().unwrap();
+                    let mut buf = status.sinks.buffer.lock().unwrap();
                     buf.push_back(current.clone());
                     while buf.len() > BUFFER_CAPACITY {
                         buf.pop_front();
                     }
                 }
-
-                sinks.publish(
-                    &app,
-                    CaptionUpdate::Segment {
-                        segment: current.clone(),
-                    },
-                );
-
-                next_id += 1;
-                current = CaptionSegment {
-                    id: next_id,
-                    source: String::new(),
-                    translated: String::new(),
-                    is_final: false,
-                    timestamp: now_ms(),
-                };
+                publish_segment(&status, &mut current);
+                current = CaptionSegment::blank(current.id + 1);
             }
 
             ProviderEvent::Reconnecting { reason } => {
-                reconnects += 1;
+                status.reconnects += 1;
                 log::info!("Caption provider reconnecting ({})", reason);
-                set_status(
-                    &app,
-                    &sinks,
-                    CaptionEngineState::Reconnecting,
-                    &provider_name,
-                    translate_enabled,
-                    Some((started.elapsed().as_secs(), reconnects)),
-                );
+                status.set(CaptionEngineState::Reconnecting);
             }
 
             ProviderEvent::Fatal { message } => {
                 log::error!("Caption provider failed: {}", message);
-                set_status(
-                    &app,
-                    &sinks,
-                    CaptionEngineState::Error(message),
-                    &provider_name,
-                    translate_enabled,
-                    Some((started.elapsed().as_secs(), reconnects)),
-                );
+                status.set(CaptionEngineState::Error(message));
                 return;
             }
         }
     }
 
-    set_status(
-        &app,
-        &sinks,
-        CaptionEngineState::Stopped,
-        &provider_name,
-        translate_enabled,
-        Some((started.elapsed().as_secs(), reconnects)),
-    );
+    status.set(CaptionEngineState::Stopped);
 }
 
-/// Append incremental text to the line in progress.
-fn apply_delta(seg: &mut CaptionSegment, source: &str, translated: &str) {
-    seg.source.push_str(source);
-    seg.translated.push_str(translated);
-    seg.timestamp = now_ms();
+/// Publish the line in progress. In captions-only mode anything a provider
+/// put in `translated` is a same-language re-rendering, not the speaker's
+/// words, so it's dropped here once rather than in every renderer.
+fn publish_segment(status: &StatusReporter, seg: &mut CaptionSegment) {
+    if !status.translate_enabled {
+        seg.translated.clear();
+    }
+    status.publish(CaptionUpdate::Segment { segment: seg.clone() });
 }
 
-/// Overwrite the line in progress with a revised hypothesis.
-fn apply_replace(seg: &mut CaptionSegment, source: String, translated: String) {
-    seg.source = source;
-    seg.translated = translated;
-    seg.timestamp = now_ms();
-}
-
-fn set_status(
-    app: &AppHandle,
-    sinks: &CaptionSinks,
-    state: CaptionEngineState,
-    provider: &str,
-    translate_enabled: bool,
-    counters: Option<(u64, u32)>,
-) {
-    let (elapsed_seconds, reconnects) = counters.unwrap_or((0, 0));
-    let status = CaptionStatus {
-        state,
-        elapsed_seconds,
-        reconnects,
-        provider: provider.to_string(),
-        translate_enabled,
-    };
-
-    {
-        let mut current = sinks.status.lock().unwrap();
-        *current = status.clone();
+impl CaptionSegment {
+    fn blank(id: u64) -> Self {
+        Self {
+            id,
+            source: String::new(),
+            translated: String::new(),
+            is_final: false,
+            timestamp: now_ms(),
+        }
     }
 
-    sinks.publish(app, CaptionUpdate::Status { status });
+    /// Append incremental text to the line in progress.
+    fn apply_delta(&mut self, source: &str, translated: &str) {
+        self.source.push_str(source);
+        self.translated.push_str(translated);
+        self.timestamp = now_ms();
+    }
+
+    /// Overwrite the line in progress with a revised hypothesis.
+    fn apply_replace(&mut self, source: String, translated: String) {
+        self.source = source;
+        self.translated = translated;
+        self.timestamp = now_ms();
+    }
 }
 
 fn now_ms() -> u64 {
@@ -501,6 +618,7 @@ mod tests {
             "width",
             "shadow",
             "background",
+            "boxColor",
             "clearAfter",
         ] {
             assert!(json.get(key).is_some(), "missing {key}");
@@ -508,11 +626,92 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_chroma() {
-        assert_eq!(sanitize_chroma("TRANSPARENT"), "transparent");
-        assert_eq!(sanitize_chroma("0f0"), "#0f0");
-        assert_eq!(sanitize_chroma("#00b140"), "#00b140");
-        assert_eq!(sanitize_chroma("url(x)"), "#00B140");
+    fn test_overrides_pin_clamp_and_ignore_garbage() {
+        let q: HashMap<String, String> = [
+            ("size", "999"),
+            ("lines", "abc"),
+            ("clear", "999"),
+            ("bg", "transparent"),
+            ("box", "1"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let base = OverlaySettings::default();
+        let s = base.with_overrides(&q);
+        assert_eq!(s.font_size, 240, "clamped like config values");
+        assert_eq!(s.max_lines, base.max_lines, "unparseable value pins nothing");
+        assert_eq!(s.clear_after, base.clear_after, "silence timeout is app-wide, not pinnable");
+        assert_eq!(s.chroma_color, "transparent");
+        assert!(s.background);
+        assert_eq!(s.shadow, base.shadow);
+    }
+
+    fn final_segment(id: u64) -> CaptionSegment {
+        CaptionSegment {
+            source: "hi".into(),
+            is_final: true,
+            ..CaptionSegment::blank(id)
+        }
+    }
+
+    fn segment(id: u64) -> CaptionUpdate {
+        CaptionUpdate::Segment {
+            segment: final_segment(id),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_silence_clear_blanks_and_empties_replay() {
+        let sinks = CaptionSinks::default();
+        let mut rx = sinks.broadcast.subscribe();
+        tokio::spawn(run_silence_clear(sinks.clone()));
+        tokio::task::yield_now().await;
+
+        sinks.buffer.lock().unwrap().push_back(final_segment(1));
+        sinks.broadcast.send(segment(1)).unwrap();
+        assert!(matches!(rx.recv().await.unwrap(), CaptionUpdate::Segment { .. }));
+
+        // Nothing before the 8s default...
+        tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+        assert!(rx.try_recv().is_err());
+        // ...then a clear, and the replay buffer is empty.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert!(matches!(rx.recv().await.unwrap(), CaptionUpdate::Clear));
+        assert!(sinks.buffer.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_silence_clear_disabled_at_zero() {
+        let sinks = CaptionSinks::default();
+        sinks.overlay.send_modify(|s| s.clear_after = 0.0);
+        let mut rx = sinks.broadcast.subscribe();
+        tokio::spawn(run_silence_clear(sinks.clone()));
+        tokio::task::yield_now().await;
+
+        sinks.broadcast.send(segment(1)).unwrap();
+        rx.recv().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_sanitize_hex_color() {
+        assert_eq!(sanitize_hex_color("0f0", "#000"), "#0f0");
+        assert_eq!(sanitize_hex_color(" #00b140 ", "#000"), "#00b140");
+        assert_eq!(sanitize_hex_color("url(x)", "#000"), "#000");
+        assert_eq!(sanitize_hex_color("transparent", "#000"), "#000");
+    }
+
+    #[test]
+    fn test_chroma_accepts_transparent_but_box_does_not() {
+        let q: HashMap<String, String> = [("bg", "TRANSPARENT"), ("boxcolor", "transparent")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let s = OverlaySettings::default().with_overrides(&q);
+        assert_eq!(s.chroma_color, "transparent");
+        assert_eq!(s.box_color, "#000000");
     }
 
     #[test]
@@ -539,41 +738,32 @@ mod tests {
         assert!(json.contains("\"type\":\"status\""));
     }
 
-    fn blank_segment() -> CaptionSegment {
-        CaptionSegment {
-            id: 1,
-            source: String::new(),
-            translated: String::new(),
-            is_final: false,
-            timestamp: 0,
-        }
-    }
 
     #[test]
     fn test_apply_delta_appends() {
-        let mut seg = blank_segment();
-        apply_delta(&mut seg, "hello", "bonjour");
-        apply_delta(&mut seg, " world", " le monde");
+        let mut seg = CaptionSegment::blank(1);
+        seg.apply_delta("hello", "bonjour");
+        seg.apply_delta(" world", " le monde");
         assert_eq!(seg.source, "hello world");
         assert_eq!(seg.translated, "bonjour le monde");
     }
 
     #[test]
     fn test_apply_replace_overwrites_a_revised_hypothesis() {
-        let mut seg = blank_segment();
+        let mut seg = CaptionSegment::blank(1);
         // On-device recognizers revise, they don't only extend. Appending these
         // would yield "hello wordhello world".
-        apply_replace(&mut seg, "hello word".into(), "bonjour mot".into());
-        apply_replace(&mut seg, "hello world".into(), "bonjour le monde".into());
+        seg.apply_replace("hello word".into(), "bonjour mot".into());
+        seg.apply_replace("hello world".into(), "bonjour le monde".into());
         assert_eq!(seg.source, "hello world");
         assert_eq!(seg.translated, "bonjour le monde");
     }
 
     #[test]
     fn test_apply_replace_can_shorten_the_line() {
-        let mut seg = blank_segment();
-        apply_replace(&mut seg, "a longer guess".into(), String::new());
-        apply_replace(&mut seg, "short".into(), String::new());
+        let mut seg = CaptionSegment::blank(1);
+        seg.apply_replace("a longer guess".into(), String::new());
+        seg.apply_replace("short".into(), String::new());
         assert_eq!(seg.source, "short");
     }
 
