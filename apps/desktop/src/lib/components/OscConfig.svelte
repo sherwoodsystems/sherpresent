@@ -89,7 +89,6 @@
     border-bottom: 1px solid #eee;
   }
 
-
   .hint {
     font-size: 0.7rem;
     color: #888;

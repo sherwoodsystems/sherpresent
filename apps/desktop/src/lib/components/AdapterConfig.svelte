@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
   import type { AdapterType, AdapterConfig, ConnectionStatus } from '../types';
   import { appStore } from '$lib/state.svelte';
 
@@ -47,7 +46,8 @@
     if (connectionStatus === 'Connected') return 'Connected';
     if (connectionStatus === 'Connecting') return 'Connecting...';
     if (connectionStatus === 'Disconnected') return 'Disconnected';
-    if (typeof connectionStatus === 'object' && 'Error' in connectionStatus) return `Error: ${connectionStatus.Error}`;
+    if (typeof connectionStatus === 'object' && 'Error' in connectionStatus)
+      return `Error: ${connectionStatus.Error}`;
     return '';
   });
 
@@ -61,11 +61,12 @@
 
 {#if adapter === 'libreoffice'}
   <div class="adapter-config">
-    <label class="label">LibreOffice Connection</label>
+    <span class="label">LibreOffice Connection</span>
     <div class="row">
       <div class="field">
-        <label class="field-label">Host</label>
+        <label class="field-label" for="lo-host">Host</label>
         <input
+          id="lo-host"
           type="text"
           class="input"
           bind:value={loHost}
@@ -74,8 +75,9 @@
         />
       </div>
       <div class="field field-small">
-        <label class="field-label">Port</label>
+        <label class="field-label" for="lo-port">Port</label>
         <input
+          id="lo-port"
           type="number"
           class="input"
           bind:value={loPort}
@@ -91,9 +93,10 @@
   </div>
 {:else if adapter === 'canva'}
   <div class="adapter-config">
-    <label class="label">Canva Remote Control</label>
+    <label class="label" for="canva-url">Canva Remote Control</label>
     <div class="row">
       <input
+        id="canva-url"
         type="text"
         class="input"
         bind:value={canvaUrl}
@@ -105,7 +108,9 @@
       {#if connectionStatus === 'Connected'}
         <button class="btn btn-disconnect" onclick={disconnectCanva}>Disconnect</button>
       {:else}
-        <button class="btn btn-connect" onclick={connectCanva} disabled={!canvaUrl.trim()}>Connect</button>
+        <button class="btn btn-connect" onclick={connectCanva} disabled={!canvaUrl.trim()}
+          >Connect</button
+        >
       {/if}
       <span class="status" style="color: {statusColor}">{statusText}</span>
     </div>

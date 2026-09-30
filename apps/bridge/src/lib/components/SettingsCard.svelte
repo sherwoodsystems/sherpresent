@@ -4,7 +4,7 @@
   let {
     draft,
     onSave,
-    onReset,
+    onReset
   }: {
     /** The editable settings draft owned by the page. Bound field-by-field. */
     draft: BridgeConfig;
@@ -85,8 +85,8 @@
           <button class="btn-ghost" onclick={onReset}>Reset</button>
         </div>
         <p class="muted small">
-          Note: changing ports requires restarting the bridge app to take effect
-          for the OSC listener and HTTP API.
+          Note: changing ports requires restarting the bridge app to take effect for the OSC
+          listener and HTTP API.
         </p>
       </div>
     </div>

@@ -11,7 +11,7 @@
     configPort,
     mode,
     validChannels,
-    onchange,
+    onchange
   }: {
     slotName: string;
     device: BridgeDeviceSlot | null;
@@ -30,7 +30,9 @@
   async function unregister() {
     try {
       const result = await invoke<BridgeApiResponse>('bridge_unregister_device', {
-        host, configPort, slot: slotName,
+        host,
+        configPort,
+        slot: slotName
       });
       message = result.message;
       onchange();
@@ -43,7 +45,10 @@
     testing = true;
     try {
       await invoke<BridgeApiResponse>('bridge_test_device', {
-        host, configPort, slot: slotName, command,
+        host,
+        configPort,
+        slot: slotName,
+        command
       });
     } catch (e) {
       message = `Error: ${e}`;
@@ -91,8 +96,12 @@
             <span class="channel-badge">{device.channel}</span>
             {#if mode === 'broadcast'}
               <div class="test-buttons">
-                <button class="btn-sm" onclick={() => testDevice('prev')} disabled={testing}>Test Prev</button>
-                <button class="btn-sm" onclick={() => testDevice('next')} disabled={testing}>Test Next</button>
+                <button class="btn-sm" onclick={() => testDevice('prev')} disabled={testing}
+                  >Test Prev</button
+                >
+                <button class="btn-sm" onclick={() => testDevice('next')} disabled={testing}
+                  >Test Next</button
+                >
               </div>
             {/if}
             <button class="btn-sm btn-danger" onclick={unregister}>Unregister</button>
@@ -104,7 +113,9 @@
 
       <div class="slot-right">
         {#if connectedDevice}
-          <div class="connected-device-name">{connectedDevice.name}{connectedDevice.is_perfect_cue ? ' [Perfect Cue]' : ''}</div>
+          <div class="connected-device-name">
+            {connectedDevice.name}{connectedDevice.is_perfect_cue ? ' [Perfect Cue]' : ''}
+          </div>
           <div class="connected-device-port">USB: {connectedDevice.usb_phys || 'unknown'}</div>
         {:else if device}
           <span class="connected-empty">Not connected</span>
@@ -223,15 +234,22 @@
     font-family: inherit;
     transition: all 0.15s ease;
   }
-  .btn-sm:hover { background: #f0f0f0; }
-  .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-sm:hover {
+    background: #f0f0f0;
+  }
+  .btn-sm:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
   .btn-danger {
     color: #c62828;
     border-color: #ef9a9a;
     margin-left: auto;
   }
-  .btn-danger:hover { background: #ffebee; }
+  .btn-danger:hover {
+    background: #ffebee;
+  }
 
   .btn-register {
     padding: 0.5rem;
@@ -245,7 +263,9 @@
     font-weight: 500;
     transition: all 0.15s ease;
   }
-  .btn-register:hover { background: #c8e6c9; }
+  .btn-register:hover {
+    background: #c8e6c9;
+  }
 
   .slot-message {
     margin: 0;
@@ -254,20 +274,57 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .slot { background: #333; border-color: #555; }
-    .slot.empty { border-color: #555; }
-    .slot-right { border-left-color: #555; }
-    .connected-device-name { color: #eee; }
-    .connected-device-port { color: #777; }
-    .connected-empty { color: #666; }
-    .slot-name { color: #aaa; }
-    .slot-label { color: #eee; }
-    .channel-badge { background: #1a3a5c; color: #8fcfff; }
-    .btn-sm { background: #444; border-color: #555; color: #eee; }
-    .btn-sm:hover { background: #555; }
-    .btn-danger { color: #ff8a80; border-color: #5c2a2a; }
-    .btn-danger:hover { background: #4a1a1a; }
-    .btn-register { background: #1b3a1b; color: #81c784; border-color: #2e5a2e; }
-    .btn-register:hover { background: #2a4a2a; }
+    .slot {
+      background: #333;
+      border-color: #555;
+    }
+    .slot.empty {
+      border-color: #555;
+    }
+    .slot-right {
+      border-left-color: #555;
+    }
+    .connected-device-name {
+      color: #eee;
+    }
+    .connected-device-port {
+      color: #777;
+    }
+    .connected-empty {
+      color: #666;
+    }
+    .slot-name {
+      color: #aaa;
+    }
+    .slot-label {
+      color: #eee;
+    }
+    .channel-badge {
+      background: #1a3a5c;
+      color: #8fcfff;
+    }
+    .btn-sm {
+      background: #444;
+      border-color: #555;
+      color: #eee;
+    }
+    .btn-sm:hover {
+      background: #555;
+    }
+    .btn-danger {
+      color: #ff8a80;
+      border-color: #5c2a2a;
+    }
+    .btn-danger:hover {
+      background: #4a1a1a;
+    }
+    .btn-register {
+      background: #1b3a1b;
+      color: #81c784;
+      border-color: #2e5a2e;
+    }
+    .btn-register:hover {
+      background: #2a4a2a;
+    }
   }
 </style>

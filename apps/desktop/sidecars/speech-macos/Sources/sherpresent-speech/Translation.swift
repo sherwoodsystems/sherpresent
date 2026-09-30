@@ -1,16 +1,17 @@
 import Foundation
 import Translation
 
+// TranslationSession ships without a Sendable conformance, but the actor below
+// serializes every call through `inFlight`/`scheduled`, so it's never touched
+// concurrently in practice.
+// swift-format-ignore: AvoidRetroactiveConformances
+extension TranslationSession: @unchecked @retroactive Sendable {}
+
 /// On-device translation with a debounce.
 ///
 /// Translation is local and free, so partial hypotheses are worth translating
 /// as they arrive — but only on a debounce, and never more than one call in
 /// flight, or a fast speaker produces a queue of stale work.
-// TranslationSession ships without a Sendable conformance, but the actor below
-// serializes every call through `inFlight`/`scheduled`, so it's never touched
-// concurrently in practice.
-extension TranslationSession: @unchecked @retroactive Sendable {}
-
 actor Translator {
     private let session: TranslationSession?
     private let debounce: Duration

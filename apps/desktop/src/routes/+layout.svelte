@@ -29,9 +29,13 @@
   <nav class="nav-bar">
     <a href="/" class="nav-link" class:active={page.url.pathname === '/'}>Control</a>
     <a href="/notes" class="nav-link" class:active={page.url.pathname === '/notes'}>Notes</a>
-    <a href="/captions" class="nav-link" class:active={page.url.pathname === '/captions'}>Captions</a>
+    <a href="/captions" class="nav-link" class:active={page.url.pathname === '/captions'}
+      >Captions</a
+    >
     <a href="/bridges" class="nav-link" class:active={page.url.pathname === '/bridges'}>Bridges</a>
-    <a href="/settings" class="nav-link" class:active={page.url.pathname === '/settings'}>Settings</a>
+    <a href="/settings" class="nav-link" class:active={page.url.pathname === '/settings'}
+      >Settings</a
+    >
   </nav>
   <div class="page-content">
     {@render children()}
@@ -40,7 +44,7 @@
   <div class="help-corner">
     {#if helpOpen}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="help-backdrop" onclick={() => helpOpen = false} onkeydown={() => {}}></div>
+      <div class="help-backdrop" onclick={() => (helpOpen = false)} onkeydown={() => {}}></div>
       <div class="help-popover">
         <button class="help-item" onclick={goDebug}>Debug</button>
         <a class="help-item" href="mailto:cameron@sherwoodsystems.com">Contact Support</a>
@@ -53,8 +57,9 @@
 <style>
   :global(body) {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-      Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
+      'Helvetica Neue', sans-serif;
     background: #fafafa;
     color: #333;
   }
@@ -121,7 +126,8 @@
     transition: all 0.15s ease;
   }
 
-  .help-btn:hover, .help-btn.active {
+  .help-btn:hover,
+  .help-btn.active {
     background: #f0f0f0;
     border-color: #ccc;
     color: #333;
@@ -139,7 +145,7 @@
     background: #fff;
     border: 1px solid #ddd;
     border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     overflow: hidden;
     min-width: 160px;
   }
@@ -195,7 +201,8 @@
       color: #aaa;
     }
 
-    .help-btn:hover, .help-btn.active {
+    .help-btn:hover,
+    .help-btn.active {
       background: #444;
       border-color: #666;
       color: #eee;
@@ -204,7 +211,7 @@
     .help-popover {
       background: #2a2a2a;
       border-color: #444;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
     .help-item {

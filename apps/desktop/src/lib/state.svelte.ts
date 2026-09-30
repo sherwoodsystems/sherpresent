@@ -68,7 +68,7 @@ class AppStore {
       if (savedConfig.presentationName) {
         await this.startPolling();
       }
-      
+
       // Check discovery state on init
       if (savedConfig.discovery.enabled) {
         await this.startDiscovery();
@@ -89,23 +89,36 @@ class AppStore {
 
     // Listen for notes cache updates (progressive fill from polling)
     this.unlistenNotes = await listen<NotesCache>('notes-cache-updated', (event) => {
-      console.log('[notes] polling cache update:', Object.keys(event.payload).length, 'entries, keys:', Object.keys(event.payload));
+      console.log(
+        '[notes] polling cache update:',
+        Object.keys(event.payload).length,
+        'entries, keys:',
+        Object.keys(event.payload)
+      );
       this.notesCache = event.payload;
     });
 
     // Listen for notes scan progress
-    this.unlistenScanProgress = await listen<{ current: number; total: number; status: string }>('notes-scan-progress', (event) => {
-      this.notesScanProgress = event.payload;
-      if (event.payload.status === 'complete' || event.payload.status === 'cancelled') {
-        setTimeout(() => { this.notesScanProgress = null; }, 2000);
+    this.unlistenScanProgress = await listen<{ current: number; total: number; status: string }>(
+      'notes-scan-progress',
+      (event) => {
+        this.notesScanProgress = event.payload;
+        if (event.payload.status === 'complete' || event.payload.status === 'cancelled') {
+          setTimeout(() => {
+            this.notesScanProgress = null;
+          }, 2000);
+        }
       }
-    });
+    );
 
     // Listen for Canva webview logs forwarded from Rust
-    this.unlistenCanvaLog = await listen<{ category: string; message: string }>('canva-webview-log', (event) => {
-      const { category, message } = event.payload;
-      console.log(`[CANVA:${category}]`, message);
-    });
+    this.unlistenCanvaLog = await listen<{ category: string; message: string }>(
+      'canva-webview-log',
+      (event) => {
+        const { category, message } = event.payload;
+        console.log(`[CANVA:${category}]`, message);
+      }
+    );
 
     // Listen for latency events
     this.unlistenLatency = await listen<LatencyEvent>('latency-event', (event) => {
@@ -129,7 +142,8 @@ class AppStore {
     this.unlistenCaptionStatus = await listen<CaptionStatus>('caption-status', (event) => {
       this.captionStatus = event.payload;
       const state = event.payload.state;
-      this.captionsRunning = state === 'running' || state === 'starting' || state === 'reconnecting';
+      this.captionsRunning =
+        state === 'running' || state === 'starting' || state === 'reconnecting';
     });
 
     this.unlistenOutputsStatus = await listen<OutputsStatus>(
@@ -309,7 +323,11 @@ class AppStore {
           displaySlide = oldSlide + 1;
         }
         this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
-        this.liveStatus = { ...this.liveStatus, current_slide: displaySlide, total_slides: info.total };
+        this.liveStatus = {
+          ...this.liveStatus,
+          current_slide: displaySlide,
+          total_slides: info.total
+        };
       }
     } catch (e) {
       console.error('Failed to go to next slide:', e);
@@ -329,7 +347,11 @@ class AppStore {
           displaySlide = oldSlide - 1;
         }
         this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
-        this.liveStatus = { ...this.liveStatus, current_slide: displaySlide, total_slides: info.total };
+        this.liveStatus = {
+          ...this.liveStatus,
+          current_slide: displaySlide,
+          total_slides: info.total
+        };
       }
     } catch (e) {
       console.error('Failed to go to previous slide:', e);
@@ -351,7 +373,11 @@ class AppStore {
           displaySlide = slide;
         }
         this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
-        this.liveStatus = { ...this.liveStatus, current_slide: displaySlide, total_slides: info.total };
+        this.liveStatus = {
+          ...this.liveStatus,
+          current_slide: displaySlide,
+          total_slides: info.total
+        };
       }
     } catch (e) {
       console.error('Failed to go to slide:', e);
@@ -365,7 +391,14 @@ class AppStore {
         adapter: this.config.adapter,
         name: this.config.presentationName
       });
-      console.log('[notes] fetchAllNotes result:', Object.keys(result).length, 'entries, keys:', Object.keys(result), 'values preview:', Object.fromEntries(Object.entries(result).map(([k, v]) => [k, v.substring(0, 50)])));
+      console.log(
+        '[notes] fetchAllNotes result:',
+        Object.keys(result).length,
+        'entries, keys:',
+        Object.keys(result),
+        'values preview:',
+        Object.fromEntries(Object.entries(result).map(([k, v]) => [k, v.substring(0, 50)]))
+      );
       this.notesCache = result;
     } catch (e) {
       console.error('Failed to fetch all notes:', e);

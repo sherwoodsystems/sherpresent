@@ -53,7 +53,7 @@ final class OutputApp {
                 exit(1)
             }
         }
-        sinks.forEach { $0.stop() }
+        for sink in sinks { sink.stop() }
         exit(0)
     }
 

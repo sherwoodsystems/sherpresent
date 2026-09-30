@@ -75,15 +75,18 @@ final class FrameRenderer {
         surface.lock(options: .readOnly, seed: nil)
         defer { surface.unlock(options: .readOnly, seed: nil) }
         guard let image = context.makeImage() else {
-            throw NSError(domain: "render", code: 1, userInfo: [NSLocalizedDescriptionKey: "makeImage failed"])
+            throw NSError(
+                domain: "render", code: 1, userInfo: [NSLocalizedDescriptionKey: "makeImage failed"])
         }
         let url = URL(fileURLWithPath: path) as CFURL
         guard let dest = CGImageDestinationCreateWithURL(url, "public.png" as CFString, 1, nil) else {
-            throw NSError(domain: "render", code: 2, userInfo: [NSLocalizedDescriptionKey: "cannot write \(path)"])
+            throw NSError(
+                domain: "render", code: 2, userInfo: [NSLocalizedDescriptionKey: "cannot write \(path)"])
         }
         CGImageDestinationAddImage(dest, image, nil)
         guard CGImageDestinationFinalize(dest) else {
-            throw NSError(domain: "render", code: 3, userInfo: [NSLocalizedDescriptionKey: "PNG encode failed"])
+            throw NSError(
+                domain: "render", code: 3, userInfo: [NSLocalizedDescriptionKey: "PNG encode failed"])
         }
     }
 }

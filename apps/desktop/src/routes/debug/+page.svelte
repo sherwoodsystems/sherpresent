@@ -3,7 +3,4 @@
   import LatencyView from '$lib/components/LatencyView.svelte';
 </script>
 
-<LatencyView
-  events={appStore.latencyEvents}
-  onclear={() => appStore.clearLatencyEvents()}
-/>
+<LatencyView events={appStore.latencyEvents} onclear={() => appStore.clearLatencyEvents()} />

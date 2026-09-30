@@ -88,6 +88,9 @@ impl FeedbackState {
     }
 
     /// Stamp the state with the outgoing OSC command that just left the bridge.
+    // Not yet called: the UI's "last command" row (FeedbackCard) is waiting on
+    // the sender to call this. Kept rather than deleted; wire it or drop both.
+    #[allow(dead_code)]
     pub fn remember_outgoing_command(&mut self, address: &str) {
         let short = address.rsplit('/').next().unwrap_or(address);
         self.last_command = Some(short.to_string());

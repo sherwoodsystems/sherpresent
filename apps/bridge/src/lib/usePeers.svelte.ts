@@ -35,6 +35,6 @@ export function usePeers() {
       return peers;
     },
     start,
-    stop,
+    stop
   };
 }

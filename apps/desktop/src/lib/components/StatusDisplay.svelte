@@ -19,7 +19,7 @@
     powerpoint: 'PowerPoint',
     keynote: 'Keynote',
     libreoffice: 'LibreOffice Impress',
-    canva: 'Canva',
+    canva: 'Canva'
   };
   const adapterLabel = $derived(adapterLabels[adapter] ?? adapter);
 </script>
@@ -44,7 +44,7 @@
             </span>
             {#if status.total_builds && status.total_builds > 0}
               <span class="build-indicator">
-                {#each Array(status.total_builds) as _, i}
+                {#each { length: status.total_builds }, i (i)}
                   <span class="build-dot" class:filled={i < (status.current_build ?? 0)}></span>
                 {/each}
                 <span class="build-count">({status.current_build ?? 0}/{status.total_builds})</span>
@@ -54,9 +54,7 @@
 
           <div class="status-item">
             <span class="status-label">Status</span>
-            <span class="status-value presenting">
-              Presenting
-            </span>
+            <span class="status-value presenting"> Presenting </span>
           </div>
 
           {#if supportsZoom && status.zoom_level !== null}
@@ -70,10 +68,18 @@
 
       <div class="status-row controls-row">
         <div class="nav-buttons">
-          <button class="nav-btn" onclick={onprev} disabled={!status.current_slide || status.current_slide <= 1}>
+          <button
+            class="nav-btn"
+            onclick={onprev}
+            disabled={!status.current_slide || status.current_slide <= 1}
+          >
             ← Prev
           </button>
-          <button class="nav-btn" onclick={onnext} disabled={!status.current_slide || status.current_slide >= status.total_slides}>
+          <button
+            class="nav-btn"
+            onclick={onnext}
+            disabled={!status.current_slide || status.current_slide >= status.total_slides}
+          >
             Next →
           </button>
         </div>
@@ -86,13 +92,23 @@
             max={status.total_slides}
             bind:value={gotoValue}
             placeholder="#"
-            onkeydown={(e) => { if (e.key === 'Enter' && gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' && gotoValue) {
+                ongoto?.(Number(gotoValue));
+                gotoValue = '';
+              }
+            }}
           />
           <button
             class="nav-btn"
-            onclick={() => { if (gotoValue) { ongoto?.(Number(gotoValue)); gotoValue = ''; } }}
-            disabled={!gotoValue}
-          >Go</button>
+            onclick={() => {
+              if (gotoValue) {
+                ongoto?.(Number(gotoValue));
+                gotoValue = '';
+              }
+            }}
+            disabled={!gotoValue}>Go</button
+          >
         </div>
       </div>
     </div>
@@ -172,6 +188,7 @@
     font-size: 0.875rem;
     text-align: center;
     -moz-appearance: textfield;
+    appearance: textfield;
   }
 
   .goto-input::-webkit-inner-spin-button,
@@ -189,7 +206,9 @@
     font-size: 0.875rem;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
   }
 
   .nav-btn:hover:not(:disabled) {
@@ -341,6 +360,5 @@
     .notes-text {
       color: #eee;
     }
-
   }
 </style>

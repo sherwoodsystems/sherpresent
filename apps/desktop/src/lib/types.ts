@@ -262,11 +262,7 @@ export interface CaptionSegment {
 
 /** Connection state of the caption engine */
 export type CaptionEngineState =
-  | 'stopped'
-  | 'starting'
-  | 'running'
-  | 'reconnecting'
-  | { error: string };
+  'stopped' | 'starting' | 'running' | 'reconnecting' | { error: string };
 
 /** Status snapshot emitted on the `caption-status` event */
 export interface CaptionStatus {

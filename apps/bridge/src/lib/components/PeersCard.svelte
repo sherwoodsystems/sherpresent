@@ -4,7 +4,7 @@
   let {
     peers,
     sendingTest,
-    onTest,
+    onTest
   }: {
     peers: DiscoveredPeer[];
     /** Keyed by `${instanceId}-${command}` — true while a test send is in flight. */

@@ -250,14 +250,17 @@ final class NotesContent: FrameContent {
     }
 
     /// Cut to `maxWidth` with an ellipsis if it doesn't fit.
-    private func label(_ text: String, _ font: CTFont, _ color: CGColor, maxWidth: CGFloat = .infinity) -> Label {
+    private func label(_ text: String, _ font: CTFont, _ color: CGColor, maxWidth: CGFloat = .infinity)
+        -> Label
+    {
         let attrs: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
         ]
         var line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
         if CTLineGetTypographicBounds(line, nil, nil, nil) > maxWidth {
-            let ellipsis = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attrs))
+            let ellipsis = CTLineCreateWithAttributedString(
+                NSAttributedString(string: "…", attributes: attrs))
             line = CTLineCreateTruncatedLine(line, Double(maxWidth), .end, ellipsis) ?? line
         }
         return Label(

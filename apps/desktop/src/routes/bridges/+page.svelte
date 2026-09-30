@@ -9,19 +9,17 @@
 
   let selectedBridgeId = $state<string | null>(null);
 
-  let bridges = $derived(
-    peerState.peers.filter(p => p.version === 'bridge' && p.configPort)
-  );
+  let bridges = $derived(peerState.peers.filter((p) => p.version === 'bridge' && p.configPort));
 
   let selectedBridge = $derived(
-    selectedBridgeId ? bridges.find(b => b.instanceId === selectedBridgeId) ?? null : null
+    selectedBridgeId ? (bridges.find((b) => b.instanceId === selectedBridgeId) ?? null) : null
   );
 
   function checkBridgeParam() {
     if (selectedBridgeId) return;
     const bridgeParam = page.url.searchParams.get('bridge');
     if (bridgeParam) {
-      const target = bridges.find(b => b.instanceId === bridgeParam);
+      const target = bridges.find((b) => b.instanceId === bridgeParam);
       if (target) selectedBridgeId = target.instanceId;
     }
   }
@@ -36,7 +34,7 @@
 
   function handleBridgeSave(savedName: string) {
     // Optimistically patch the peer's displayName so the card updates instantly
-    const idx = peerState.peers.findIndex(p => p.instanceId === selectedBridgeId);
+    const idx = peerState.peers.findIndex((p) => p.instanceId === selectedBridgeId);
     if (idx !== -1) {
       peerState.peers[idx] = { ...peerState.peers[idx], displayName: savedName };
       peerState.peers = [...peerState.peers];
@@ -53,7 +51,9 @@
   {#if bridges.length === 0}
     <div class="empty-state">
       <p>Searching for bridges on the network...</p>
-      <p class="hint">Bridges announce themselves via mDNS. Make sure your bridge devices are running.</p>
+      <p class="hint">
+        Bridges announce themselves via mDNS. Make sure your bridge devices are running.
+      </p>
     </div>
   {:else}
     <div class="bridge-grid">
@@ -213,15 +213,23 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .header h1 { color: #eee; }
-    .subtitle { color: #777; }
+    .header h1 {
+      color: #eee;
+    }
+    .subtitle {
+      color: #777;
+    }
 
     .empty-state {
       background: #2a2a2a;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     }
-    .empty-state p { color: #aaa; }
-    .empty-state .hint { color: #666; }
+    .empty-state p {
+      color: #aaa;
+    }
+    .empty-state .hint {
+      color: #666;
+    }
 
     .bridge-card {
       background: #2a2a2a;
@@ -233,7 +241,9 @@
       border-color: #6ab7ff;
       box-shadow: 0 2px 8px rgba(106, 183, 255, 0.15);
     }
-    .bridge-meta { color: #777; }
+    .bridge-meta {
+      color: #777;
+    }
     .open-config-btn {
       color: #6ab7ff;
       background: rgba(106, 183, 255, 0.04);

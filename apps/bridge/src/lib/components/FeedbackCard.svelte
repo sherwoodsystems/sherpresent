@@ -36,7 +36,9 @@
         <span class="feedback-label">Last command</span>
         <span class="feedback-value muted">
           {feedback.lastCommand ? feedback.lastCommand : '—'}
-          {feedback.lastCommandTime ? `at ${new Date(feedback.lastCommandTime).toLocaleTimeString()}` : ''}
+          {feedback.lastCommandTime
+            ? `at ${new Date(feedback.lastCommandTime).toLocaleTimeString()}`
+            : ''}
         </span>
       </div>
     </div>

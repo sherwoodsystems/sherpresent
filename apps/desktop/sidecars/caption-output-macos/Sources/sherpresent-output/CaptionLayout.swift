@@ -93,7 +93,8 @@ struct CaptionLayout {
             guard count > 0 else { break }
             let line = CTTypesetterCreateLine(ts, CFRange(location: start, length: count))
             // Trailing spaces don't count toward centring.
-            let w = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+            let w =
+                CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
                 - CGFloat(CTLineGetTrailingWhitespaceWidth(line))
             rows.append(Row(line: line, width: w))
             start += count

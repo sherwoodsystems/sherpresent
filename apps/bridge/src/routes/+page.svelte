@@ -12,7 +12,7 @@
     UsbDeviceInfo,
     UsbRegistrationDetected,
     UsbPermissionStatus,
-    KeyAction,
+    KeyAction
   } from '$lib/types';
   import { usePeers } from '$lib/usePeers.svelte';
   import { actionLabel } from '$lib/format';
@@ -56,8 +56,8 @@
   let registeredOffline = $derived(
     Object.entries(config?.devices ?? {}).filter(
       ([id, device]) =>
-        Object.keys(device.bindings).length > 0 && !usbDevices.some((d) => d.id === id),
-    ) as [string, DeviceConfig][],
+        Object.keys(device.bindings).length > 0 && !usbDevices.some((d) => d.id === id)
+    ) as [string, DeviceConfig][]
   );
 
   // --- lifecycle -----------------------------------------------------------
@@ -72,9 +72,12 @@
     unlistenUsbDisconnected = await listen<string>('usb-disconnected', (event) => {
       usbDevices = usbDevices.filter((d) => d.id !== event.payload);
     });
-    unlistenUsbRegistration = await listen<UsbRegistrationDetected>('usb-registration-detected', (event) => {
-      autoBind(event.payload);
-    });
+    unlistenUsbRegistration = await listen<UsbRegistrationDetected>(
+      'usb-registration-detected',
+      (event) => {
+        autoBind(event.payload);
+      }
+    );
     unlistenUsbAccessDenied = await listen<number>('usb-access-denied', (event) => {
       usbAccessDenied = event.payload > 0;
     });
@@ -102,7 +105,7 @@
       const [info, cfg, fb] = await Promise.all([
         invoke<BridgeInfo>('get_bridge_info'),
         invoke<BridgeConfig>('get_config'),
-        invoke<FeedbackState>('get_feedback_state'),
+        invoke<FeedbackState>('get_feedback_state')
       ]);
       bridgeInfo = info;
       config = cfg;
@@ -177,7 +180,7 @@
       const merged: BridgeConfig = {
         ...settingsDraft,
         bridge_id: config?.bridge_id ?? settingsDraft.bridge_id,
-        bridge_name: config?.bridge_name ?? settingsDraft.bridge_name,
+        bridge_name: config?.bridge_name ?? settingsDraft.bridge_name
       };
       await invoke('save_config', { config: merged });
       await refreshAll();
@@ -214,7 +217,7 @@
         deviceId: registration.deviceId,
         deviceName: device?.name ?? registration.deviceId,
         key: registration.key,
-        action: registration.action,
+        action: registration.action
       });
       bindingAction = null;
       await refreshAll();
@@ -247,7 +250,7 @@
         host: peer?.host ?? null,
         port: peer?.port ?? null,
         name: peer?.displayName ?? null,
-        instanceId: peer?.instanceId ?? null,
+        instanceId: peer?.instanceId ?? null
       });
       await refreshAll();
       flashToast('ok', peer ? 'Target assigned' : 'Target cleared');
@@ -321,7 +324,10 @@
             {#if peer.configPort}
               <a
                 href={`http://${peer.host}:${peer.configPort}/`}
-                onclick={(e) => { e.preventDefault(); openUrl(`http://${peer.host}:${peer.configPort}/`); }}
+                onclick={(e) => {
+                  e.preventDefault();
+                  openUrl(`http://${peer.host}:${peer.configPort}/`);
+                }}
                 class="btn-tiny"
               >
                 Open config

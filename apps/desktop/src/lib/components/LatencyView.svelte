@@ -10,12 +10,12 @@
 
   const stats = $derived.by(() => {
     if (events.length === 0) return null;
-    const latencies = events.map(e => e.latency_ms);
+    const latencies = events.map((e) => e.latency_ms);
     return {
       count: latencies.length,
       min: Math.min(...latencies),
       max: Math.max(...latencies),
-      avg: Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length),
+      avg: Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
     };
   });
 
@@ -31,10 +31,14 @@
 
   function sourceLabel(source: string): string {
     switch (source) {
-      case 'osc': return 'OSC';
-      case 'osc_broadcast': return 'Broadcast';
-      case 'ui': return 'UI';
-      default: return source;
+      case 'osc':
+        return 'OSC';
+      case 'osc_broadcast':
+        return 'Broadcast';
+      case 'ui':
+        return 'UI';
+      default:
+        return source;
     }
   }
 </script>

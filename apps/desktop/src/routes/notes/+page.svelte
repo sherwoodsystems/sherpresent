@@ -30,9 +30,7 @@
     return result;
   });
 
-  const notesCount = $derived(
-    slides.filter(s => s.notes !== null).length
-  );
+  const notesCount = $derived(slides.filter((s) => s.notes !== null).length);
 
   async function scrollToCurrent() {
     await tick();
@@ -110,7 +108,8 @@
         {#if isScanning}
           <button class="cancel-btn" onclick={() => appStore.stopNotesScan()}>Cancel</button>
         {:else if needsScan}
-          <button class="scan-btn" onclick={() => appStore.startNotesScan()}>Scan All Slides</button>
+          <button class="scan-btn" onclick={() => appStore.startNotesScan()}>Scan All Slides</button
+          >
         {:else}
           <button class="refresh-btn" onclick={() => appStore.fetchAllNotes()}>Refresh</button>
         {/if}
@@ -119,7 +118,12 @@
     {#if scanProgress}
       <div class="scan-progress">
         <div class="progress-bar">
-          <div class="progress-fill" style="width: {scanProgress.total > 0 ? (scanProgress.current / scanProgress.total * 100) : 0}%"></div>
+          <div
+            class="progress-fill"
+            style="width: {scanProgress.total > 0
+              ? (scanProgress.current / scanProgress.total) * 100
+              : 0}%"
+          ></div>
         </div>
         <span class="progress-text">
           {#if scanProgress.status === 'scanning'}
@@ -386,6 +390,5 @@
     .progress-text {
       color: #777;
     }
-
   }
 </style>

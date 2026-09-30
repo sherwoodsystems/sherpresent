@@ -2,7 +2,13 @@
   import { invoke } from '@tauri-apps/api/core';
   import { appStore } from '$lib/state.svelte';
   import SyphonOutputField from './SyphonOutputField.svelte';
-  import { API_KEY_LABELS, CAPTION_LANGUAGES, apiKeyProvider, translates } from '../captions';
+  import {
+    API_KEY_LABELS,
+    CAPTION_LANGUAGES,
+    apiKeyProvider,
+    sameLanguage,
+    translates
+  } from '../captions';
   import type { AppleCaptionSupport, CaptionsConfig, CaptionProviderId } from '../types';
 
   interface Props {
@@ -46,16 +52,31 @@
   }[] = [
     { field: 'fontSize', label: 'Font Size', min: 12, max: 240, step: 2, format: (v) => `${v}px` },
     { field: 'maxLines', label: 'Lines', min: 1, max: 6, step: 1, format: (v) => `${v}` },
-    { field: 'safeArea', label: 'Bottom Margin', min: 0, max: 40, step: 0.5, format: (v) => `${v}%` },
+    {
+      field: 'safeArea',
+      label: 'Bottom Margin',
+      min: 0,
+      max: 40,
+      step: 0.5,
+      format: (v) => `${v}%`
+    },
     { field: 'width', label: 'Width', min: 20, max: 100, step: 1, format: (v) => `${v}%` },
-    { field: 'clearAfter', label: 'Clear After', min: 0, max: 30, step: 1, format: (v) => (v === 0 ? 'Never' : `${v}s`) }
+    {
+      field: 'clearAfter',
+      label: 'Clear After',
+      min: 0,
+      max: 30,
+      step: 1,
+      format: (v) => (v === 0 ? 'Never' : `${v}s`)
+    }
   ];
 
   const syphonStatus = $derived(appStore.outputsStatus?.captions);
 
   const keyProvider = $derived(apiKeyProvider(config.provider));
   function updateKey(value: string) {
-    if (keyProvider) onchange({ ...config, apiKeys: { ...config.apiKeys, [keyProvider]: value.trim() } });
+    if (keyProvider)
+      onchange({ ...config, apiKeys: { ...config.apiKeys, [keyProvider]: value.trim() } });
   }
 
   // Keys are stored in plaintext in config.json, so the field is masked in the
@@ -205,7 +226,7 @@
       >
         <option value={NO_TRANSLATION}>Same language (no translation)</option>
         {#each languageOptions(config.targetLanguage) as l (l.code)}
-          {#if !config.sourceLanguage || l.code !== config.sourceLanguage}
+          {#if !config.sourceLanguage || !sameLanguage(l.code, config.sourceLanguage)}
             <option value={l.code}>{l.label}</option>
           {/if}
         {/each}

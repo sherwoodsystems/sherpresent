@@ -32,17 +32,12 @@ pub const DEFAULT_CONFIG_PORT: u16 = 8080;
 pub const DEFAULT_SATELLITE_PORT: u16 = 16622;
 
 /// Operating mode.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum BridgeMode {
+    #[default]
     Direct,
     Satellite,
-}
-
-impl Default for BridgeMode {
-    fn default() -> Self {
-        BridgeMode::Direct
-    }
 }
 
 /// A device target — where a USB clicker's keypresses get sent.
@@ -325,9 +320,11 @@ mod tests {
 
     #[test]
     fn empty_name_backfilled() {
-        let mut config = BridgeConfig::default();
-        config.bridge_name = String::new();
-        config.bridge_id = Uuid::nil();
+        let mut config = BridgeConfig {
+            bridge_name: String::new(),
+            bridge_id: Uuid::nil(),
+            ..BridgeConfig::default()
+        };
         config.refresh_default_name();
         assert!(config.bridge_name.starts_with("Bridge "));
         assert!(config.bridge_name.len() > "Bridge ".len());

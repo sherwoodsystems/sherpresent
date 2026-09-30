@@ -194,11 +194,11 @@ enum OutMessage {
     var line: String {
         let wire: Wire
         switch self {
-        case let .ready(w, h, sinks):
+        case .ready(let w, let h, let sinks):
             wire = Wire(type: "ready", protocol: WireProtocol.version, width: w, height: h, sinks: sinks)
-        case let .sinks(sinks):
+        case .sinks(let sinks):
             wire = Wire(type: "sinks", sinks: sinks)
-        case let .error(code, fatal, message):
+        case .error(let code, let fatal, let message):
             wire = Wire(type: "error", code: code, fatal: fatal, message: message)
         }
         let data = (try? JSONEncoder().encode(wire)) ?? Data("{}".utf8)

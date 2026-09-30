@@ -178,6 +178,7 @@ pub struct StateManager {
 
 impl StateManager {
     /// Create a new StateManager.
+    #[allow(clippy::too_many_arguments)] // one call site; each is a distinct shared handle
     pub fn new(
         adapter_name: String,
         presentation_name: String,

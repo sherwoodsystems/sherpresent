@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import type { BridgeRegistrationStatus, BridgeApiResponse } from '$lib/types';
 
@@ -9,7 +9,7 @@
     configPort,
     validChannels,
     oncomplete,
-    oncancel,
+    oncancel
   }: {
     targetSlot: string;
     host: string;
@@ -22,7 +22,8 @@
   let status = $state<BridgeRegistrationStatus | null>(null);
   let countdown = $state(30);
   let channel = $state('main');
-  let label = $state(targetSlot.replace('_', ' '));
+  // Seeds an editable field; later prop changes must not overwrite the edit.
+  let label = $state(untrack(() => targetSlot.replace('_', ' ')));
   let confirming = $state(false);
   let message = $state<string | null>(null);
   let timedOut = $state(false);
@@ -35,7 +36,9 @@
   onMount(async () => {
     try {
       await invoke<BridgeApiResponse>('bridge_start_registration', {
-        host, configPort, slot: targetSlot,
+        host,
+        configPort,
+        slot: targetSlot
       });
     } catch (e) {
       message = `Failed to start registration: ${e}`;
@@ -58,20 +61,32 @@
   });
 
   function cleanup() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
   }
 
   async function pollRegistration() {
     try {
       status = await invoke<BridgeRegistrationStatus>('bridge_get_registration_status', {
-        host, configPort,
+        host,
+        configPort
       });
       if (status.detected_phys) {
         // Device detected, stop countdown
-        if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+        if (countdownTimer) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+        }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   async function confirm() {
@@ -79,11 +94,12 @@
     confirming = true;
     try {
       const result = await invoke<BridgeApiResponse>('bridge_confirm_registration', {
-        host, configPort,
+        host,
+        configPort,
         slot: targetSlot,
         usbPhys: status.detected_phys,
         channel,
-        label,
+        label
       });
       message = result.message;
       cleanup();
@@ -97,7 +113,9 @@
   async function cancelRegistration() {
     try {
       await invoke('bridge_cancel_registration', { host, configPort });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     cleanup();
     oncancel();
   }
@@ -128,7 +146,7 @@
       <div class="form-group">
         <label for="reg-channel">Channel</label>
         <select id="reg-channel" bind:value={channel}>
-          {#each validChannels as ch}
+          {#each validChannels as ch (ch)}
             <option value={ch}>{ch}</option>
           {/each}
         </select>
@@ -242,8 +260,13 @@
     cursor: pointer;
     font-family: inherit;
   }
-  .btn-confirm:hover { background: #1b5e20; }
-  .btn-confirm:disabled { background: #999; cursor: not-allowed; }
+  .btn-confirm:hover {
+    background: #1b5e20;
+  }
+  .btn-confirm:disabled {
+    background: #999;
+    cursor: not-allowed;
+  }
 
   .reg-message {
     margin: 0;
@@ -252,14 +275,32 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    .registration { background: #3a3520; border-color: #5a4a20; }
-    .reg-header h4 { color: #eee; }
-    .btn-cancel { background: #444; border-color: #555; color: #eee; }
-    .countdown { color: #ffb74d; }
-    .detected-info { color: #81c784; }
-    .form-group label { color: #aaa; }
-    .form-group input, .form-group select {
-      background: #333; border-color: #555; color: #eee;
+    .registration {
+      background: #3a3520;
+      border-color: #5a4a20;
+    }
+    .reg-header h4 {
+      color: #eee;
+    }
+    .btn-cancel {
+      background: #444;
+      border-color: #555;
+      color: #eee;
+    }
+    .countdown {
+      color: #ffb74d;
+    }
+    .detected-info {
+      color: #81c784;
+    }
+    .form-group label {
+      color: #aaa;
+    }
+    .form-group input,
+    .form-group select {
+      background: #333;
+      border-color: #555;
+      color: #eee;
     }
   }
 </style>

@@ -15,7 +15,7 @@ enum OutMessage {
 
     var json: [String: Any] {
         switch self {
-        case let .ready(source, target, translate, format):
+        case .ready(let source, let target, let translate, let format):
             return [
                 "type": "ready",
                 "protocol": Protocol.version,
@@ -24,17 +24,17 @@ enum OutMessage {
                 "translate": translate,
                 "analyzerFormat": format,
             ]
-        case let .assetProgress(stage, fraction):
+        case .assetProgress(let stage, let fraction):
             return ["type": "assetProgress", "stage": stage, "fraction": fraction]
-        case let .partial(source, translated):
+        case .partial(let source, let translated):
             return ["type": "partial", "source": source, "translated": translated]
-        case let .final(source, translated):
+        case .final(let source, let translated):
             return ["type": "final", "source": source, "translated": translated]
         case .turnComplete:
             return ["type": "turnComplete"]
-        case let .error(code, fatal, message):
+        case .error(let code, let fatal, let message):
             return ["type": "error", "code": code.rawValue, "fatal": fatal, "message": message]
-        case let .availability(a):
+        case .availability(let a):
             return a.json
         }
     }

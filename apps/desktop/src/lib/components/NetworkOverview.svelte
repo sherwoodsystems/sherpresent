@@ -7,8 +7,8 @@
 
   const peerState = usePeers();
 
-  let selfPeer = $derived(peerState.peers.find(p => p.isSelf));
-  let otherPeers = $derived(peerState.peers.filter(p => !p.isSelf));
+  let selfPeer = $derived(peerState.peers.find((p) => p.isSelf));
+  let otherPeers = $derived(peerState.peers.filter((p) => !p.isSelf));
 
   function handlePeerClick(peer: DiscoveredPeer) {
     if (peer.version === 'bridge') {
@@ -24,11 +24,7 @@
     <SelfPeerEditor peer={selfPeer} />
   {/if}
 
-  <PeerList
-    peers={otherPeers}
-    emptyMessage="No other peers found"
-    onpeerclick={handlePeerClick}
-  />
+  <PeerList peers={otherPeers} emptyMessage="No other peers found" onpeerclick={handlePeerClick} />
 </div>
 
 <style>

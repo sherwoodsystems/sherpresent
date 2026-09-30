@@ -20,13 +20,13 @@ struct Args: Sendable {
 
         var description: String {
             switch self {
-            case let .unknownFlag(f): return "unknown flag '\(f)'"
-            case let .missingValue(f): return "'\(f)' needs a value"
-            case let .badValue(f, v): return "'\(f)' got an invalid value '\(v)'"
-            case let .protocolMismatch(v):
+            case .unknownFlag(let f): return "unknown flag '\(f)'"
+            case .missingValue(let f): return "'\(f)' needs a value"
+            case .badValue(let f, let v): return "'\(f)' got an invalid value '\(v)'"
+            case .protocolMismatch(let v):
                 return
                     "protocol \(v) is not supported (this helper speaks \(Protocol.version)); rebuild the speech helper"
-            case let .missingRequired(f): return "'\(f)' is required"
+            case .missingRequired(let f): return "'\(f)' is required"
             }
         }
     }

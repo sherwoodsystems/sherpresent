@@ -12,34 +12,34 @@ A desktop application for controlling presentation software (PowerPoint, Keynote
 
 ### Network Configuration
 
-| Setting | Value |
-|---------|-------|
-| **Listen Port** | 9000 (incoming commands) |
-| **Feedback Port** | 9001 (outgoing state) |
-| **Protocol** | UDP |
+| Setting           | Value                    |
+| ----------------- | ------------------------ |
+| **Listen Port**   | 9000 (incoming commands) |
+| **Feedback Port** | 9001 (outgoing state)    |
+| **Protocol**      | UDP                      |
 
 ### Incoming Commands (send to port 9000)
 
-| OSC Address | Description |
-|-------------|-------------|
-| `/clicker/next` | Advance to next slide |
-| `/clicker/prev` | Go to previous slide |
-| `/clicker/previous` | Go to previous slide (alias) |
-| `/clicker/status` | Request full state update |
-| `/clicker/refresh` | Force state re-sync from presentation app |
-| `/clicker/zoom` | Query current notes zoom level |
-| `/clicker/zoomIn` | Increase notes zoom (macOS only) |
-| `/clicker/zoomOut` | Decrease notes zoom (macOS only) |
+| OSC Address         | Description                               |
+| ------------------- | ----------------------------------------- |
+| `/clicker/next`     | Advance to next slide                     |
+| `/clicker/prev`     | Go to previous slide                      |
+| `/clicker/previous` | Go to previous slide (alias)              |
+| `/clicker/status`   | Request full state update                 |
+| `/clicker/refresh`  | Force state re-sync from presentation app |
+| `/clicker/zoom`     | Query current notes zoom level            |
+| `/clicker/zoomIn`   | Increase notes zoom (macOS only)          |
+| `/clicker/zoomOut`  | Decrease notes zoom (macOS only)          |
 
 ### Outgoing Feedback (sent on port 9001)
 
-| OSC Address | Type | Description |
-|-------------|------|-------------|
-| `/clicker/state/presenting` | int | `1` if slideshow is active, `0` otherwise |
-| `/clicker/state/open` | int | `1` if presentation file is open, `0` otherwise |
-| `/clicker/slide/current` | int | Current slide number (1-indexed) |
-| `/clicker/slide/total` | int | Total number of slides |
-| `/clicker/zoom/level` | int | Notes zoom percentage (100, 150, 200, 300, 400) or `0` if unavailable |
+| OSC Address                 | Type | Description                                                           |
+| --------------------------- | ---- | --------------------------------------------------------------------- |
+| `/clicker/state/presenting` | int  | `1` if slideshow is active, `0` otherwise                             |
+| `/clicker/state/open`       | int  | `1` if presentation file is open, `0` otherwise                       |
+| `/clicker/slide/current`    | int  | Current slide number (1-indexed)                                      |
+| `/clicker/slide/total`      | int  | Total number of slides                                                |
+| `/clicker/zoom/level`       | int  | Notes zoom percentage (100, 150, 200, 300, 400) or `0` if unavailable |
 
 ### Example: Bitfocus Companion Setup
 
@@ -66,21 +66,21 @@ For setups with multiple USB presentation clickers or backup systems, enable bro
 
 ### Channel-Based OSC Commands (port 9002)
 
-| OSC Address | Description |
-|-------------|-------------|
-| `/clicker/<channel>/next` | Advance to next slide |
-| `/clicker/<channel>/prev` | Go to previous slide |
-| `/clicker/<channel>/goto` | Jump to slide N |
-| `/clicker/<channel>/status` | Request state update |
+| OSC Address                 | Description           |
+| --------------------------- | --------------------- |
+| `/clicker/<channel>/next`   | Advance to next slide |
+| `/clicker/<channel>/prev`   | Go to previous slide  |
+| `/clicker/<channel>/goto`   | Jump to slide N       |
+| `/clicker/<channel>/status` | Request state update  |
 
 ### Channel Feedback (broadcast on port 9002)
 
-| OSC Address | Type | Description |
-|-------------|------|-------------|
-| `/clicker/<channel>/state/presenting` | int | `1` if slideshow active |
-| `/clicker/<channel>/state/open` | int | `1` if presentation open |
-| `/clicker/<channel>/state/slide` | int, int | Current slide, total slides |
-| `/clicker/<channel>/state/zoom` | int | Notes zoom level |
+| OSC Address                           | Type     | Description                 |
+| ------------------------------------- | -------- | --------------------------- |
+| `/clicker/<channel>/state/presenting` | int      | `1` if slideshow active     |
+| `/clicker/<channel>/state/open`       | int      | `1` if presentation open    |
+| `/clicker/<channel>/state/slide`      | int, int | Current slide, total slides |
+| `/clicker/<channel>/state/zoom`       | int      | Notes zoom level            |
 
 Valid channels: `main`, `backup`, `keynote1-9`, `aux1-9`
 
@@ -117,14 +117,17 @@ npm run tauri build
 ## Platform-Specific Notes
 
 ### Windows
+
 - PowerPoint must be running for the app to detect presentations
 - Uses COM automation (same as VBA macros)
 
 ### macOS
+
 - Grant accessibility permissions when prompted
 - Works with both PowerPoint and Keynote
 
 ### Linux (LibreOffice Impress)
+
 - Enable remote control: **Slide Show > Slide Show Settings > Enable remote control**
 - A slideshow must be running for the connection to work
 - Note: Zoom control is not available for LibreOffice

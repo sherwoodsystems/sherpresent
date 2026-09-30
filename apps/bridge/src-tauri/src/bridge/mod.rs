@@ -316,7 +316,8 @@ impl BridgeCore {
 
     /// Send a test OSC command to a target host:port.
     pub async fn send_test_osc(&self, host: String, port: u16, action: KeyAction) {
-        let _ = tokio::spawn(async move {
+        // Fire and forget: the result is logged, nobody awaits it.
+        tokio::spawn(async move {
             match OscSender::new(&host, port) {
                 Ok(sender) => match action {
                     KeyAction::Next => sender.send_next().await,

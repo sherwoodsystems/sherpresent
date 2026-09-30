@@ -134,7 +134,6 @@
     color: white;
   }
 
-
   .peer-address {
     font-size: 0.75rem;
     font-family: monospace;
@@ -168,7 +167,6 @@
     .peer-badge.bridge {
       background: #ff9f0a;
     }
-
 
     .peer-address {
       color: #6ab7ff;

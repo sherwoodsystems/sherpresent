@@ -27,10 +27,7 @@
     </section>
 
     <section class="section">
-      <AppSelector
-        config={appStore.config}
-        onchange={(a) => appStore.updateAdapter(a)}
-      />
+      <AppSelector config={appStore.config} onchange={(a) => appStore.updateAdapter(a)} />
     </section>
 
     {#if appStore.config.adapter === 'libreoffice' || appStore.config.adapter === 'canva'}
@@ -70,7 +67,6 @@
         Quit SherPresent
       </button>
     </section>
-
   {:else}
     <p class="loading">Loading...</p>
   {/if}

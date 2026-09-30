@@ -25,9 +25,9 @@
 </script>
 
 <div class="app-selector">
-  <label class="label">Application</label>
+  <span class="label">Application</span>
   <div class="toggle-group">
-    {#each availableAdapters as [id, name]}
+    {#each availableAdapters as [id, name] (id)}
       <button
         class="toggle-btn"
         class:active={config.adapter === id}
@@ -39,12 +39,11 @@
   </div>
   {#if config.adapter === 'libreoffice'}
     <p class="hint">
-      Enable remote control: Slide Show &gt; Slide Show Settings &gt; Enable remote control. When prompted for a PIN, enter <strong>1234</strong>.
+      Enable remote control: Slide Show &gt; Slide Show Settings &gt; Enable remote control. When
+      prompted for a PIN, enter <strong>1234</strong>.
     </p>
   {:else if config.adapter === 'canva'}
-    <p class="hint">
-      Start presenting in Canva, then share the remote control link.
-    </p>
+    <p class="hint">Start presenting in Canva, then share the remote control link.</p>
   {/if}
 </div>
 

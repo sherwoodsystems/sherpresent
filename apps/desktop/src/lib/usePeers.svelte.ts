@@ -27,7 +27,11 @@ export function usePeers(onUpdate?: () => void) {
   });
 
   return {
-    get peers() { return peers; },
-    set peers(v: DiscoveredPeer[]) { peers = v; },
+    get peers() {
+      return peers;
+    },
+    set peers(v: DiscoveredPeer[]) {
+      peers = v;
+    }
   };
 }

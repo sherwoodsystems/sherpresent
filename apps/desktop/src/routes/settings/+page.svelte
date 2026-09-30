@@ -12,10 +12,7 @@
 
   {#if appStore.configLoaded}
     <section class="section">
-      <OscConfig
-        config={appStore.config.osc}
-        onchange={(c) => appStore.updateOscConfig(c)}
-      />
+      <OscConfig config={appStore.config.osc} onchange={(c) => appStore.updateOscConfig(c)} />
     </section>
 
     <section class="section">
@@ -24,7 +21,6 @@
         onchange={(c) => appStore.updateWebServerConfig(c)}
       />
     </section>
-
   {:else}
     <p class="loading">Loading...</p>
   {/if}

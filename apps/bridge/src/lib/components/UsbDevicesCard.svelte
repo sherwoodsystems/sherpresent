@@ -4,7 +4,7 @@
     DeviceConfig,
     DiscoveredPeer,
     KeyAction,
-    UsbDeviceInfo,
+    UsbDeviceInfo
   } from '$lib/types';
   import { actionLabel } from '$lib/format';
 
@@ -21,7 +21,7 @@
     onCancelRegistration,
     onRemoveBinding,
     onSetTarget,
-    onForget,
+    onForget
   }: {
     devices: UsbDeviceInfo[];
     config: BridgeConfig | null;
@@ -47,10 +47,11 @@
       <div class="perms-head">
         <strong>⚠ No access to USB input devices</strong>
         <span class="muted small">
-          The bridge found USB devices it can't read. On Linux your user needs
-          to be in the <code>input</code> group to read <code>/dev/input/event*</code>.
-          On Raspberry Pi OS this is already the default; on other distros run the
-          command below, then log out and back in.
+          The bridge found USB devices it can't read. On Linux your user needs to be in the <code
+            >input</code
+          >
+          group to read <code>/dev/input/event*</code>. On Raspberry Pi OS this is already the
+          default; on other distros run the command below, then log out and back in.
         </span>
       </div>
       <div class="perms-actions">
@@ -66,7 +67,9 @@
 
   {#if bindingAction}
     <div class="registration-banner">
-      <span>Press any key on any device to bind as <strong>{actionLabel(bindingAction)}</strong>…</span>
+      <span
+        >Press any key on any device to bind as <strong>{actionLabel(bindingAction)}</strong>…</span
+      >
       <button class="btn-ghost" onclick={onCancelRegistration}>Cancel</button>
     </div>
   {/if}
@@ -80,7 +83,8 @@
         {@const bindings = registered ? Object.entries(registered.bindings) : []}
         <li class="usb-device">
           <div class="usb-device-head">
-            <span class="peer-dot" class:muted-dot={bindings.length === 0} aria-hidden="true"></span>
+            <span class="peer-dot" class:muted-dot={bindings.length === 0} aria-hidden="true"
+            ></span>
             <span class="peer-name">
               {device.name}
               {#if device.is_perfect_cue}
@@ -88,8 +92,16 @@
               {/if}
             </span>
             <div class="usb-device-actions">
-              <button class="btn-tiny" onclick={() => onStartBinding('prev')} disabled={!!bindingAction}>Bind Prev</button>
-              <button class="btn-tiny" onclick={() => onStartBinding('next')} disabled={!!bindingAction}>Bind Next</button>
+              <button
+                class="btn-tiny"
+                onclick={() => onStartBinding('prev')}
+                disabled={!!bindingAction}>Bind Prev</button
+              >
+              <button
+                class="btn-tiny"
+                onclick={() => onStartBinding('next')}
+                disabled={!!bindingAction}>Bind Next</button
+              >
             </div>
           </div>
 
@@ -98,7 +110,11 @@
               {#each bindings as [key, action] (key)}
                 <span class="binding-chip">
                   {key} → {actionLabel(action)}
-                  <button class="binding-x" title="Remove binding" onclick={() => onRemoveBinding(device.id, key)}>×</button>
+                  <button
+                    class="binding-x"
+                    title="Remove binding"
+                    onclick={() => onRemoveBinding(device.id, key)}>×</button
+                  >
                 </span>
               {/each}
             </div>
@@ -116,7 +132,9 @@
               >
                 <option value="">No target</option>
                 {#each desktopPeers as peer (peer.instanceId)}
-                  <option value={peer.instanceId}>{peer.displayName ?? peer.host}:{peer.port}</option>
+                  <option value={peer.instanceId}
+                    >{peer.displayName ?? peer.host}:{peer.port}</option
+                  >
                 {/each}
               </select>
             </label>
@@ -134,7 +152,9 @@
           <li class="peer">
             <span class="peer-dot muted-dot" aria-hidden="true"></span>
             <span class="peer-name">{device.label}</span>
-            <span class="peer-host">{device.target ? `${device.target.host}:${device.target.port}` : 'no target'}</span>
+            <span class="peer-host"
+              >{device.target ? `${device.target.host}:${device.target.port}` : 'no target'}</span
+            >
             <button class="btn-tiny" onclick={() => onForget(deviceId, device)}>Forget</button>
           </li>
         {/each}

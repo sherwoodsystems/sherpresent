@@ -113,8 +113,8 @@
 
     {#if !hasKey}
       <p class="notice">
-        No API key for {keyProvider ? API_KEY_LABELS[keyProvider] : ''} —
-        add one in <a href="#caption-settings">Caption Settings</a> below first.
+        No API key for {keyProvider ? API_KEY_LABELS[keyProvider] : ''} — add one in
+        <a href="#caption-settings">Caption Settings</a> below first.
       </p>
     {/if}
 
@@ -158,7 +158,9 @@
   <section class="section monitor">
     <h3 class="section-title">
       Monitor <span class="lang-tag">
-        {translates(captions) ? captions.targetLanguage : `${captions.sourceLanguage} · no translation`}
+        {translates(captions)
+          ? captions.targetLanguage
+          : `${captions.sourceLanguage} · no translation`}
       </span>
     </h3>
 

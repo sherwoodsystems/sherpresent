@@ -5,7 +5,7 @@
   let {
     info,
     onRename,
-    onCopy,
+    onCopy
   }: {
     info: BridgeInfo;
     /** Persist a new bridge name. Resolves on success, throws on failure. */
@@ -74,10 +74,14 @@
     <dd>
       TCP <code>{info.config_port}</code>
       {#if info.lan_ip}
-        <span class="muted">— accessible at <a
-          href={info.config_url}
-          onclick={(e) => { e.preventDefault(); openUrl(info.config_url); }}
-        >{info.config_url}</a>
+        <span class="muted"
+          >— accessible at <a
+            href={info.config_url}
+            onclick={(e) => {
+              e.preventDefault();
+              openUrl(info.config_url);
+            }}>{info.config_url}</a
+          >
           <button class="btn-tiny" onclick={() => onCopy(info.config_url)}>Copy</button>
         </span>
       {/if}

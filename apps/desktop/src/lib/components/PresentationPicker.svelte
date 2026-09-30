@@ -28,22 +28,23 @@
 
   // Refresh when adapter changes
   $effect(() => {
-    adapter; // Track dependency
+    void adapter; // Track dependency
     refreshPresentations();
   });
 </script>
 
 <div class="presentation-picker">
-  <label class="label">Presentation</label>
+  <label class="label" for="presentation-select">Presentation</label>
   <div class="picker-row">
     <select
+      id="presentation-select"
       class="select"
       value={selectedPresentation}
       onchange={(e) => onselect(e.currentTarget.value)}
       disabled={loading}
     >
       <option value="">Select a presentation...</option>
-      {#each presentations as pres}
+      {#each presentations as pres (pres)}
         <option value={pres}>{pres}</option>
       {/each}
     </select>
@@ -64,7 +65,13 @@
     <p class="error">{error}</p>
   {/if}
   {#if !loading && presentations.length === 0 && !error}
-    <p class="hint">No presentations open in {adapter === 'powerpoint' ? 'PowerPoint' : adapter === 'libreoffice' ? 'LibreOffice Impress' : 'Keynote'}</p>
+    <p class="hint">
+      No presentations open in {adapter === 'powerpoint'
+        ? 'PowerPoint'
+        : adapter === 'libreoffice'
+          ? 'LibreOffice Impress'
+          : 'Keynote'}
+    </p>
   {/if}
 </div>
 

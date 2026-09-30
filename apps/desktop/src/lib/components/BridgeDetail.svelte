@@ -9,7 +9,7 @@
     BridgeConnectedDevices,
     BridgeSatelliteStatus,
     BridgeApiResponse,
-    SaveGlobalConfigRequest,
+    SaveGlobalConfigRequest
   } from '$lib/types';
   import BridgeDeviceSlot from './BridgeDeviceSlot.svelte';
 
@@ -18,7 +18,7 @@
     configPort,
     bridgeName,
     onclose,
-    onsave,
+    onsave
   }: {
     host: string;
     configPort: number;
@@ -67,7 +67,7 @@
         invoke<BridgeGlobalConfig>('bridge_get_config', { host, configPort }),
         invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', { host, configPort }),
         invoke<BridgeConnectedDevices>('bridge_get_devices', { host, configPort }),
-        invoke<BridgeSatelliteStatus>('bridge_get_satellite_status', { host, configPort }),
+        invoke<BridgeSatelliteStatus>('bridge_get_satellite_status', { host, configPort })
       ]);
       status = s;
       config = c;
@@ -77,7 +77,7 @@
       errorCount = 0;
       offline = false;
       syncFormFromConfig(c);
-    } catch (e) {
+    } catch {
       handleError();
     }
   }
@@ -95,10 +95,19 @@
   async function pollStatus() {
     try {
       status = await invoke<BridgeStatus>('bridge_get_status', { host, configPort });
-      registeredDevices = await invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', { host, configPort });
-      connectedDevices = await invoke<BridgeConnectedDevices>('bridge_get_devices', { host, configPort });
+      registeredDevices = await invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', {
+        host,
+        configPort
+      });
+      connectedDevices = await invoke<BridgeConnectedDevices>('bridge_get_devices', {
+        host,
+        configPort
+      });
       if (editMode === 'satellite') {
-        satelliteStatus = await invoke<BridgeSatelliteStatus>('bridge_get_satellite_status', { host, configPort });
+        satelliteStatus = await invoke<BridgeSatelliteStatus>('bridge_get_satellite_status', {
+          host,
+          configPort
+        });
       }
       errorCount = 0;
       offline = false;
@@ -128,13 +137,18 @@
         feedback_port: editFeedbackPort,
         log_level: editLogLevel,
         bridge_name: editBridgeName || undefined,
-        satellite: editMode === 'satellite' ? {
-          host: editSatelliteHost || null,
-          port: editSatellitePort,
-        } : undefined,
+        satellite:
+          editMode === 'satellite'
+            ? {
+                host: editSatelliteHost || null,
+                port: editSatellitePort
+              }
+            : undefined
       };
       const result = await invoke<BridgeApiResponse>('bridge_save_config', {
-        host, configPort, config: req,
+        host,
+        configPort,
+        config: req
       });
       saveMessage = result.message;
       onsave?.(editBridgeName || bridgeName);
@@ -152,18 +166,31 @@
 
   async function refreshDevices() {
     try {
-      registeredDevices = await invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', { host, configPort });
-      connectedDevices = await invoke<BridgeConnectedDevices>('bridge_get_devices', { host, configPort });
-    } catch { /* ignore */ }
+      registeredDevices = await invoke<BridgeRegisteredDevices>('bridge_get_registered_devices', {
+        host,
+        configPort
+      });
+      connectedDevices = await invoke<BridgeConnectedDevices>('bridge_get_devices', {
+        host,
+        configPort
+      });
+    } catch {
+      /* ignore */
+    }
   }
 
   function findConnectedDevice(usbPhys: string) {
     if (!connectedDevices?.devices) return null;
-    return connectedDevices.devices.find(d => d.usb_phys === usbPhys) ?? null;
+    return connectedDevices.devices.find((d) => d.usb_phys === usbPhys) ?? null;
   }
 
   async function shutdownBridge() {
-    if (!confirm('Are you sure you want to shut down the bridge? You will need physical access to restart it.')) return;
+    if (
+      !confirm(
+        'Are you sure you want to shut down the bridge? You will need physical access to restart it.'
+      )
+    )
+      return;
     shuttingDown = true;
     try {
       await invoke<BridgeApiResponse>('bridge_shutdown', { host, configPort });
@@ -223,12 +250,17 @@
           <h3>Configuration</h3>
           <div class="form-group">
             <label for="bridge-name">Bridge Name</label>
-            <input id="bridge-name" type="text" bind:value={editBridgeName} placeholder="Bridge name" />
+            <input
+              id="bridge-name"
+              type="text"
+              bind:value={editBridgeName}
+              placeholder="Bridge name"
+            />
           </div>
           <div class="form-group">
             <label for="mode">Mode</label>
             <select id="mode" bind:value={editMode}>
-              {#each config.valid_modes as m}
+              {#each config.valid_modes as m (m)}
                 <option value={m}>{m}</option>
               {/each}
             </select>
@@ -261,7 +293,12 @@
             <div class="form-row">
               <div class="form-group" style="flex: 2">
                 <label for="sat-host">Companion Host</label>
-                <input id="sat-host" type="text" bind:value={editSatelliteHost} placeholder="192.168.1.x" />
+                <input
+                  id="sat-host"
+                  type="text"
+                  bind:value={editSatelliteHost}
+                  placeholder="192.168.1.x"
+                />
               </div>
               <div class="form-group" style="flex: 1">
                 <label for="sat-port">Port</label>
@@ -275,7 +312,7 @@
         <section class="detail-section">
           <h3>Devices</h3>
           {#if registeredDevices}
-            {#each Object.entries(registeredDevices.devices).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })) as [slotName, device]}
+            {#each Object.entries(registeredDevices.devices).sort( ([a], [b]) => a.localeCompare( b, undefined, { numeric: true } ) ) as [slotName, device] (slotName)}
               <BridgeDeviceSlot
                 {slotName}
                 {device}
@@ -296,7 +333,13 @@
             {saving ? 'Saving...' : 'Save Configuration'}
           </button>
           {#if saveMessage}
-            <p class="save-message" class:error={saveMessage.startsWith('Error') || saveMessage.startsWith('Shutdown failed')}>{saveMessage}</p>
+            <p
+              class="save-message"
+              class:error={saveMessage.startsWith('Error') ||
+                saveMessage.startsWith('Shutdown failed')}
+            >
+              {saveMessage}
+            </p>
           {/if}
         </div>
 
@@ -360,7 +403,9 @@
     padding: 0 0.25rem;
     line-height: 1;
   }
-  .close-btn:hover { color: #333; }
+  .close-btn:hover {
+    color: #333;
+  }
 
   .config-link {
     display: inline-block;
@@ -374,7 +419,9 @@
     font-family: inherit;
     text-decoration: underline;
   }
-  .config-link:hover { color: #1557b0; }
+  .config-link:hover {
+    color: #1557b0;
+  }
 
   .offline-banner {
     background: #fce4e4;
@@ -463,7 +510,9 @@
     display: flex;
     gap: 0.75rem;
   }
-  .form-row .form-group { flex: 1; }
+  .form-row .form-group {
+    flex: 1;
+  }
 
   .save-area {
     display: flex;
@@ -485,15 +534,22 @@
     cursor: pointer;
     transition: background 0.15s ease;
   }
-  .save-btn:hover { background: #1557b0; }
-  .save-btn:disabled { background: #999; cursor: not-allowed; }
+  .save-btn:hover {
+    background: #1557b0;
+  }
+  .save-btn:disabled {
+    background: #999;
+    cursor: not-allowed;
+  }
 
   .save-message {
     margin: 0;
     font-size: 0.8rem;
     color: #2e7d32;
   }
-  .save-message.error { color: #c62828; }
+  .save-message.error {
+    color: #c62828;
+  }
 
   .shutdown-area {
     display: flex;
@@ -513,37 +569,78 @@
     cursor: pointer;
     transition: all 0.15s ease;
   }
-  .shutdown-btn:hover { background: #ffebee; }
-  .shutdown-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .shutdown-btn:hover {
+    background: #ffebee;
+  }
+  .shutdown-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
   @media (prefers-color-scheme: dark) {
     .modal-content {
       background: #2a2a2a;
       color: #eee;
     }
-    .modal-header { border-bottom-color: #444; }
-    .modal-header h2 { color: #eee; }
-    .host-label { color: #777; }
-    .close-btn { color: #888; }
-    .close-btn:hover { color: #eee; }
-    .config-link { color: #6ab7ff; }
-    .config-link:hover { color: #90caf9; }
-    .offline-banner { background: #4a1a1a; color: #ff8a80; }
-    .detail-section h3 { color: #aaa; border-bottom-color: #444; }
-    .form-group label { color: #aaa; }
-    .form-group input, .form-group select {
+    .modal-header {
+      border-bottom-color: #444;
+    }
+    .modal-header h2 {
+      color: #eee;
+    }
+    .host-label {
+      color: #777;
+    }
+    .close-btn {
+      color: #888;
+    }
+    .close-btn:hover {
+      color: #eee;
+    }
+    .config-link {
+      color: #6ab7ff;
+    }
+    .config-link:hover {
+      color: #90caf9;
+    }
+    .offline-banner {
+      background: #4a1a1a;
+      color: #ff8a80;
+    }
+    .detail-section h3 {
+      color: #aaa;
+      border-bottom-color: #444;
+    }
+    .form-group label {
+      color: #aaa;
+    }
+    .form-group input,
+    .form-group select {
       background: #333;
       border-color: #555;
       color: #eee;
     }
-    .form-group input:focus, .form-group select:focus {
+    .form-group input:focus,
+    .form-group select:focus {
       border-color: #6ab7ff;
       box-shadow: 0 0 0 2px rgba(106, 183, 255, 0.15);
     }
-    .save-message { color: #81c784; }
-    .save-message.error { color: #ff8a80; }
-    .shutdown-area { border-top-color: #444; }
-    .shutdown-btn { background: #333; color: #ff8a80; border-color: #5c2a2a; }
-    .shutdown-btn:hover { background: #4a1a1a; }
+    .save-message {
+      color: #81c784;
+    }
+    .save-message.error {
+      color: #ff8a80;
+    }
+    .shutdown-area {
+      border-top-color: #444;
+    }
+    .shutdown-btn {
+      background: #333;
+      color: #ff8a80;
+      border-color: #5c2a2a;
+    }
+    .shutdown-btn:hover {
+      background: #4a1a1a;
+    }
   }
 </style>
