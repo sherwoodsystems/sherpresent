@@ -53,11 +53,6 @@ impl OscSender {
         self.send_msg_owned(out::PREVIOUS.to_string(), vec![]).await;
     }
 
-    /// Send `GOTO <n>` (`/oscpoint/goto/slide` with one int32 arg).
-    pub async fn send_goto(self, slide: i32) {
-        self.send_msg_owned(out::GOTO_SLIDE.to_string(), vec![rosc::OscType::Int(slide)]).await;
-    }
-
     /// Encodes + sends a single OSC message with the configured redundancy.
     async fn send_msg_owned(self, address: String, args: Vec<rosc::OscType>) {
         let packet = OscPacket::Message(OscMessage {

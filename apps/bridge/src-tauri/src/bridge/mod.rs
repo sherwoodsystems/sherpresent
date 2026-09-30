@@ -21,9 +21,13 @@ use crate::bridge::config::{
 use crate::bridge::osc::feedback::{start_feedback_listener, FeedbackState, FeedbackUpdate};
 use crate::bridge::osc::sender::OscSender;
 use crate::bridge::state::CoreState;
-use crate::bridge::usb::{UsbDeviceInfo, UsbEvent, UsbManager};
+use crate::bridge::usb::UsbDeviceInfo;
+#[cfg(target_os = "linux")]
+use crate::bridge::usb::{UsbEvent, UsbManager};
 
-/// Event emitted by the bridge core for UI consumers.
+/// Event emitted by the bridge core for UI consumers. Only the Linux USB
+/// backend produces these.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum BridgeEvent {
@@ -90,11 +94,6 @@ impl BridgeCore {
     /// Subscribe to peer list updates from mDNS discovery.
     pub fn subscribe_peers(&self) -> broadcast::Receiver<PeerUpdate> {
         self.peer_tx.subscribe()
-    }
-
-    /// Access the underlying shared state.
-    pub fn state(&self) -> Arc<CoreState> {
-        self.state.clone()
     }
 
     /// Get a snapshot of the current config.
@@ -376,6 +375,7 @@ impl BridgeCore {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn handle_usb_event(
     event: UsbEvent,
     state: &Arc<CoreState>,

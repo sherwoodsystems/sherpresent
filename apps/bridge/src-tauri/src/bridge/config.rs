@@ -66,16 +66,6 @@ pub enum KeyAction {
     Prev,
 }
 
-impl KeyAction {
-    /// Human-readable label ("Next" / "Prev").
-    pub fn label(&self) -> &'static str {
-        match self {
-            KeyAction::Next => "Next",
-            KeyAction::Prev => "Prev",
-        }
-    }
-}
-
 impl std::str::FromStr for KeyAction {
     type Err = String;
 
@@ -366,12 +356,10 @@ mod tests {
     }
 
     #[test]
-    fn key_action_from_str_and_label() {
+    fn key_action_from_str() {
         assert_eq!("next".parse::<KeyAction>().unwrap(), KeyAction::Next);
         assert_eq!("prev".parse::<KeyAction>().unwrap(), KeyAction::Prev);
         assert_eq!("previous".parse::<KeyAction>().unwrap(), KeyAction::Prev);
         assert!("bogus".parse::<KeyAction>().is_err());
-        assert_eq!(KeyAction::Next.label(), "Next");
-        assert_eq!(KeyAction::Prev.label(), "Prev");
     }
 }

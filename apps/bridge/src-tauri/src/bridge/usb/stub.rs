@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 pub struct UsbManagerImpl;
 
 impl UsbManagerImpl {
+    #[allow(dead_code)] // `UsbManager::new` is only called on Linux
     pub fn new(_event_tx: broadcast::Sender<UsbEvent>) -> std::io::Result<Self> {
         Ok(Self)
     }

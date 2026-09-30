@@ -6,7 +6,6 @@
 pub mod out {
     pub const NEXT: &str = "/oscpoint/next";
     pub const PREVIOUS: &str = "/oscpoint/previous";
-    pub const GOTO_SLIDE: &str = "/oscpoint/goto/slide";
 }
 
 /// Address prefixes for feedback the bridge RECEIVES from desktops / OSCPoint.

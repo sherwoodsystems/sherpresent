@@ -61,6 +61,7 @@ pub enum UsbEvent {
 /// compatible clickers and a task per open device that reads key events. It
 /// sends events through a broadcast channel that the rest of the app can
 /// subscribe to.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Clone)]
 pub struct UsbManager {
     /// Platform-specific implementation.
@@ -69,6 +70,7 @@ pub struct UsbManager {
     events: broadcast::Sender<UsbEvent>,
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 impl UsbManager {
     /// Spawn the USB device scanner and event readers.
     pub fn new() -> std::io::Result<Self> {
@@ -95,6 +97,7 @@ impl UsbManager {
 }
 
 /// True if the device name looks like a DSan Perfect Cue.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn is_perfect_cue(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.contains("perfect cue") || lower.contains("dsan")
