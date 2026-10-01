@@ -11,6 +11,8 @@ struct Args {
     var serverName = "SherPresent Captions"
     /// What to draw: `captions` or `notes`. See `makeContent`.
     var content = "captions"
+    /// Captions only: which language(s) to show. The web overlay's `?text=`.
+    var text = CaptionText.translated
     /// Fixed frame size; not a flag because nothing needs another size yet.
     static let width = 1920
     static let height = 1080
@@ -54,6 +56,10 @@ struct Args {
                 args.sinks = try value(flag).split(separator: ",").map { String($0) }
             case "--name": args.serverName = try value(flag)
             case "--content": args.content = try value(flag)
+            case "--text":
+                let v = try value(flag)
+                guard let t = CaptionText(rawValue: v) else { throw ParseError.badValue(flag, v) }
+                args.text = t
             case "--render-png": args.renderPNG = try value(flag)
             default: throw ParseError.unknownFlag(flag)
             }

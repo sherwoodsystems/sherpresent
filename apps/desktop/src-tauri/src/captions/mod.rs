@@ -94,6 +94,8 @@ pub struct OverlaySettings {
     /// % of frame width
     pub width: f32,
     pub shadow: bool,
+    /// All caps; a display transform, the text itself is untouched
+    pub uppercase: bool,
     /// Opaque box behind each row (closed-caption look)
     pub background: bool,
     /// `#rrggbb` / `#rgb` fill of that box
@@ -111,6 +113,7 @@ impl OverlaySettings {
             safe_area: c.safe_area,
             width: c.width,
             shadow: c.shadow,
+            uppercase: c.uppercase,
             background: c.background,
             box_color: c.box_color.clone(),
             clear_after: c.clear_after,
@@ -175,6 +178,9 @@ impl OverlaySettings {
         }
         if let Some(v) = flag("shadow") {
             s.shadow = v;
+        }
+        if let Some(v) = flag("caps") {
+            s.uppercase = v;
         }
         if let Some(v) = flag("box") {
             s.background = v;
@@ -486,6 +492,7 @@ async fn consume_events(
     mut events: mpsc::UnboundedReceiver<ProviderEvent>,
 ) {
     let mut current = CaptionSegment::blank(1);
+    let mut settled = SettledText::default();
 
     while let Some(event) = events.recv().await {
         match event {
@@ -497,7 +504,8 @@ async fn consume_events(
             }
 
             ProviderEvent::Replace { source, translated } => {
-                current.apply_replace(source, translated);
+                let shown = settled.update(&translated);
+                current.apply_replace(source, shown);
                 publish_segment(&status, &mut current);
             }
 
@@ -507,6 +515,10 @@ async fn consume_events(
                     continue;
                 }
 
+                // The line is done revising: show all of it, held-back tail too.
+                if let Some(full) = settled.take() {
+                    current.translated = full;
+                }
                 current.is_final = true;
                 current.timestamp = now_ms();
                 {
@@ -547,6 +559,61 @@ fn publish_segment(status: &StatusReporter, seg: &mut CaptionSegment) {
     status.publish(CaptionUpdate::Segment {
         segment: seg.clone(),
     });
+}
+
+/// Holds back the unsettled tail of a revisable translation.
+///
+/// Translating a sentence that is still being spoken rewrites its last few
+/// words as context arrives ("il va au" -> "il va à la"), so showing each
+/// result as-is makes text change faster than it can be read. Only words two
+/// consecutive translations agree on are shown, and the line never shrinks
+/// while it's spoken: a correction to words already on screen waits until it
+/// also brings [`CORRECTION_MIN_GAIN`] new words, so text moves forward rather
+/// than flickering in place. The full translation replaces the line when it
+/// completes ([`take`](Self::take)).
+#[derive(Default)]
+struct SettledText {
+    /// The newest raw translation of the line.
+    last: String,
+    shown: String,
+}
+
+impl SettledText {
+    fn update(&mut self, raw: &str) -> String {
+        let agreed = common_word_prefix(&self.last, raw);
+        let (have, got) = (word_count(&self.shown), word_count(agreed));
+        let extends = word_count(common_word_prefix(&self.shown, agreed)) == have;
+        if (extends && got > have) || got >= have + CORRECTION_MIN_GAIN {
+            self.shown = agreed.to_string();
+        }
+        self.last = raw.to_string();
+        self.shown.clone()
+    }
+
+    /// The full latest translation, if any, resetting for the next line.
+    fn take(&mut self) -> Option<String> {
+        self.shown.clear();
+        Some(std::mem::take(&mut self.last)).filter(|s| !s.is_empty())
+    }
+}
+
+/// New words a mid-line correction must bring before it's shown.
+const CORRECTION_MIN_GAIN: usize = 2;
+
+fn word_count(s: &str) -> usize {
+    s.split_whitespace().count()
+}
+
+/// The longest run of leading words `b` shares with `a`, as a slice of `b`.
+fn common_word_prefix<'a>(a: &str, b: &'a str) -> &'a str {
+    let mut end = 0;
+    for (wa, wb) in a.split_whitespace().zip(b.split_whitespace()) {
+        if wa != wb {
+            break;
+        }
+        end = wb.as_ptr() as usize - b.as_ptr() as usize + wb.len();
+    }
+    &b[..end]
 }
 
 impl CaptionSegment {
@@ -626,6 +693,7 @@ mod tests {
             "safeArea",
             "width",
             "shadow",
+            "uppercase",
             "background",
             "boxColor",
             "clearAfter",
@@ -660,6 +728,43 @@ mod tests {
         assert_eq!(s.chroma_color, "transparent");
         assert!(s.background);
         assert_eq!(s.shadow, base.shadow);
+    }
+
+    #[test]
+    fn test_settled_text_grows_word_by_word() {
+        let mut t = SettledText::default();
+        assert_eq!(t.update("il"), "", "nothing agreed yet");
+        assert_eq!(t.update("il va"), "il");
+        assert_eq!(t.update("il va au"), "il va");
+        // The tail is revised: only the agreed words are shown.
+        assert_eq!(t.update("il va à la"), "il va");
+        assert_eq!(t.update("il va à la gare"), "il va à la");
+        assert_eq!(t.take().as_deref(), Some("il va à la gare"));
+        assert_eq!(t.update("bonjour"), "", "reset for the next line");
+    }
+
+    #[test]
+    fn test_settled_text_corrections_must_move_forward() {
+        let mut t = SettledText::default();
+        t.update("nous allons voir");
+        assert_eq!(t.update("nous allons voir le"), "nous allons voir");
+        // A revision of shown words that adds nothing is held back...
+        assert_eq!(t.update("nous irons voir"), "nous allons voir");
+        assert_eq!(t.update("nous irons voir le"), "nous allons voir");
+        // ...until it also brings two new words.
+        assert_eq!(t.update("nous irons voir le film ce"), "nous allons voir");
+        assert_eq!(
+            t.update("nous irons voir le film ce soir"),
+            "nous irons voir le film ce"
+        );
+        assert_eq!(t.take().as_deref(), Some("nous irons voir le film ce soir"));
+    }
+
+    #[test]
+    fn test_common_word_prefix_is_whole_words() {
+        assert_eq!(common_word_prefix("nous allons", "nous allions"), "nous");
+        assert_eq!(common_word_prefix("", "bonjour"), "");
+        assert_eq!(common_word_prefix("a  b c", "a b c d"), "a b c");
     }
 
     fn final_segment(id: u64) -> CaptionSegment {

@@ -12,9 +12,9 @@ protocol FrameContent: AnyObject {
 }
 
 @MainActor
-func makeContent(_ kind: String) throws -> FrameContent {
+func makeContent(_ kind: String, text: CaptionText = .translated) throws -> FrameContent {
     switch kind {
-    case "captions": return CaptionContent()
+    case "captions": return CaptionContent(text: text)
     case "notes": return NotesContent()
     default: throw Args.ParseError.badValue("--content", kind)
     }

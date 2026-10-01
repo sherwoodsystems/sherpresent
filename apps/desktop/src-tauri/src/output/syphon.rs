@@ -30,6 +30,7 @@ use tokio_stream::StreamExt;
 
 use super::feed::Feed;
 use super::{OutputState, OutputStatus, StatusReporter};
+use crate::config::CaptionText;
 use crate::sidecar::{snapshot_tail, spawn_stderr_pump, with_stderr_tail, StderrTail};
 
 /// Helper binary name, as placed next to the app executable.
@@ -38,7 +39,7 @@ pub const HELPER_NAME: &str = "sherpresent-output";
 /// Overrides helper discovery (development, and tests with a scripted fake).
 const HELPER_ENV: &str = "SHERPRESENT_OUTPUT_BIN";
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 
 /// The helper's deployment target. Syphon itself goes back much further; 13 is
 /// just the floor for the Swift concurrency the helper uses.
@@ -83,10 +84,12 @@ enum SessionEnd {
 }
 
 /// Run the output until `shutdown` flips, respawning the helper with backoff.
-/// `content` is the helper's `--content`; `name` the Syphon server name.
+/// `content` is the helper's `--content`, `text` its `--text` (captions
+/// only); `name` the Syphon server name.
 pub async fn run(
     path: PathBuf,
     content: &'static str,
+    text: Option<CaptionText>,
     name: String,
     feed: Feed,
     mut shutdown: watch::Receiver<bool>,
@@ -100,7 +103,7 @@ pub async fn run(
 
     loop {
         report(base.clone());
-        let args = build_args(content, &name);
+        let args = build_args(content, &name, text);
         match run_session(&path, &args, &feed, &mut shutdown, &report, &base).await {
             SessionEnd::Shutdown => break,
             SessionEnd::Fatal(message) => {
@@ -276,8 +279,8 @@ async fn write_line(stdin: &mut ChildStdin, line: &str) -> Result<(), String> {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-fn build_args(content: &str, name: &str) -> Vec<String> {
-    vec![
+fn build_args(content: &str, name: &str, text: Option<CaptionText>) -> Vec<String> {
+    let mut args: Vec<String> = vec![
         "--protocol".into(),
         PROTOCOL_VERSION.to_string(),
         "--content".into(),
@@ -286,7 +289,11 @@ fn build_args(content: &str, name: &str) -> Vec<String> {
         "syphon".into(),
         "--name".into(),
         name.to_string(),
-    ]
+    ];
+    if let Some(text) = text {
+        args.extend(["--text".into(), text.as_str().into()]);
+    }
+    args
 }
 
 #[derive(Debug, PartialEq)]
@@ -362,16 +369,18 @@ mod tests {
     #[test]
     fn test_build_args() {
         assert_eq!(
-            build_args("notes", "Stage Left"),
+            build_args("captions", "Stage Left", Some(CaptionText::Both)),
             [
                 "--protocol",
-                "2",
+                "3",
                 "--content",
-                "notes",
+                "captions",
                 "--sink",
                 "syphon",
                 "--name",
-                "Stage Left"
+                "Stage Left",
+                "--text",
+                "both"
             ]
         );
     }
@@ -440,6 +449,7 @@ mod tests {
         let task = tokio::spawn(run(
             script,
             "captions",
+            None,
             "Test".into(),
             feed::captions(sinks.clone()),
             stop_rx,
@@ -505,6 +515,7 @@ mod tests {
             run(
                 script,
                 "captions",
+                None,
                 "Test".into(),
                 feed::captions(CaptionSinks::default()),
                 stop_rx,

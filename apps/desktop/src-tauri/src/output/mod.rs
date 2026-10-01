@@ -1,7 +1,8 @@
 //! Native video outputs: helper processes publishing frames to receivers on
 //! this Mac (Syphon). Each output is its own helper and Syphon server:
 //!
-//! - **captions**: fed the same NDJSON the web overlay's `/api/captions/ws`
+//! - **captions** (two of them, each showing the translation, the original or
+//!   both): fed the same NDJSON the web overlay's `/api/captions/ws`
 //!   socket carries — segments, replay, status and
 //!   [`OverlaySettings`](crate::captions::OverlaySettings) — so it renders the
 //!   same lines with the same styling.
@@ -26,7 +27,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::watch;
 
 use crate::captions::CaptionSinks;
-use crate::config::{AppConfig, SyphonOutputConfig, WebServerConfig};
+use crate::config::{
+    AppConfig, CaptionOutputsConfig, CaptionSyphonConfig, SyphonOutputConfig, WebServerConfig,
+};
 use crate::ontime::{self, TimerState};
 use feed::NotesSources;
 
@@ -69,14 +72,17 @@ impl OutputStatus {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct OutputsStatus {
     pub captions: OutputStatus,
+    pub captions2: OutputStatus,
     pub notes: OutputStatus,
 }
 
 impl Default for OutputsStatus {
     fn default() -> Self {
         let supported = syphon::is_supported();
+        let outputs = CaptionOutputsConfig::default();
         Self {
-            captions: OutputStatus::stopped(supported, &SyphonOutputConfig::default().server_name),
+            captions: OutputStatus::stopped(supported, &outputs.syphon.syphon.server_name),
+            captions2: OutputStatus::stopped(supported, &outputs.syphon2.syphon.server_name),
             notes: OutputStatus::stopped(supported, &WebServerConfig::default().syphon.server_name),
         }
     }
@@ -111,7 +117,8 @@ struct NotesKey {
 /// The running outputs, reconciled against config on startup and every save.
 #[derive(Default)]
 pub struct Outputs {
-    captions: Option<Running<SyphonOutputConfig>>,
+    captions: Option<Running<CaptionSyphonConfig>>,
+    captions2: Option<Running<CaptionSyphonConfig>>,
     notes: Option<Running<NotesKey>>,
     status: Arc<Mutex<OutputsStatus>>,
 }
@@ -124,21 +131,20 @@ impl Outputs {
     /// Start, stop or restart outputs so they match `cfg`. Idempotent, so it's
     /// safe to call on every config save: unchanged outputs are left alone.
     pub fn reconcile(&mut self, app: &AppHandle, sources: &OutputSources, cfg: &AppConfig) {
-        let syphon_cfg = &cfg.captions.outputs.syphon;
-        let captions = sources.captions.clone();
+        let outputs = &cfg.captions.outputs;
         let report = self.reporter(app, |all| &mut all.captions);
-        reconcile_slot(
+        reconcile_captions(
             &mut self.captions,
-            syphon_cfg.enabled.then(|| syphon_cfg.clone()),
-            &syphon_cfg.server_name,
+            &outputs.syphon,
+            &sources.captions,
             report,
-            |key, path, shutdown, report| {
-                let feed = feed::captions(captions);
-                let name = key.server_name.clone();
-                tauri::async_runtime::spawn(syphon::run(
-                    path, "captions", name, feed, shutdown, report,
-                ));
-            },
+        );
+        let report = self.reporter(app, |all| &mut all.captions2);
+        reconcile_captions(
+            &mut self.captions2,
+            &outputs.syphon2,
+            &sources.captions,
+            report,
         );
 
         let ws = &cfg.web_server;
@@ -163,7 +169,7 @@ impl Outputs {
                 let feed = feed::notes(notes, timer);
                 let name = key.syphon.server_name.clone();
                 tauri::async_runtime::spawn(syphon::run(
-                    path, "notes", name, feed, shutdown, report,
+                    path, "notes", None, name, feed, shutdown, report,
                 ));
             },
         );
@@ -187,6 +193,35 @@ impl Outputs {
             let _ = app.emit("outputs-status", &snapshot);
         })
     }
+}
+
+/// Bring one captions output in line with its config.
+fn reconcile_captions(
+    slot: &mut Option<Running<CaptionSyphonConfig>>,
+    want: &CaptionSyphonConfig,
+    captions: &CaptionSinks,
+    report: StatusReporter,
+) {
+    let captions = captions.clone();
+    reconcile_slot(
+        slot,
+        want.syphon.enabled.then(|| want.clone()),
+        &want.syphon.server_name,
+        report,
+        |key, path, shutdown, report| {
+            let feed = feed::captions(captions);
+            let name = key.syphon.server_name.clone();
+            tauri::async_runtime::spawn(syphon::run(
+                path,
+                "captions",
+                Some(key.text),
+                name,
+                feed,
+                shutdown,
+                report,
+            ));
+        },
+    );
 }
 
 /// Bring one output in line with `want` (`None` = disabled). A changed key

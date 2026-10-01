@@ -21,7 +21,7 @@ final class OutputApp {
         }
         self.args = args
         self.renderer = renderer
-        self.content = try makeContent(args.content)
+        self.content = try makeContent(args.content, text: args.text)
         // --render-png is an offline render: no sinks, nothing published.
         self.sinks = args.renderPNG == nil ? try makeSinks(args: args, device: device) : []
     }

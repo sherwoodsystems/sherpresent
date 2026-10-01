@@ -148,9 +148,18 @@ export interface CaptionApiKeys {
 }
 
 /** Live caption / translation configuration */
-/** Native caption outputs. NDI would be a sibling of `syphon`. */
+/** Native caption outputs: two Syphon sources, so the original and the
+ * translation can be keyed separately. NDI would be a sibling. */
 export interface CaptionOutputsConfig {
-  syphon: SyphonOutputConfig;
+  syphon: CaptionSyphonConfig;
+  syphon2: CaptionSyphonConfig;
+}
+
+/** Which language(s) a captions output shows; the overlay's `?text=` */
+export type CaptionText = 'translated' | 'source' | 'both';
+
+export interface CaptionSyphonConfig extends SyphonOutputConfig {
+  text: CaptionText;
 }
 
 /** A 1920x1080 Syphon source (macOS), for captions or notes */
@@ -175,6 +184,7 @@ export interface OutputStatus {
 /** Payload of `get_outputs_status` and the `outputs-status` event */
 export interface OutputsStatus {
   captions: OutputStatus;
+  captions2: OutputStatus;
   notes: OutputStatus;
 }
 
@@ -201,6 +211,8 @@ export interface CaptionsConfig {
   width: number;
   /** Drop shadow behind caption text (default off) */
   shadow: boolean;
+  /** Caption text in all caps (default off) */
+  uppercase: boolean;
   /** Closed-caption style opaque box behind each row */
   background: boolean;
   /** Fill of that box, hex (default '#000000') */
@@ -360,10 +372,14 @@ export const defaultConfig: AppConfig = {
     safeArea: 5,
     width: 80,
     shadow: false,
+    uppercase: false,
     background: false,
     boxColor: '#000000',
     clearAfter: 8,
-    outputs: { syphon: { enabled: false, serverName: 'SherPresent Captions' } },
+    outputs: {
+      syphon: { enabled: false, serverName: 'SherPresent Captions', text: 'translated' },
+      syphon2: { enabled: false, serverName: 'SherPresent Captions (Original)', text: 'source' }
+    },
     apiKeys: { gemini: '', openai: '' }
   }
 };

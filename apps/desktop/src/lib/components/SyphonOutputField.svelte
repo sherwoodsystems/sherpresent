@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import type { OutputStatus, SyphonOutputConfig } from '../types';
 
   interface Props {
@@ -10,9 +11,11 @@
     /** Used when the name field is cleared */
     defaultName: string;
     onchange: (config: SyphonOutputConfig) => void;
+    /** Extra fields shown while the output is enabled */
+    children?: Snippet;
   }
 
-  let { id, label, config, status, defaultName, onchange }: Props = $props();
+  let { id, label, config, status, defaultName, onchange, children }: Props = $props();
 
   const summary = $derived.by(() => {
     if (!status) return '';
@@ -52,6 +55,7 @@
           onchange({ ...config, serverName: e.currentTarget.value.trim() || defaultName })}
       />
     </div>
+    {@render children?.()}
     {#if status}
       <div class="field status-field">
         <div class="status-row">

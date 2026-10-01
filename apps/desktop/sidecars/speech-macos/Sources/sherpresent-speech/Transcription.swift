@@ -17,7 +17,7 @@ actor Transcription {
     }
 
     func run() async {
-        let locale = Locale(identifier: args.source)
+        let locale = await SpeechLocale.resolve(args.source)
         let sourceLang = Locale.Language(identifier: args.source)
         let targetLang = Locale.Language(identifier: args.target)
 
@@ -31,7 +31,7 @@ actor Transcription {
             case .installed:
                 session = TranslationSession(installedSource: sourceLang, target: targetLang)
             case .supported:
-                await emitter.emit(
+                emitter.send(
                     .error(
                         code: .translationNotInstalled, fatal: true,
                         message:
@@ -40,7 +40,7 @@ actor Transcription {
                     ))
                 exit(3)
             default:
-                await emitter.emit(
+                emitter.send(
                     .error(
                         code: .translationUnsupported, fatal: true,
                         message:
@@ -54,23 +54,25 @@ actor Transcription {
         let transcriber = SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
-            reportingOptions: [.volatileResults],
+            // `fastResults` trades a little accuracy for responsiveness — the
+            // right call for live captions, and what Apple's own
+            // `progressiveTranscription` preset turns on.
+            reportingOptions: [.volatileResults, .fastResults],
             attributeOptions: []
         )
 
-        let supported = await SpeechTranscriber.supportedLocales.map { $0.identifier(.bcp47) }
-        guard supported.contains(where: { $0.caseInsensitiveCompare(args.source) == .orderedSame })
-        else {
-            await emitter.emit(
+        let supported = await SpeechTranscriber.supportedLocales
+        guard SpeechLocale.contains(supported, locale) else {
+            emitter.send(
                 .error(
                     code: .localeUnsupported, fatal: true,
                     message:
-                        "macOS speech recognition does not support \(args.source). Supported: \(supported.prefix(12).joined(separator: ", "))"
+                        "macOS speech recognition does not support \(args.source). Supported: \(supported.prefix(12).map { $0.identifier(.bcp47) }.joined(separator: ", "))"
                 ))
             exit(3)
         }
 
-        if !(await downloadSpeechModelIfNeeded(for: transcriber)) { exit(4) }
+        if !(await downloadSpeechModelIfNeeded(for: transcriber, locale: locale)) { exit(4) }
 
         guard
             let outputFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [
@@ -79,27 +81,34 @@ actor Transcription {
             let bridge = AudioBridge(
                 sampleRate: args.sampleRate, channels: args.channels, outputFormat: outputFormat)
         else {
-            await emitter.emit(
+            emitter.send(
                 .error(
                     code: .audioError, fatal: false,
                     message: "Could not build an audio converter for the analyzer's format."))
             exit(5)
         }
 
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        // Captions are what the user is waiting on, so don't let the analyzer
+        // run at background priority.
+        let analyzer = SpeechAnalyzer(
+            modules: [transcriber],
+            options: .init(priority: .userInitiated, modelRetention: .processLifetime))
         let (inputSequence, inputBuilder) = AsyncStream<AnalyzerInput>.makeStream()
 
         do {
+            // Load the model before audio flows, so the first words of a talk
+            // aren't delayed by a cold start.
+            try await analyzer.prepareToAnalyze(in: outputFormat)
             try await analyzer.start(inputSequence: inputSequence)
         } catch {
-            await emitter.emit(
+            emitter.send(
                 .error(
                     code: .analyzerError, fatal: false,
                     message: "Could not start the speech analyzer: \(error.localizedDescription)"))
             exit(5)
         }
 
-        await emitter.emit(
+        emitter.send(
             .ready(
                 sourceLocale: args.source,
                 targetLocale: args.translate ? args.target : args.source,
@@ -121,8 +130,7 @@ actor Transcription {
         // --- Consume results -------------------------------------------------
         var turns = TurnBuilder(maxChars: args.turnMaxChars)
         let translator = Translator(session: session)
-        var lastTranslation = ""
-        let emitter = self.emitter
+        let live = LiveLine(emitter: emitter)
 
         do {
             for try await result in transcriber.results {
@@ -132,40 +140,33 @@ actor Transcription {
                     let shouldClose = turns.finalize(text)
                     let line = turns.line(volatile: "")
 
+                    // The source never waits on translation: show the
+                    // finalized words now, then the translation when ready.
+                    var translated: String?
                     if args.translate {
-                        lastTranslation =
-                            await translator.requestImmediate(line, turnID: turns.turnID)
-                            ?? lastTranslation
-                    } else {
-                        lastTranslation = line
+                        await live.setSource(line)
+                        translated = await translator.requestImmediate(line, turnID: turns.turnID)
                     }
-
-                    await emitter.emit(.final(source: line, translated: lastTranslation))
+                    await live.finalize(source: line, translated: translated)
 
                     if shouldClose {
-                        await emitter.emit(.turnComplete)
                         turns.close()
-                        lastTranslation = ""
                         await translator.setTurn(turns.turnID)
+                        await live.close(nextTurn: turns.turnID)
                     }
                 } else {
                     let line = turns.line(volatile: text)
-                    await emitter.emit(.partial(source: line, translated: lastTranslation))
+                    await live.setSource(line)
 
                     if args.translate {
-                        // Debounced so a fast speaker doesn't queue stale work;
-                        // the source line still updates every hypothesis.
-                        await translator.requestDebounced(line, turnID: turns.turnID) {
-                            translated, _ in
-                            await emitter.emit(.partial(source: line, translated: translated))
+                        await translator.request(line, turnID: turns.turnID) { translated, turnID in
+                            await live.setTranslation(translated, turnID: turnID)
                         }
-                    } else {
-                        await emitter.emit(.partial(source: line, translated: line))
                     }
                 }
             }
         } catch {
-            await emitter.emit(
+            emitter.send(
                 .error(
                     code: .analyzerError, fatal: false,
                     message: "Speech recognition stopped: \(error.localizedDescription)"))
@@ -175,18 +176,19 @@ actor Transcription {
 
         // Results ended: stdin closed and the analyzer drained.
         if !turns.isEmpty {
-            await emitter.emit(.turnComplete)
+            emitter.send(.turnComplete)
         }
         audioTask.cancel()
     }
 
     /// Speech models, unlike translation packs, can be fetched programmatically.
-    private func downloadSpeechModelIfNeeded(for transcriber: SpeechTranscriber) async -> Bool {
+    private func downloadSpeechModelIfNeeded(
+        for transcriber: SpeechTranscriber, locale: Locale
+    ) async -> Bool {
         // `assetInstallationRequest` hands back a request even when the model
         // is already on disk, so check first — otherwise every start reports a
         // phantom download to the UI.
-        let installed = await SpeechTranscriber.installedLocales.map { $0.identifier(.bcp47) }
-        if installed.contains(where: { $0.caseInsensitiveCompare(args.source) == .orderedSame }) {
+        if SpeechLocale.contains(await SpeechTranscriber.installedLocales, locale) {
             return true
         }
 
@@ -197,10 +199,9 @@ actor Transcription {
             }
 
             let progress = request.progress
-            let emitter = self.emitter
             let ticker = Task {
                 while !Task.isCancelled {
-                    await emitter.emit(
+                    emitter.send(
                         .assetProgress(stage: "speechModel", fraction: progress.fractionCompleted))
                     try? await Task.sleep(for: .milliseconds(500))
                 }
@@ -213,7 +214,7 @@ actor Transcription {
         } catch {
             // Retryable: a venue's flaky Wi-Fi is exactly this case, and Rust
             // will respawn with backoff.
-            await emitter.emit(
+            emitter.send(
                 .error(
                     code: .assetDownloadFailed, fatal: false,
                     message: "Could not download the speech model: \(error.localizedDescription)"))

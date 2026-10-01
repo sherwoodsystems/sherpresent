@@ -12,7 +12,7 @@ import Foundation
 /// - **stdout**: NDJSON — `ready`, `sinks`, `error`.
 /// - **stderr**: plain-text logs.
 enum WireProtocol {
-    static let version = 2
+    static let version = 3
 }
 
 // MARK: - Inbound
@@ -33,6 +33,7 @@ struct OverlaySettings: Decodable, Equatable {
     var safeArea: Double = 5
     var width: Double = 80
     var shadow: Bool = false
+    var uppercase: Bool = false
     var background: Bool = false
     /// Fill of the background box, `0xRRGGBB`
     var boxColor: UInt32 = 0x000000
@@ -49,12 +50,13 @@ struct OverlaySettings: Decodable, Equatable {
         safeArea = try c.decodeIfPresent(Double.self, forKey: .safeArea) ?? d.safeArea
         width = try c.decodeIfPresent(Double.self, forKey: .width) ?? d.width
         shadow = try c.decodeIfPresent(Bool.self, forKey: .shadow) ?? d.shadow
+        uppercase = try c.decodeIfPresent(Bool.self, forKey: .uppercase) ?? d.uppercase
         background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? d.background
         boxColor = try c.decodeIfPresent(String.self, forKey: .boxColor).flatMap(hexColor) ?? d.boxColor
     }
 
     private enum CodingKeys: String, CodingKey {
-        case fontSize, maxLines, safeArea, width, shadow, background, boxColor
+        case fontSize, maxLines, safeArea, width, shadow, uppercase, background, boxColor
     }
 }
 

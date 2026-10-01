@@ -552,8 +552,8 @@ mod tests {
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(data)
             .unwrap();
-        // 100 ms of 16 kHz mono 16-bit audio.
-        assert_eq!(decoded.len(), 3200);
+        // One chunk of 16 kHz mono 16-bit audio.
+        assert_eq!(decoded.len(), CHUNK_SAMPLES * 2);
     }
 
     #[test]

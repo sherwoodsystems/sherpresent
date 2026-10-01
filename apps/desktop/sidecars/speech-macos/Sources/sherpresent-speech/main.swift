@@ -8,14 +8,14 @@ let args: Args
 do {
     args = try Args.parse(Array(CommandLine.arguments.dropFirst()))
 } catch {
-    await emitter.emit(.error(code: .badArguments, fatal: true, message: "\(error)"))
+    emitter.send(.error(code: .badArguments, fatal: true, message: "\(error)"))
     exit(2)
 }
 
 // Belt-and-braces: the deployment target already prevents launching here, but a
 // clear message beats "Bad CPU type" or a dyld abort.
 if #unavailable(macOS 26.0) {
-    await emitter.emit(
+    emitter.send(
         .error(
             code: .unsupportedOS, fatal: true,
             message: "The Apple on-device caption provider requires macOS 26 (Tahoe) or later."))

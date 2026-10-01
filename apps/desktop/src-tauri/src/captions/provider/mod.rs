@@ -19,7 +19,7 @@ pub mod gemini;
 /// Captions are a live feed: after an outage the operator needs the *current*
 /// words, not a replay of what was said while we were offline. Anything older
 /// than this is dropped.
-pub(crate) const MAX_BACKLOG_CHUNKS: usize = 10; // 1 second
+pub(crate) const MAX_BACKLOG_CHUNKS: usize = 1000 / super::audio::CHUNK_MS; // 1 second
 
 /// Events a provider reports back to the [`CaptionEngine`](super::CaptionEngine).
 #[derive(Debug, Clone, PartialEq)]
@@ -188,7 +188,8 @@ mod tests {
     #[test]
     fn test_drain_backlog_keeps_newest_chunks() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        for i in 0..25 {
+        let sent = MAX_BACKLOG_CHUNKS + 15;
+        for i in 0..sent {
             tx.send(vec![i as i16; CHUNK_SAMPLES]).unwrap();
         }
         let (kept, dropped) = drain_backlog(&mut rx);
@@ -197,7 +198,7 @@ mod tests {
         assert_eq!(dropped, 15);
         // The tail, not the head: the newest chunk must survive.
         assert_eq!(kept[0][0], 15);
-        assert_eq!(kept[kept.len() - 1][0], 24);
+        assert_eq!(kept[kept.len() - 1][0], (sent - 1) as i16);
     }
 
     #[test]

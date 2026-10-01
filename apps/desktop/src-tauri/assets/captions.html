@@ -91,9 +91,23 @@
     font-weight: 650;
     text-align: center;
     color: #fff;
-    text-wrap: balance;
-    /* Latency matters more than polish; no entry animation on the live line. */
+    /* Plain greedy wrapping, not `balance`: balance re-splits every row on
+       each new word, so text already read jumps between rows. Greedy only
+       ever changes the last row. No entry animation on the live line. */
   }
+
+  /* Holds the rows so a roll-up can slide (see render) instead of jumping. */
+  #roll {
+    flex-shrink: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    will-change: transform;
+  }
+
+  /* Opt-in (Settings, or ?caps=1). */
+  body.caps .line { text-transform: uppercase; }
 
   /* Opt-in (Settings, or ?shadow=1). A shadow rather than a filled box: a
      translucent plate would pick up the chroma colour underneath and key out
@@ -145,7 +159,7 @@
 </head>
 <body>
   <div id="frame">
-    <div id="lines"></div>
+    <div id="lines"><div id="roll"></div></div>
     <div id="status"></div>
   </div>
 
@@ -181,6 +195,9 @@
     root.setProperty('--box', s.boxColor);
     setChroma(s.chromaColor);
     document.body.classList.toggle('shadow', s.shadow);
+    document.body.classList.toggle('caps', s.uppercase);
+    // Restyling resizes the text; that's not a roll-up to animate.
+    lastHeight = rollEl.offsetHeight;
     document.body.classList.toggle('boxed', s.background);
     var keep = s.maxLines * 2 + 2;
     if (keep !== keepSegments) {
@@ -190,7 +207,7 @@
     }
   }
 
-  var linesEl = document.getElementById('lines');
+  var rollEl = document.getElementById('roll');
   var statusEl = document.getElementById('status');
 
   // Finalized lines, oldest first. The in-progress line is tracked separately
@@ -205,14 +222,30 @@
   var TRANSLATE_ENABLED = false;
   var lastGoodTranslated = { id: null, text: '' };
 
+  var PENDING = '\u2026';
+
   function textOf(seg) {
     if (TEXT_MODE === 'source') return seg.source || '';
     if (!TRANSLATE_ENABLED) return seg.translated || seg.source || '';
+    var text = '';
     if (seg.translated) {
       lastGoodTranslated = { id: seg.id, text: seg.translated };
-      return seg.translated;
+      text = seg.translated;
+    } else if (lastGoodTranslated.id === seg.id) {
+      text = lastGoodTranslated.text;
     }
-    return (lastGoodTranslated.id === seg.id) ? lastGoodTranslated.text : '';
+    // A line still being spoken ends in "…" (or is just that, before its
+    // first translated words), so the audience can see more is coming.
+    if (!seg.final && (seg.source || '').trim()) {
+      text = text.trim() ? text.trim() + ' ' + PENDING : PENDING;
+    }
+    return text;
+  }
+
+  // The original gets its own row only when there's a translation to sit
+  // above; otherwise the main text already is the original.
+  function showsSourceRow() {
+    return SHOW_SOURCE && TEXT_MODE !== 'source' && TRANSLATE_ENABLED;
   }
 
   function render() {
@@ -220,12 +253,12 @@
     if (live && textOf(live).trim()) shown.push(live);
     shown = shown.slice(-keepSegments);
 
-    linesEl.innerHTML = '';
+    rollEl.innerHTML = '';
     shown.forEach(function (seg) {
       var div = document.createElement('div');
       div.className = 'line';
 
-      if (SHOW_SOURCE && seg.source && TEXT_MODE !== 'source') {
+      if (showsSourceRow() && seg.source) {
         var src = document.createElement('span');
         src.className = 'source';
         src.textContent = seg.source;
@@ -236,8 +269,24 @@
       text.className = 'text';
       text.textContent = textOf(seg);
       div.appendChild(text);
-      linesEl.appendChild(div);
+      rollEl.appendChild(div);
     });
+    var height = rollEl.offsetHeight;
+    slideUp(height - lastHeight);
+    lastHeight = height;
+  }
+
+  // When the text gains a row, older rows would jump up a whole line at once,
+  // which is hard to follow mid-sentence. Start the block where it was and
+  // glide it into place instead. Shrinks (a clear, a revision) just snap.
+  var ROLL_MS = 220;
+  var lastHeight = 0;
+  function slideUp(grew) {
+    if (grew <= 0) return;
+    rollEl.animate(
+      [{ transform: 'translateY(' + grew + 'px)' }, { transform: 'none' }],
+      { duration: ROLL_MS, easing: 'ease-out' }
+    );
   }
 
   function applySegment(seg) {

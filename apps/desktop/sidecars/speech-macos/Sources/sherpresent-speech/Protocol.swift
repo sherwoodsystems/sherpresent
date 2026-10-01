@@ -91,12 +91,15 @@ struct Availability {
 
 /// Serializes stdout writes.
 ///
-/// Results, the translation debounce, and the asset-download ticker all emit
+/// Results, translations, and the asset-download ticker all emit
 /// concurrently; interleaved partial writes would corrupt the NDJSON stream.
-actor Emitter {
+/// A lock rather than an actor so `send` is synchronous: `LiveLine` relies on
+/// a message being written before it gives up its own isolation.
+final class Emitter: Sendable {
     private let handle = FileHandle.standardOutput
+    private let lock = NSLock()
 
-    func emit(_ message: OutMessage) {
+    func send(_ message: OutMessage) {
         guard
             let data = try? JSONSerialization.data(
                 withJSONObject: message.json, options: [.withoutEscapingSlashes])
@@ -106,7 +109,7 @@ actor Emitter {
         }
         var line = data
         line.append(0x0A)  // \n
-        handle.write(line)
+        lock.withLock { handle.write(line) }
     }
 }
 

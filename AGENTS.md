@@ -62,7 +62,7 @@ Microphone → streaming translation → chroma-key overlay served on the LAN.
 window. `/captions` renders the HTML; `/api/captions/ws` is a separate socket
 from `/api/ws` so the overlay never receives slide/notes traffic.
 
-Styling (`OverlaySettings`: size, lines, safe area, width, key colour, shadow,
+Styling (`OverlaySettings`: size, lines, safe area, width, key colour, shadow, all caps,
 CC box and its colour, clear timeout) is pushed live over the socket as a `settings` message
 whenever Settings changes — sliders call `preview_caption_overlay` (one per
 animation frame) ahead of the debounced save. `OverlaySettings::clamped` is
@@ -70,7 +70,7 @@ the only place ranges live. `lines` means visual rows: the caption box is
 exactly that many rows tall and long sentences roll up out of the top.
 
 Pin any value per-URL (a pinned value ignores live updates):
-`/captions?bg=00b140&size=64&lines=2&safe=5&width=80&shadow=1&box=1&boxcolor=222`, plus
+`/captions?bg=00b140&size=64&lines=2&safe=5&width=80&shadow=1&caps=1&box=1&boxcolor=222`, plus
 `bg=transparent` for OBS, `text=source|both` and `clean=1`. The clear timeout
 is deliberately not pinnable: it's one app-wide timer (see below). Pins are applied server-side by
 `OverlaySettings::with_overrides` — the page forwards its query string on the
@@ -86,8 +86,11 @@ alike.
 **Native outputs** (`src/output/`): optional Syphon video sources, each a
 helper process with its own server, fed the *same* NDJSON as the matching web
 page (`output/feed.rs`) so they match it line for line:
-- **captions** (`captions.outputs.syphon`): the overlay socket's messages
-  (segments, replay, status, `OverlaySettings`), transparent frame.
+- **captions** (`captions.outputs.syphon` and `syphon2`): the overlay
+  socket's messages (segments, replay, status, `OverlaySettings`), transparent
+  frame. Each has a `text` of `translated|source|both` (the helper's `--text`,
+  same as the overlay's `?text=`), so one source per language can be keyed
+  separately; `syphon2` defaults to the original.
 - **notes** (`webServer.syphon`): the stage view's `/api/ws` `status` + `notes`,
   plus `timer` from `src/ontime.rs` (a Rust Ontime client reading the same
   `runtime-data` the stage page does). Opaque frame: current slide's notes,
@@ -130,6 +133,10 @@ text so every renderer shows the verbatim transcript.
 `ProviderEvent::Replace` assigns the whole line (Apple). On-device recognizers
 emit *revisable* hypotheses — "hello word" becomes "hello world" — so diffing
 them into appends corrupts text. A provider must pick one and stay with it.
+`Replace` translations are shown only up to the words two consecutive
+results agree on (`SettledText` in `captions/mod.rs`), with the full text on
+turn completion — so live translation grows word by word instead of
+rewriting words the audience is reading.
 
 **Gotchas**:
 - cpal `Stream` is `!Send` — it lives on its own `std::thread`, never in `AppState`.

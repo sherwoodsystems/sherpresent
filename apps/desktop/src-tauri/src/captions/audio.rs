@@ -1,7 +1,7 @@
 //! Audio input capture for live captions.
 //!
 //! Captures from a selectable cpal input device, downmixes to mono, resamples
-//! to the 16 kHz the caption providers require, and emits fixed 100 ms chunks
+//! to the 16 kHz the caption providers require, and emits fixed 20 ms chunks
 //! of 16-bit LE PCM.
 //!
 //! ## Threading
@@ -25,10 +25,11 @@ use tokio::sync::mpsc::UnboundedSender;
 /// Sample rate required by the caption providers.
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 
-/// Providers expect audio in 100 ms chunks.
-pub const CHUNK_MS: usize = 100;
+/// Audio is forwarded in 20 ms chunks. Every millisecond of chunking is
+/// latency before the recognizer hears a word, so keep this small.
+pub const CHUNK_MS: usize = 20;
 
-/// Samples per emitted chunk (1600 samples = 3200 bytes at 16 kHz mono).
+/// Samples per emitted chunk (320 samples = 640 bytes at 16 kHz mono).
 pub const CHUNK_SAMPLES: usize = (TARGET_SAMPLE_RATE as usize / 1000) * CHUNK_MS;
 
 /// An audio input device offered to the user.
@@ -256,7 +257,7 @@ where
         .map_err(|e| format!("Failed to build input stream: {}", e))
 }
 
-/// Drain mono samples at the device rate, resample to 16 kHz, emit 100 ms chunks.
+/// Drain mono samples at the device rate, resample to 16 kHz, emit 20 ms chunks.
 fn run_resample_loop(
     raw_rx: std_mpsc::Receiver<Vec<f32>>,
     chunk_tx: UnboundedSender<Vec<i16>>,
@@ -277,7 +278,7 @@ fn run_resample_loop(
 
     // Input staged at the device rate, waiting for a full resampler block.
     let mut in_buf: Vec<f32> = Vec::new();
-    // Output staged at 16 kHz, waiting for a full 100 ms chunk.
+    // Output staged at 16 kHz, waiting for a full chunk.
     let mut out_buf: Vec<i16> = Vec::with_capacity(CHUNK_SAMPLES * 2);
 
     while !stop.load(Ordering::Relaxed) {
@@ -376,9 +377,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_chunk_samples_is_100ms() {
-        assert_eq!(CHUNK_SAMPLES, 1600);
-        assert_eq!(samples_to_le_bytes(&vec![0i16; CHUNK_SAMPLES]).len(), 3200);
+    fn test_chunk_samples_is_20ms() {
+        assert_eq!(CHUNK_SAMPLES, 320);
+        assert_eq!(samples_to_le_bytes(&vec![0i16; CHUNK_SAMPLES]).len(), 640);
     }
 
     #[test]

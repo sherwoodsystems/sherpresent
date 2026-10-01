@@ -234,6 +234,9 @@ pub struct CaptionsConfig {
     /// best; the shadow is for keying over busy, bright sources.
     #[serde(default)]
     pub shadow: bool,
+    /// Show caption text in all caps
+    #[serde(default)]
+    pub uppercase: bool,
     /// Closed-caption style: an opaque box behind each row
     #[serde(default)]
     pub background: bool,
@@ -253,11 +256,66 @@ pub struct CaptionsConfig {
 
 /// Caption video outputs. The web overlay is always served and isn't listed;
 /// each entry here is an optional native output with its own helper process.
-/// NDI would be a sibling of `syphon`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+/// Two Syphon sources so the original and the translation can be keyed and
+/// placed separately. NDI would be a sibling of these.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CaptionOutputsConfig {
     #[serde(default)]
+    pub syphon: CaptionSyphonConfig,
+    #[serde(default = "default_second_caption_syphon")]
+    pub syphon2: CaptionSyphonConfig,
+}
+
+impl Default for CaptionOutputsConfig {
+    fn default() -> Self {
+        Self {
+            syphon: CaptionSyphonConfig::default(),
+            syphon2: default_second_caption_syphon(),
+        }
+    }
+}
+
+/// Which language(s) a captions output shows. Same values as the web
+/// overlay's `?text=`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptionText {
+    #[default]
+    Translated,
+    Source,
+    /// The original, smaller, above the translation
+    Both,
+}
+
+impl CaptionText {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Translated => "translated",
+            Self::Source => "source",
+            Self::Both => "both",
+        }
+    }
+}
+
+/// A captions Syphon source and what it shows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CaptionSyphonConfig {
+    #[serde(flatten)]
     pub syphon: SyphonOutputConfig,
+    #[serde(default)]
+    pub text: CaptionText,
+}
+
+/// The second source defaults to the original language, so turning it on
+/// next to the first gives one Syphon source per language.
+fn default_second_caption_syphon() -> CaptionSyphonConfig {
+    CaptionSyphonConfig {
+        syphon: SyphonOutputConfig {
+            enabled: false,
+            server_name: "SherPresent Captions (Original)".to_string(),
+        },
+        text: CaptionText::Source,
+    }
 }
 
 /// A 1920x1080 Syphon source (macOS only), for OBS, Resolume, QLab and other
@@ -364,6 +422,7 @@ impl Default for CaptionsConfig {
             safe_area: default_caption_safe_area(),
             width: default_caption_width(),
             shadow: false,
+            uppercase: false,
             background: false,
             box_color: default_caption_box_color(),
             clear_after: default_caption_clear_after(),
@@ -475,6 +534,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn test_caption_outputs_upgrade_from_single_syphon() {
+        // A config saved before the second output and `text` existed.
+        let old = r#"{"syphon":{"enabled":true,"serverName":"Stage"}}"#;
+        let outputs: CaptionOutputsConfig = serde_json::from_str(old).unwrap();
+        assert!(outputs.syphon.syphon.enabled);
+        assert_eq!(outputs.syphon.syphon.server_name, "Stage");
+        assert_eq!(outputs.syphon.text, CaptionText::Translated);
+        assert_eq!(outputs.syphon2, default_second_caption_syphon());
+
+        // `text` sits beside the flattened Syphon fields on the wire.
+        let json = serde_json::to_value(&outputs).unwrap();
+        assert_eq!(json["syphon2"]["text"], "source");
+        assert_eq!(json["syphon"]["serverName"], "Stage");
+    }
 
     #[test]
     fn test_adapter_config_default_is_none() {

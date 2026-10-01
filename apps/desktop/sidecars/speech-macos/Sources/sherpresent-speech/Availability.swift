@@ -16,13 +16,12 @@ extension Availability {
         var localeSupported = false
         var modelInstalled = false
 
-        supportedLocales = await SpeechTranscriber.supportedLocales.map { $0.identifier(.bcp47) }
-        localeSupported = supportedLocales.contains {
-            $0.caseInsensitiveCompare(args.source) == .orderedSame
-        }
-
-        let installed = await SpeechTranscriber.installedLocales.map { $0.identifier(.bcp47) }
-        modelInstalled = installed.contains { $0.caseInsensitiveCompare(args.source) == .orderedSame }
+        // Same resolution as `Transcription.run`, so "fr" reports as fr-FR.
+        let locale = await SpeechLocale.resolve(args.source)
+        let supported = await SpeechTranscriber.supportedLocales
+        supportedLocales = supported.map { $0.identifier(.bcp47) }
+        localeSupported = SpeechLocale.contains(supported, locale)
+        modelInstalled = SpeechLocale.contains(await SpeechTranscriber.installedLocales, locale)
 
         var translationStatus = "installed"
         if !args.target.isEmpty {
@@ -43,12 +42,12 @@ extension Availability {
             archSupported: archSupported,
             speechLocaleSupported: localeSupported,
             speechModelInstalled: modelInstalled,
-            speechLocale: args.source,
+            speechLocale: locale.identifier(.bcp47),
             supportedLocales: supportedLocales,
             translationStatus: translationStatus,
             message: nil
         )
 
-        await emitter.emit(.availability(report))
+        emitter.send(.availability(report))
     }
 }

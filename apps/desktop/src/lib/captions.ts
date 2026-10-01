@@ -1,9 +1,12 @@
 import type { CaptionApiKeyProviderId, CaptionProviderId, CaptionsConfig } from './types';
 
-/** Spoken / caption languages offered in Settings, as BCP-47 tags. */
+/** Spoken / caption languages offered in Settings, as BCP-47 tags. Any pair
+ * works (en/fr/es in either direction). A bare language is fine as a source:
+ * the Apple helper settles it on the likely region (fr -> fr-FR). */
 export const CAPTION_LANGUAGES: { code: string; label: string }[] = [
   { code: 'en-US', label: 'English' },
-  { code: 'fr', label: 'French' }
+  { code: 'fr', label: 'French' },
+  { code: 'es', label: 'Spanish' }
 ];
 
 /** Mirrors Rust's `provider::same_language`: compare primary subtags only. */

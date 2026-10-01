@@ -9,7 +9,15 @@
     sameLanguage,
     translates
   } from '../captions';
-  import type { AppleCaptionSupport, CaptionsConfig, CaptionProviderId } from '../types';
+  import { defaultConfig } from '../types';
+  import type {
+    AppleCaptionSupport,
+    CaptionOutputsConfig,
+    CaptionsConfig,
+    CaptionProviderId,
+    CaptionSyphonConfig,
+    CaptionText
+  } from '../types';
 
   interface Props {
     config: CaptionsConfig;
@@ -72,6 +80,16 @@
   ];
 
   const syphonStatus = $derived(appStore.outputsStatus?.captions);
+
+  // Two sources so each language can be keyed and placed on its own.
+  const syphonOutputs = [
+    { key: 'syphon', status: 'captions', label: 'Syphon' },
+    { key: 'syphon2', status: 'captions2', label: 'Second Syphon' }
+  ] as const;
+
+  function setOutput(key: keyof CaptionOutputsConfig, patch: Partial<CaptionSyphonConfig>) {
+    update('outputs', { ...config.outputs, [key]: { ...config.outputs[key], ...patch } });
+  }
 
   const keyProvider = $derived(apiKeyProvider(config.provider));
   function updateKey(value: string) {
@@ -365,6 +383,14 @@
       <label class="check-row">
         <input
           type="checkbox"
+          checked={config.uppercase}
+          onchange={(e) => live('uppercase', e.currentTarget.checked)}
+        />
+        <span class="label">All caps</span>
+      </label>
+      <label class="check-row">
+        <input
+          type="checkbox"
           checked={config.background}
           onchange={(e) => live('background', e.currentTarget.checked)}
         />
@@ -375,14 +401,31 @@
 
   {#if syphonStatus?.supported}
     <h3 class="section-title">Outputs</h3>
-    <SyphonOutputField
-      id="cap-syphon"
-      label="Syphon"
-      config={config.outputs.syphon}
-      status={syphonStatus}
-      defaultName="SherPresent Captions"
-      onchange={(syphon) => update('outputs', { ...config.outputs, syphon })}
-    />
+    {#each syphonOutputs as out (out.key)}
+      {@const cfg = config.outputs[out.key]}
+      <SyphonOutputField
+        id="cap-{out.key}"
+        label={out.label}
+        config={cfg}
+        status={appStore.outputsStatus?.[out.status]}
+        defaultName={defaultConfig.captions.outputs[out.key].serverName}
+        onchange={(syphon) => setOutput(out.key, syphon)}
+      >
+        <div class="field">
+          <label class="label" for="cap-{out.key}-text">Show</label>
+          <select
+            id="cap-{out.key}-text"
+            class="input"
+            value={cfg.text}
+            onchange={(e) => setOutput(out.key, { text: e.currentTarget.value as CaptionText })}
+          >
+            <option value="translated">Translation</option>
+            <option value="source">Original</option>
+            <option value="both">Original + translation</option>
+          </select>
+        </div>
+      </SyphonOutputField>
+    {/each}
   {/if}
 </div>
 
