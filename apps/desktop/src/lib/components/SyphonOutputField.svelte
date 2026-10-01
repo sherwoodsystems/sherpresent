@@ -20,8 +20,10 @@
   const summary = $derived.by(() => {
     if (!status) return '';
     switch (status.state) {
-      case 'running':
-        return status.hasClients ? 'Receiver connected' : 'No receivers';
+      case 'running': {
+        const receivers = status.hasClients ? 'Receiver connected' : 'No receivers';
+        return status.message ? `${status.message} · ${receivers}` : receivers;
+      }
       case 'starting':
         return 'Starting…';
       case 'error':

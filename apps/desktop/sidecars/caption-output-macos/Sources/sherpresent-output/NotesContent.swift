@@ -6,18 +6,30 @@ import Foundation
 /// (`build_page_html` in `webserver.rs`): slide counter and LIVE badge on
 /// top, the notes auto-sized to fill the middle, and an Ontime timer strip
 /// along the bottom when Ontime is configured.
+///
+/// Notes too long for the screen even at the smallest size are paged like a
+/// teleprompter by `scroll` messages: whole lines at a time, `page` wrapping
+/// back to the top after the last screenful, and every slide change starting
+/// at the top again.
 @MainActor
 final class NotesContent: FrameContent {
     private var status = SlideStatus()
     private var notes: [Int: String] = [:]
     private var timer: TimerPayload?
+    /// First line shown of the current slide's notes
+    private(set) var firstLine = 0
     private var shown = Picture.empty
 
     func handle(_ line: String) -> Bool {
         switch NotesMessage.parse(line) {
-        case .status(let s): status = s
-        case .notes(let n): notes = n
+        case .status(let s):
+            if s.current != status.current { firstLine = 0 }
+            status = s
+        case .notes(let n):
+            if n[status.current] != notes[status.current] { firstLine = 0 }
+            notes = n
         case .timer(let t): timer = t
+        case .scroll(let direction): scroll(direction)
         case .unknown: return false
         }
         // Status repeats with changes the feed doesn't show (zoom, builds) and
@@ -35,9 +47,12 @@ final class NotesContent: FrameContent {
         var counter: String
         var presenting: Bool
         var body: Body
+        /// First line of the notes on screen
+        var firstLine: Int
         var timer: TimerPicture?
 
-        static let empty = Picture(counter: "--/--", presenting: false, body: .waiting, timer: nil)
+        static let empty = Picture(
+            counter: "--/--", presenting: false, body: .waiting, firstLine: 0, timer: nil)
     }
 
     private enum Body: Equatable {
@@ -71,7 +86,25 @@ final class NotesContent: FrameContent {
             counter: status.total > 0 ? "\(status.current) / \(status.total)" : "--/--",
             presenting: status.presenting,
             body: body,
+            firstLine: firstLine,
             timer: timer.map(Self.timerPicture))
+    }
+
+    /// Move `firstLine` by a screenful. Notes that fit don't move.
+    private func scroll(_ direction: ScrollDirection) {
+        guard case .text(let text) = picture().body else { return }
+        let area = Self.notesArea(
+            width: CGFloat(Args.width), height: CGFloat(Args.height), hasTimer: timer != nil)
+        let layout = notesLayout(text, in: area)
+        guard layout.lineCount > 0 else { return }
+        let first = min(firstLine, layout.lineCount - 1)
+        let last = layout.lastVisible(from: first, height: area.height)
+        let atEnd = last >= layout.lineCount - 1
+        switch direction {
+        case .page: firstLine = atEnd ? 0 : last + 1
+        case .down: if !atEnd { firstLine = last + 1 }
+        case .up: firstLine = layout.previousPage(before: first, height: area.height)
+        }
     }
 
     /// Same colours and labels as the stage view's `updateTimerDisplay`.
@@ -130,7 +163,7 @@ final class NotesContent: FrameContent {
     private static let margin: CGFloat = 80
     private static let notesPadding: CGFloat = 56
     /// Notes shrink from the largest size that fits down to the smallest;
-    /// anything still overflowing at the smallest is cut off at the bottom.
+    /// anything still overflowing at the smallest is paged (`scroll`).
     private static let notesSizes = Array(stride(from: CGFloat(88), through: 36, by: -4))
 
     func draw(in ctx: CGContext, width w: CGFloat, height h: CGFloat) {
@@ -153,21 +186,24 @@ final class NotesContent: FrameContent {
             fill: rgb(p.presenting ? 0x22C55E : 0x555555), text: rgb(p.presenting ? 0x000000 : 0xAAAAAA),
             right: w - 56, midY: barMid, in: ctx)
 
-        var notesBottom: CGFloat = 0
-        if let t = p.timer {
-            drawTimer(t, width: w, in: ctx)
-            notesBottom = Self.stripHeight + Self.border
-        }
+        if let t = p.timer { drawTimer(t, width: w, in: ctx) }
 
-        let area = CGRect(
-            x: Self.margin, y: notesBottom + Self.notesPadding,
-            width: w - 2 * Self.margin,
-            height: barBottom - Self.border - notesBottom - 2 * Self.notesPadding)
+        let area = Self.notesArea(width: w, height: h, hasTimer: p.timer != nil)
         switch p.body {
         case .waiting: placeholder("Waiting for presentation data…", in: area, ctx)
         case .noNotes: placeholder("No notes", in: area, ctx)
-        case .text(let text): drawNotes(text, in: area, ctx)
+        case .text(let text): drawNotes(text, from: p.firstLine, in: area, ctx)
         }
+    }
+
+    /// Where the notes go: between the top bar and the timer strip, if any.
+    private static func notesArea(width w: CGFloat, height h: CGFloat, hasTimer: Bool) -> CGRect {
+        let notesBottom = hasTimer ? stripHeight + border : 0
+        let barBottom = h - barHeight
+        return CGRect(
+            x: margin, y: notesBottom + notesPadding,
+            width: w - 2 * margin,
+            height: barBottom - border - notesBottom - 2 * notesPadding)
     }
 
     private func drawTimer(_ t: TimerPicture, width w: CGFloat, in ctx: CGContext) {
@@ -186,18 +222,88 @@ final class NotesContent: FrameContent {
             centerX: w / 2, midY: 48, in: ctx)
     }
 
-    private func drawNotes(_ text: String, in area: CGRect, _ ctx: CGContext) {
-        let path = CGPath(rect: area, transform: nil)
+    /// The notes laid out in one tall frame, with every line's extent, so a
+    /// page is just a window onto it.
+    private struct NotesLayout {
+        static let frameHeight: CGFloat = 100_000
+
+        let frame: CTFrame
+        /// Each line's top and bottom, measured down from the top of the frame
+        let tops: [CGFloat]
+        let bottoms: [CGFloat]
+
+        var lineCount: Int { tops.count }
+
+        /// How far down the frame a page starting at `first` begins. Every
+        /// page keeps the first line's top margin, so pages line up.
+        func offset(_ first: Int) -> CGFloat { tops[first] - tops[0] }
+
+        /// The last whole line that fits under `first`; always at least `first`.
+        func lastVisible(from first: Int, height: CGFloat) -> Int {
+            var last = first
+            while last + 1 < lineCount, bottoms[last + 1] - offset(first) <= height { last += 1 }
+            return last
+        }
+
+        /// Where the page ending just above `first` starts.
+        func previousPage(before first: Int, height: CGFloat) -> Int {
+            guard first > 0 else { return 0 }
+            var start = first - 1
+            while start > 0, bottoms[first - 1] - offset(start - 1) <= height { start -= 1 }
+            return start
+        }
+    }
+
+    private func notesLayout(_ text: String, in area: CGRect) -> NotesLayout {
+        var setter = CTFramesetterCreateWithAttributedString(notesString(text, size: Self.notesSizes[0]))
         for size in Self.notesSizes {
-            let setter = CTFramesetterCreateWithAttributedString(notesString(text, size: size))
+            setter = CTFramesetterCreateWithAttributedString(notesString(text, size: size))
             let fit = CTFramesetterSuggestFrameSizeWithConstraints(
                 setter, CFRange(), nil, CGSize(width: area.width, height: .greatestFiniteMagnitude), nil)
-            if fit.height <= area.height || size == Self.notesSizes.last {
-                // A frame fills its path from the top down: top-left, like
-                // the stage view.
-                CTFrameDraw(CTFramesetterCreateFrame(setter, CFRange(), path, nil), ctx)
-                return
-            }
+            if fit.height <= area.height { break }
+        }
+
+        let height = NotesLayout.frameHeight
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: area.width, height: height), transform: nil)
+        let frame = CTFramesetterCreateFrame(setter, CFRange(), path, nil)
+        let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
+        var origins = [CGPoint](repeating: .zero, count: lines.count)
+        CTFrameGetLineOrigins(frame, CFRange(), &origins)
+        var tops: [CGFloat] = []
+        var bottoms: [CGFloat] = []
+        for (line, origin) in zip(lines, origins) {
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+            tops.append(height - origin.y - ascent)
+            bottoms.append(height - origin.y + descent)
+        }
+        return NotesLayout(frame: frame, tops: tops, bottoms: bottoms)
+    }
+
+    private func drawNotes(_ text: String, from firstLine: Int, in area: CGRect, _ ctx: CGContext) {
+        let layout = notesLayout(text, in: area)
+        guard layout.lineCount > 0 else { return }
+        // The timer strip can come and go between pages, changing the area.
+        let first = min(firstLine, layout.lineCount - 1)
+        let last = layout.lastVisible(from: first, height: area.height)
+        let top = layout.offset(first)
+        let shown = layout.bottoms[last] - top
+
+        // Show whole lines only: clip just under the last one that fits.
+        ctx.saveGState()
+        ctx.clip(to: CGRect(x: 0, y: area.maxY - shown, width: area.maxX + Self.margin, height: shown))
+        // A frame fills its path from the top down: top-left, like the stage
+        // view. Shift it up so the page's first line sits at the top.
+        ctx.translateBy(x: area.minX, y: area.maxY - NotesLayout.frameHeight + top)
+        CTFrameDraw(layout.frame, ctx)
+        ctx.restoreGState()
+
+        if last < layout.lineCount - 1 {
+            // More below: a cue for whoever's reading that the clicker has
+            // another page.
+            let more = label("▼", font(36, bold: true), rgb(0x666666))
+            draw(more, x: area.maxX - more.width, midY: area.minY - Self.notesPadding / 2, in: ctx)
         }
     }
 

@@ -8,6 +8,8 @@
 //!   same lines with the same styling.
 //! - **notes**: the current slide's notes and the Ontime timer, fed the stage
 //!   view's `/api/ws` messages plus [`crate::ontime`].
+//! - **slideshow**: PowerPoint's slide show window, captured by the helper
+//!   itself (ScreenCaptureKit) while a show runs. Fed nothing.
 //!
 //! What each is fed lives in [`feed`]; adding a sink (NDI, say) means a new
 //! sink on the helper side plus a sibling of [`syphon`] here.
@@ -74,6 +76,7 @@ pub struct OutputsStatus {
     pub captions: OutputStatus,
     pub captions2: OutputStatus,
     pub notes: OutputStatus,
+    pub slideshow: OutputStatus,
 }
 
 impl Default for OutputsStatus {
@@ -84,6 +87,10 @@ impl Default for OutputsStatus {
             captions: OutputStatus::stopped(supported, &outputs.syphon.syphon.server_name),
             captions2: OutputStatus::stopped(supported, &outputs.syphon2.syphon.server_name),
             notes: OutputStatus::stopped(supported, &WebServerConfig::default().syphon.server_name),
+            slideshow: OutputStatus::stopped(
+                supported,
+                &WebServerConfig::default().slideshow_syphon.server_name,
+            ),
         }
     }
 }
@@ -120,6 +127,7 @@ pub struct Outputs {
     captions: Option<Running<CaptionSyphonConfig>>,
     captions2: Option<Running<CaptionSyphonConfig>>,
     notes: Option<Running<NotesKey>>,
+    slideshow: Option<Running<SyphonOutputConfig>>,
     status: Arc<Mutex<OutputsStatus>>,
 }
 
@@ -170,6 +178,27 @@ impl Outputs {
                 let name = key.syphon.server_name.clone();
                 tauri::async_runtime::spawn(syphon::run(
                     path, "notes", None, name, feed, shutdown, report,
+                ));
+            },
+        );
+
+        let slideshow = &ws.slideshow_syphon;
+        let report = self.reporter(app, |all| &mut all.slideshow);
+        reconcile_slot(
+            &mut self.slideshow,
+            slideshow.enabled.then(|| slideshow.clone()),
+            &slideshow.server_name,
+            report,
+            |key, path, shutdown, report| {
+                let name = key.server_name.clone();
+                tauri::async_runtime::spawn(syphon::run(
+                    path,
+                    "slideshow",
+                    None,
+                    name,
+                    feed::none(),
+                    shutdown,
+                    report,
                 ));
             },
         );

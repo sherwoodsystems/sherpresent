@@ -1,4 +1,5 @@
 use crate::config;
+use crate::osc::ScrollDirection;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -22,4 +23,13 @@ pub fn is_web_server_running(state: tauri::State<AppState>) -> bool {
 pub fn get_web_server_url(app: tauri::AppHandle) -> Result<String, String> {
     let cfg = config::load_config(&app)?;
     Ok(crate::commands::network::lan_url(cfg.web_server.port, ""))
+}
+
+/// Next screenful of the current slide's notes in every notes view (stage
+/// page and Syphon notes), wrapping to the top. Same as OSC
+/// `/clicker/notesPage`.
+#[tauri::command]
+pub fn page_notes(state: tauri::State<AppState>) {
+    // No receivers (no stage page or notes output open) is fine.
+    let _ = state.scroll_broadcast.send(ScrollDirection::Page);
 }

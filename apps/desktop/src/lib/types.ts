@@ -107,6 +107,8 @@ export interface WebServerConfig {
   fontSize: number;
   /** Current slide's notes and the Ontime timer as a Syphon source */
   syphon: SyphonOutputConfig;
+  /** PowerPoint's slide show window, captured while a show runs */
+  slideshowSyphon: SyphonOutputConfig;
 }
 
 /** Live caption provider id */
@@ -186,6 +188,7 @@ export interface OutputsStatus {
   captions: OutputStatus;
   captions2: OutputStatus;
   notes: OutputStatus;
+  slideshow: OutputStatus;
 }
 
 export interface CaptionsConfig {
@@ -358,7 +361,8 @@ export const defaultConfig: AppConfig = {
     ontimeHost: '',
     ontimePort: 4001,
     fontSize: 32,
-    syphon: { enabled: false, serverName: 'SherPresent Notes' }
+    syphon: { enabled: false, serverName: 'SherPresent Notes' },
+    slideshowSyphon: { enabled: false, serverName: 'SherPresent Slideshow' }
   },
   captions: {
     enabled: false,

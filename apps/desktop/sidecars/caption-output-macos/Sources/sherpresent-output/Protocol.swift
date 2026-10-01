@@ -6,13 +6,16 @@ import Foundation
 ///   - `captions`: the same messages the web overlay's `/api/captions/ws`
 ///     socket carries (`segment`, `replay`, `status`, `settings`, `clear`),
 ///     so there is one caption message format for every output.
-///   - `notes`: the stage view's `/api/ws` messages (`status`, `notes`), plus
+///   - `notes`: the stage view's `/api/ws` messages (`status`, `notes`,
+///     `scroll`), plus
 ///     `timer` from the app's Ontime client.
+///   - `slideshow`: nothing; it finds PowerPoint's window itself.
 ///   EOF = graceful stop.
-/// - **stdout**: NDJSON — `ready`, `sinks`, `error`.
+/// - **stdout**: NDJSON — `ready`, `sinks`, `error`, and for `slideshow`
+///   `capture` (`waiting|capturing|denied`) whenever that changes.
 /// - **stderr**: plain-text logs.
 enum WireProtocol {
-    static let version = 3
+    static let version = 4
 }
 
 // MARK: - Inbound
@@ -113,6 +116,17 @@ struct SlideStatus: Decodable, Equatable {
     }
 }
 
+/// Rust's `ScrollDirection` (`osc/messages.rs`).
+enum ScrollDirection: String, Decodable {
+    case up, down
+    /// Teleprompter: the next screenful, wrapping to the top after the last
+    case page
+}
+
+private struct ScrollPayload: Decodable {
+    var direction: ScrollDirection
+}
+
 /// Rust's `ontime::TimerState`.
 struct TimerPayload: Decodable, Equatable {
     var connected: Bool
@@ -129,6 +143,7 @@ enum NotesMessage {
     case notes([Int: String])
     /// nil when Ontime isn't configured
     case timer(TimerPayload?)
+    case scroll(ScrollDirection)
     case unknown
 
     private struct Envelope<P: Decodable>: Decodable {
@@ -163,6 +178,10 @@ enum NotesMessage {
         case "timer":
             return (try? decoder.decode(Envelope<TimerPayload?>.self, from: data)).map { .timer($0.payload) }
                 ?? .unknown
+        case "scroll":
+            return (try? decoder.decode(Envelope<ScrollPayload>.self, from: data)).map {
+                .scroll($0.payload.direction)
+            } ?? .unknown
         default:
             return .unknown
         }
@@ -181,6 +200,7 @@ enum OutMessage {
     case ready(width: Int, height: Int, sinks: [SinkStatus])
     case sinks([SinkStatus])
     case error(code: String, fatal: Bool, message: String)
+    case capture(state: String)
 
     private struct Wire: Encodable {
         var type: String
@@ -191,6 +211,7 @@ enum OutMessage {
         var code: String?
         var fatal: Bool?
         var message: String?
+        var state: String?
     }
 
     var line: String {
@@ -202,6 +223,8 @@ enum OutMessage {
             wire = Wire(type: "sinks", sinks: sinks)
         case .error(let code, let fatal, let message):
             wire = Wire(type: "error", code: code, fatal: fatal, message: message)
+        case .capture(let state):
+            wire = Wire(type: "capture", state: state)
         }
         let data = (try? JSONEncoder().encode(wire)) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)

@@ -194,16 +194,19 @@ impl PresentationAdapter for PowerPointAdapter {
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set pres to presentation "{}"
-                set idx to slide index of slide of view of slide show window of pres
+                set idx to current show position of slide show view of slide show window of pres
                 set noteText to ""
                 set notesSlide to notes page of slide idx of pres
-                repeat with s in shapes of notesSlide
+                -- Index, not `repeat with s in shapes of ...`: since PowerPoint
+                -- 16.113 iterating notes-page shape references hangs PowerPoint
+                -- indefinitely (and our AppleScript lock with it). Match the body
+                -- placeholder: "last shape with text" picks the slide number.
+                repeat with j from 1 to count shapes of notesSlide
                     try
-                        if has text frame of s then
-                            set t to content of text range of text frame of s
-                            if t is not "" and t is not missing value then
-                                set noteText to t
-                            end if
+                        if placeholder type of placeholder format of shape j of notesSlide is placeholder type body placeholder then
+                            set t to content of text range of text frame of shape j of notesSlide
+                            if t is not missing value then set noteText to t
+                            exit repeat
                         end if
                     end try
                 end repeat
@@ -234,8 +237,9 @@ impl PresentationAdapter for PowerPointAdapter {
                     set shapeCount to count shapes of notesSlide
                     repeat with j from 1 to shapeCount
                         try
-                            if has text frame of shape j of notesSlide then
+                            if placeholder type of placeholder format of shape j of notesSlide is placeholder type body placeholder then
                                 set bodyIdx to j
+                                exit repeat
                             end if
                         end try
                     end repeat
@@ -337,20 +341,23 @@ impl PresentationAdapter for PowerPointAdapter {
                         set isPresenting to "true"
                         set currentSlide to (current show position of ssView) as text
                         set totalSlides to (count slides of pres) as text
-                        try
-                            set clickIdx to (get click index of ssView) as text
-                            set clickCnt to (get click count of ssView) as text
-                        end try
+                        -- clickIdx/clickCnt stay "0": PowerPoint for Mac's
+                        -- dictionary has no click index/count (that's Windows
+                        -- COM only), and naming them is a *compile* error that
+                        -- no try block catches — it took the whole poll down.
                         try
                             set idx to current show position of ssView
                             set notesSlide to notes page of slide idx of pres
-                            repeat with s in shapes of notesSlide
+                            -- Index, not `repeat with s in shapes of ...`: since PowerPoint
+                            -- 16.113 iterating notes-page shape references hangs PowerPoint
+                            -- indefinitely (and our AppleScript lock with it). Match the body
+                            -- placeholder: "last shape with text" picks the slide number.
+                            repeat with j from 1 to count shapes of notesSlide
                                 try
-                                    if has text frame of s then
-                                        set t to content of text range of text frame of s
-                                        if t is not "" and t is not missing value then
-                                            set noteText to t
-                                        end if
+                                    if placeholder type of placeholder format of shape j of notesSlide is placeholder type body placeholder then
+                                        set t to content of text range of text frame of shape j of notesSlide
+                                        if t is not missing value then set noteText to t
+                                        exit repeat
                                     end if
                                 end try
                             end repeat

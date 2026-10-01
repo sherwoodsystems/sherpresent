@@ -14,7 +14,7 @@ use tokio_stream::{Stream, StreamExt};
 use crate::adapters::LiveStatus;
 use crate::captions::{settings_message, CaptionSinks};
 use crate::ontime::TimerState;
-use crate::osc::StateManager;
+use crate::osc::{ScrollDirection, StateManager};
 
 pub type FeedStream = Pin<Box<dyn Stream<Item = String> + Send>>;
 
@@ -47,6 +47,12 @@ pub fn captions(sinks: CaptionSinks) -> Feed {
     })
 }
 
+/// Nothing: the slideshow helper finds PowerPoint's window itself, and stdin
+/// only exists so EOF can stop it.
+pub fn none() -> Feed {
+    Arc::new(|| Box::pin(tokio_stream::pending()))
+}
+
 /// Where the notes output's data comes from: the channels the stage view's
 /// `/api/ws` socket reads.
 #[derive(Clone)]
@@ -54,6 +60,8 @@ pub struct NotesSources {
     pub notes: Arc<Mutex<HashMap<i32, String>>>,
     pub notes_broadcast: broadcast::Sender<HashMap<i32, String>>,
     pub status_broadcast: broadcast::Sender<LiveStatus>,
+    /// Scroll and teleprompter paging, as the stage page gets them
+    pub scroll_broadcast: broadcast::Sender<ScrollDirection>,
     /// For the opening status: the broadcast only carries changes.
     pub state_manager: Arc<Mutex<Option<Arc<StateManager>>>>,
 }
@@ -73,13 +81,17 @@ impl NotesSources {
     }
 }
 
-/// Notes: the `/api/ws` `status` and `notes` messages, plus `timer` with the
-/// Ontime state (`null` when Ontime isn't configured).
+/// Notes: the `/api/ws` `status`, `notes` and `scroll` messages, plus
+/// `timer` with the Ontime state (`null` when Ontime isn't configured).
 pub fn notes(src: NotesSources, timer: Option<watch::Receiver<TimerState>>) -> Feed {
     Arc::new(move || {
         // Subscribe before snapshotting, so nothing published in between is lost.
         let status = BroadcastStream::new(src.status_broadcast.subscribe());
         let notes = BroadcastStream::new(src.notes_broadcast.subscribe());
+        // Scrolls are moments, not state: nothing to replay, and a lagged one
+        // is just dropped.
+        let scroll = BroadcastStream::new(src.scroll_broadcast.subscribe())
+            .filter_map(|r| r.ok().map(|d| d.message().to_string()));
         let mut opening = vec![
             message("status", &src.current_status()),
             src.notes_message(),
@@ -106,7 +118,7 @@ pub fn notes(src: NotesSources, timer: Option<watch::Receiver<TimerState>>) -> F
             Ok(n) => message("notes", &n),
             Err(_) => s.notes_message(),
         });
-        Box::pin(tokio_stream::iter(opening).chain(status.merge(notes).merge(timer)))
+        Box::pin(tokio_stream::iter(opening).chain(status.merge(notes).merge(timer).merge(scroll)))
     })
 }
 
@@ -123,6 +135,7 @@ mod tests {
             notes: Arc::new(Mutex::new(HashMap::from([(1, "Hello".to_string())]))),
             notes_broadcast: broadcast::channel(4).0,
             status_broadcast: broadcast::channel(4).0,
+            scroll_broadcast: broadcast::channel(4).0,
             state_manager: Arc::new(Mutex::new(None)),
         }
     }
@@ -155,6 +168,19 @@ mod tests {
         let timer = next(&mut feed).await;
         assert_eq!(timer["type"], "timer");
         assert_eq!(timer["payload"]["title"], "Keynote");
+    }
+
+    #[tokio::test]
+    async fn test_notes_feed_forwards_scrolls() {
+        let src = sources();
+        let mut feed = notes(src.clone(), None)();
+        for _ in 0..3 {
+            next(&mut feed).await;
+        }
+        src.scroll_broadcast.send(ScrollDirection::Page).unwrap();
+        let scroll = next(&mut feed).await;
+        assert_eq!(scroll["type"], "scroll");
+        assert_eq!(scroll["payload"]["direction"], "page");
     }
 
     #[tokio::test]

@@ -308,6 +308,15 @@ class AppStore {
     await invoke('set_instance_name', { name });
   }
 
+  /** Teleprompter-page the notes views (stage page and Syphon notes). */
+  async pageNotes() {
+    try {
+      await invoke('page_notes');
+    } catch (e) {
+      console.error('Failed to page notes:', e);
+    }
+  }
+
   async nextSlide() {
     try {
       const oldSlide = this.liveStatus?.current_slide ?? 0;

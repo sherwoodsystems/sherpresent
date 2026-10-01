@@ -7,9 +7,11 @@
     onprev?: () => void;
     onnext?: () => void;
     ongoto?: (slide: number) => void;
+    /** Next screenful of the current slide's notes in the notes views */
+    onpagenotes?: () => void;
   }
 
-  let { status, adapter, onprev, onnext, ongoto }: Props = $props();
+  let { status, adapter, onprev, onnext, ongoto, onpagenotes }: Props = $props();
 
   let gotoValue = $state('');
 
@@ -81,6 +83,13 @@
             disabled={!status.current_slide || status.current_slide >= status.total_slides}
           >
             Next →
+          </button>
+          <button
+            class="nav-btn"
+            onclick={onpagenotes}
+            title="Next screenful of notes in the stage view and Syphon notes; wraps to the top"
+          >
+            Page Notes ↓
           </button>
         </div>
 

@@ -14,5 +14,13 @@
          unexplained crash. One string is cheap insurance. -->
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>SherPresent transcribes the selected audio input on this Mac to generate live translated captions.</string>
+
+    <!-- Every adapter on macOS is AppleScript: PowerPoint/Keynote for control,
+         System Events for the "is it running" check. Once the app carries an
+         Info.plist, a missing key makes macOS deny those Apple Events outright
+         (-1743) without ever prompting, so the app reports PowerPoint as
+         "not open" while it's sitting there. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>SherPresent controls PowerPoint and Keynote to advance your slides and read presenter notes.</string>
 </dict>
 </plist>

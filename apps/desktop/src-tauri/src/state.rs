@@ -125,6 +125,7 @@ impl AppState {
                 notes: self.notes_cache.clone(),
                 notes_broadcast: self.notes_broadcast.clone(),
                 status_broadcast: self.status_broadcast.clone(),
+                scroll_broadcast: self.scroll_broadcast.clone(),
                 state_manager: self.state_manager.clone(),
             },
         }

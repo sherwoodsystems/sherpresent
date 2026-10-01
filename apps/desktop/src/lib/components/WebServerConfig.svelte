@@ -12,6 +12,7 @@
   let { config, onchange }: Props = $props();
 
   const syphonStatus = $derived(appStore.outputsStatus?.notes);
+  const slideshowStatus = $derived(appStore.outputsStatus?.slideshow);
 
   function updateField(field: keyof WebServerConfig, value: string | number | boolean) {
     const updated = { ...config, [field]: value };
@@ -94,6 +95,21 @@
     />
     <span class="hint">
       Current slide's notes, plus the Ontime timer when a host is set, as a 1920×1080 source
+    </span>
+  {/if}
+
+  {#if slideshowStatus?.supported}
+    <SyphonOutputField
+      id="ws-slideshow-syphon"
+      label="Syphon slideshow output"
+      config={config.slideshowSyphon}
+      status={slideshowStatus}
+      defaultName="SherPresent Slideshow"
+      onchange={(slideshowSyphon) => onchange({ ...config, slideshowSyphon })}
+    />
+    <span class="hint">
+      PowerPoint's slide show window, captured only while presenting; holds the last slide between
+      shows. Needs Screen Recording permission.
     </span>
   {/if}
 </div>

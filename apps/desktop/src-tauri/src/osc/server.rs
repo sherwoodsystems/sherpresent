@@ -368,6 +368,12 @@ impl OscServer {
                 }
             }
 
+            OscCommand::NotesPage => {
+                if let Some(tx) = scroll_tx {
+                    let _ = tx.send(ScrollDirection::Page);
+                }
+            }
+
             OscCommand::Unknown(addr) => {
                 log::debug!("Ignoring unknown OSC address: {}", addr);
             }

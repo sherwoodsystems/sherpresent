@@ -164,6 +164,7 @@ fn execute_command(
         }
         "scrollUp" => Ok(()), // handled separately via scroll_broadcast
         "scrollDown" => Ok(()),
+        "notesPage" => Ok(()),
         _ => Err(format!("Unknown action: {}", action)),
     }
 }
@@ -209,6 +210,13 @@ async fn command_handler(
         }
         "scrollDown" => {
             let _ = state.scroll_broadcast.send(ScrollDirection::Down);
+            return Json(CommandResponse {
+                ok: true,
+                error: None,
+            });
+        }
+        "notesPage" => {
+            let _ = state.scroll_broadcast.send(ScrollDirection::Page);
             return Json(CommandResponse {
                 ok: true,
                 error: None,
@@ -309,17 +317,7 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
             result = scroll_rx.recv() => {
                 match result {
                     Ok(direction) => {
-                        let dir_str = match direction {
-                            ScrollDirection::Up => "up",
-                            ScrollDirection::Down => "down",
-                        };
-                        let msg = serde_json::json!({
-                            "type": "scroll",
-                            "payload": {
-                                "direction": dir_str,
-                                "pixels": 150,
-                            },
-                        });
+                        let msg = direction.message();
                         if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
                             break;
                         }
@@ -343,6 +341,10 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
                                         }
                                         "scrollDown" => {
                                             let _ = state.scroll_broadcast.send(ScrollDirection::Down);
+                                            continue;
+                                        }
+                                        "notesPage" => {
+                                            let _ = state.scroll_broadcast.send(ScrollDirection::Page);
                                             continue;
                                         }
                                         _ => {}
@@ -724,12 +726,36 @@ fn build_page_html(ontime_host: &str, ontime_port: u16, font_size: u16) -> Strin
             scrollToActive();
         }}
 
+        // Where teleprompter paging has got to in the active slide's notes;
+        // null = its top. Kept rather than read back from scrollTop, which
+        // lags behind a smooth scroll when presses come quickly.
+        let pageTop = null;
+
         function scrollToActive() {{
+            pageTop = null;
             const active = notesScroll.querySelector('.slide-notes.active');
             if (active) {{
                 const offset = active.offsetTop - notesSection.offsetTop - 32;
                 notesSection.scrollTo({{ top: offset, behavior: 'smooth' }});
             }}
+        }}
+
+        // Next screenful of the active slide's notes; back to its top once
+        // its end is already on screen.
+        function pageNotes() {{
+            const active = notesScroll.querySelector('.slide-notes.active');
+            if (!active) return;
+            const top = active.offsetTop - notesSection.offsetTop - 32;
+            const bottom = active.offsetTop - notesSection.offsetTop + active.offsetHeight;
+            const view = notesSection.clientHeight;
+            const from = pageTop === null ? top : pageTop;
+            if (from + view >= bottom) {{
+                scrollToActive();
+                return;
+            }}
+            // Keep a little of the last screen as context.
+            pageTop = from + Math.round(view * 0.85);
+            notesSection.scrollTo({{ top: pageTop, behavior: 'smooth' }});
         }}
 
         function updateStatusBar() {{
@@ -761,6 +787,8 @@ fn build_page_html(ontime_host: &str, ontime_port: u16, font_size: u16) -> Strin
                     }} else if (data.type === 'notes') {{
                         notes = data.payload;
                         buildNotesBlocks();
+                    }} else if (data.type === 'scroll' && data.payload.direction === 'page') {{
+                        pageNotes();
                     }} else if (data.type === 'scroll') {{
                         const pixels = data.payload.pixels || 150;
                         const direction = data.payload.direction === 'up' ? -1 : 1;

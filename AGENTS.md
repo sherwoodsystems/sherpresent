@@ -95,6 +95,11 @@ page (`output/feed.rs`) so they match it line for line:
   plus `timer` from `src/ontime.rs` (a Rust Ontime client reading the same
   `runtime-data` the stage page does). Opaque frame: current slide's notes,
   auto-fitted, with a timer strip when an Ontime host is set.
+- **slideshow** (`webServer.slideshowSyphon`): PowerPoint's slide show
+  window (never Presenter View), captured by the helper itself with
+  ScreenCaptureKit while a show runs. It's fed nothing and holds the last slide
+  between shows. Needs Screen Recording permission. Its `capture` state
+  (`waiting|capturing|denied`) becomes the output's status message.
 
 `Outputs::reconcile` starts/stops/renames them on startup and every
 `save_config`; they run independently of the caption engine and the
@@ -102,7 +107,7 @@ presentation so receivers stay wired up between talks. Status is pushed as
 `outputs-status`.
 
 - `output/syphon.rs` drives `sherpresent-output`
-  (`apps/desktop/sidecars/caption-output-macos/`, `--content captions|notes`):
+  (`apps/desktop/sidecars/caption-output-macos/`, `--content captions|notes|slideshow`):
   Core Text render onto a 1920x1080 IOSurface, published via a vendored, source-built
   Syphon (`Sources/Syphon/VENDORED.md` — one patch, shaders compiled at
   runtime so no Xcode is needed). macOS 13+, Apple Silicon.

@@ -1,15 +1,19 @@
 import Foundation
 import Metal
 
-/// Owns the content, the renderer and the sinks. Everything runs on the main
-/// actor: messages arrive a few times a second at most and a 1080p text
-/// render takes about a millisecond, so there is nothing to parallelize.
+/// Owns the content (or, for `slideshow`, the window capture), the renderer
+/// and the sinks. Everything runs on the main actor: messages arrive a few
+/// times a second at most and a 1080p text render or blit takes about a
+/// millisecond, so there is nothing to parallelize.
 @MainActor
 final class OutputApp {
     private let args: Args
     private let renderer: FrameRenderer
     private let sinks: [FrameSink]
-    private let content: FrameContent
+    /// What's drawn; nil for `slideshow`, which only publishes the opening
+    /// clear frame and then captured ones.
+    private let content: FrameContent?
+    private let capture: SlideshowCapture?
     private var lastSinkStatus: [SinkStatus] = []
 
     init(args: Args) throws {
@@ -21,9 +25,19 @@ final class OutputApp {
         }
         self.args = args
         self.renderer = renderer
-        self.content = try makeContent(args.content, text: args.text)
         // --render-png is an offline render: no sinks, nothing published.
-        self.sinks = args.renderPNG == nil ? try makeSinks(args: args, device: device) : []
+        let sinks = args.renderPNG == nil ? try makeSinks(args: args, device: device) : []
+        self.sinks = sinks
+        if args.content == "slideshow" {
+            guard args.renderPNG == nil else {
+                throw OutputError("--render-png does not apply to --content slideshow")
+            }
+            self.content = nil
+            self.capture = SlideshowCapture(device: device, sinks: sinks)
+        } else {
+            self.content = try makeContent(args.content, text: args.text)
+            self.capture = nil
+        }
     }
 
     func start() {
@@ -32,6 +46,7 @@ final class OutputApp {
         redraw()
         lastSinkStatus = sinks.map(\.status)
         emit(.ready(width: Args.width, height: Args.height, sinks: lastSinkStatus))
+        capture?.start()
 
         // Receivers come and go; report it so Settings can show "connected".
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
@@ -40,7 +55,7 @@ final class OutputApp {
     }
 
     func handle(_ line: String) {
-        if content.handle(line) { redraw() }
+        if content?.handle(line) == true { redraw() }
     }
 
     /// stdin closed: the app is stopping this output.
@@ -53,12 +68,13 @@ final class OutputApp {
                 exit(1)
             }
         }
+        capture?.stop()
         for sink in sinks { sink.stop() }
         exit(0)
     }
 
     private func redraw() {
-        renderer.render { ctx, w, h in content.draw(in: ctx, width: w, height: h) }
+        renderer.render { ctx, w, h in content?.draw(in: ctx, width: w, height: h) }
         for sink in sinks { sink.publish(renderer.frame) }
     }
 

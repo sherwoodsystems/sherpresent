@@ -91,6 +91,7 @@ pub fn run() {
             commands::webserver::start_web_server,
             commands::webserver::is_web_server_running,
             commands::webserver::get_web_server_url,
+            commands::webserver::page_notes,
             // Captions
             commands::captions::list_audio_input_devices,
             commands::captions::start_captions,

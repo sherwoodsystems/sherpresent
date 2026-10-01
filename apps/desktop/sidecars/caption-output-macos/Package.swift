@@ -42,6 +42,8 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)],
             linkerSettings: [
                 .linkedFramework("CoreText"),
+                .linkedFramework("ScreenCaptureKit"),
+                .linkedFramework("CoreMedia"),
             ]
         ),
         .testTarget(

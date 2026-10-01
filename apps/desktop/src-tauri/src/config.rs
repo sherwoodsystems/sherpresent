@@ -160,12 +160,23 @@ pub struct WebServerConfig {
     /// The current slide's notes and the Ontime timer as a Syphon source
     #[serde(default = "default_notes_syphon")]
     pub syphon: SyphonOutputConfig,
+    /// PowerPoint's slide show window, captured while a show runs, as a
+    /// Syphon source
+    #[serde(rename = "slideshowSyphon", default = "default_slideshow_syphon")]
+    pub slideshow_syphon: SyphonOutputConfig,
 }
 
 fn default_notes_syphon() -> SyphonOutputConfig {
     SyphonOutputConfig {
         enabled: false,
         server_name: "SherPresent Notes".to_string(),
+    }
+}
+
+fn default_slideshow_syphon() -> SyphonOutputConfig {
+    SyphonOutputConfig {
+        enabled: false,
+        server_name: "SherPresent Slideshow".to_string(),
     }
 }
 
@@ -181,6 +192,7 @@ impl Default for WebServerConfig {
             ontime_port: 4001,
             font_size: default_font_size(),
             syphon: default_notes_syphon(),
+            slideshow_syphon: default_slideshow_syphon(),
         }
     }
 }
@@ -319,7 +331,7 @@ fn default_second_caption_syphon() -> CaptionSyphonConfig {
 }
 
 /// A 1920x1080 Syphon source (macOS only), for OBS, Resolume, QLab and other
-/// receivers on the same Mac. Used for captions and for notes.
+/// receivers on the same Mac. Used for captions, notes and the slideshow.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SyphonOutputConfig {
     #[serde(default)]

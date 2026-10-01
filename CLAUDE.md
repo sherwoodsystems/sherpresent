@@ -80,6 +80,7 @@ See `spec/osc-protocol.md` for full specification.
 | `/clicker/status` | Request state |
 | `/clicker/zoom/in` | Increase notes zoom |
 | `/clicker/zoom/out` | Decrease notes zoom |
+| `/clicker/notesPage` | Next screenful of notes (stage page + Syphon notes), wraps to top |
 
 **Feedback:** `/clicker/slide/current`, `/clicker/slide/total`, `/clicker/state/presenting`, `/clicker/state/open`, `/clicker/state/zoom`
 

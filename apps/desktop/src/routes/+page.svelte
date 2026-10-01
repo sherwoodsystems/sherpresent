@@ -23,6 +23,7 @@
         onprev={() => appStore.prevSlide()}
         onnext={() => appStore.nextSlide()}
         ongoto={(slide) => appStore.gotoSlide(slide)}
+        onpagenotes={() => appStore.pageNotes()}
       />
     </section>
 

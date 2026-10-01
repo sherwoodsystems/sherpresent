@@ -27,6 +27,9 @@ Received by the desktop app on port 9000.
 | `/clicker/zoomOut` | none | Decrease notes zoom level |
 | `/clicker/status` | none | Request full state update |
 | `/clicker/refresh` | none | Force state re-sync from presentation app |
+| `/clicker/scrollUp` | none | Scroll the notes views (stage page, Syphon notes) up |
+| `/clicker/scrollDown` | none | Scroll the notes views down |
+| `/clicker/notesPage` | none | Teleprompter: next screenful of the current slide's notes in every notes view, wrapping to the top after the last; resets on slide change |
 
 ### Outgoing Feedback
 

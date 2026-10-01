@@ -4,10 +4,12 @@
 //!
 //! ## Protocol (version 2)
 //!
-//! - **args**: `--content captions|notes` picks what the helper draws.
+//! - **args**: `--content captions|notes|slideshow` picks what the helper
+//!   draws (or, for `slideshow`, captures).
 //! - **stdin**: NDJSON from the output's [`Feed`]. EOF = graceful stop.
 //! - **stdout**: NDJSON — `ready`, `sinks` (receiver connect/disconnect),
-//!   `error`.
+//!   `error`, and `capture` (`waiting|capturing|denied`, slideshow only),
+//!   which becomes the status message.
 //! - **stderr**: plain-text logs, forwarded to ours.
 //!
 //! Like `provider/apple.rs`, the process handling compiles everywhere so the
@@ -39,7 +41,7 @@ pub const HELPER_NAME: &str = "sherpresent-output";
 /// Overrides helper discovery (development, and tests with a scripted fake).
 const HELPER_ENV: &str = "SHERPRESENT_OUTPUT_BIN";
 
-const PROTOCOL_VERSION: u32 = 3;
+const PROTOCOL_VERSION: u32 = 4;
 
 /// The helper's deployment target. Syphon itself goes back much further; 13 is
 /// just the floor for the Swift concurrency the helper uses.
@@ -226,7 +228,13 @@ async fn run_session(
                             current = OutputStatus {
                                 state: OutputState::Running,
                                 has_clients,
-                                message: None,
+                                ..current
+                            };
+                            report(current.clone());
+                        }
+                        HelperLine::Capture { message } => {
+                            current = OutputStatus {
+                                message: Some(message),
                                 ..current
                             };
                             report(current.clone());
@@ -306,6 +314,10 @@ enum HelperLine {
         fatal: bool,
         message: String,
     },
+    /// `capture`: the slideshow helper's state, as a status message.
+    Capture {
+        message: String,
+    },
     Ignore,
 }
 
@@ -333,7 +345,25 @@ fn parse_line(line: &str) -> HelperLine {
                 .unwrap_or("unknown error")
                 .to_string(),
         },
+        Some("capture") => match v.get("state").and_then(Value::as_str) {
+            Some(state) => HelperLine::Capture {
+                message: capture_message(state),
+            },
+            None => HelperLine::Ignore,
+        },
         _ => HelperLine::Ignore,
+    }
+}
+
+fn capture_message(state: &str) -> String {
+    match state {
+        "capturing" => "Capturing slideshow".to_string(),
+        "waiting" => "Waiting for a PowerPoint slideshow".to_string(),
+        "denied" => {
+            "Allow Screen Recording for SherPresent in System Settings → Privacy & Security"
+                .to_string()
+        }
+        other => other.to_string(),
     }
 }
 
@@ -362,6 +392,13 @@ mod tests {
                 message: "no Metal".into()
             }
         );
+        assert_eq!(
+            parse_line(r#"{"type":"capture","state":"capturing"}"#),
+            HelperLine::Capture {
+                message: "Capturing slideshow".into()
+            }
+        );
+        assert_eq!(parse_line(r#"{"type":"capture"}"#), HelperLine::Ignore);
         assert_eq!(parse_line("garbage"), HelperLine::Ignore);
         assert_eq!(parse_line(r#"{"type":"future"}"#), HelperLine::Ignore);
     }
@@ -372,7 +409,7 @@ mod tests {
             build_args("captions", "Stage Left", Some(CaptionText::Both)),
             [
                 "--protocol",
-                "3",
+                "4",
                 "--content",
                 "captions",
                 "--sink",
@@ -528,5 +565,52 @@ mod tests {
         let last = statuses.lock().unwrap().last().cloned().unwrap();
         assert_eq!(last.state, OutputState::Error);
         assert!(last.message.unwrap().contains("No Metal device"));
+    }
+
+    #[tokio::test]
+    async fn test_capture_state_becomes_status_message() {
+        let script = fake_script(
+            "capture",
+            "echo '{\"type\":\"ready\",\"sinks\":[{\"kind\":\"syphon\",\"hasClients\":false}]}'\n\
+             echo '{\"type\":\"capture\",\"state\":\"waiting\"}'\n\
+             cat > /dev/null\n",
+        );
+        let (statuses, report) = recorder();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let task = tokio::spawn(run(
+            script,
+            "slideshow",
+            None,
+            "Test".into(),
+            feed::none(),
+            stop_rx,
+            report,
+        ));
+
+        let mut seen = None;
+        for _ in 0..100 {
+            seen = statuses
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.message.is_some())
+                .cloned();
+            if seen.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let seen = seen.expect("capture line never reached the status");
+        assert_eq!(seen.state, OutputState::Running);
+        assert_eq!(
+            seen.message.as_deref(),
+            Some("Waiting for a PowerPoint slideshow")
+        );
+
+        stop_tx.send(true).unwrap();
+        timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

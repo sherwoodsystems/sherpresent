@@ -21,6 +21,9 @@
 //! - `/clicker/zoomOut` - Decrease notes zoom
 //! - `/clicker/status` - Request full state update
 //! - `/clicker/refresh` - Force state re-sync from presentation app
+//! - `/clicker/scrollUp`, `/clicker/scrollDown` - Scroll the notes views
+//! - `/clicker/notesPage` - Next screenful of the current slide's notes,
+//!   wrapping to the top after the last (teleprompter style)
 //!
 //! ### Outgoing Feedback (what we send on port 9001)
 //! - `/clicker/state/presenting` - 0 or 1: is slideshow active?
@@ -61,17 +64,39 @@ pub enum OscCommand {
     ScrollUp,
     /// Scroll the stage view notes down
     ScrollDown,
+    /// Next screenful of the current slide's notes, wrapping to the top
+    NotesPage,
 
     /// An OSC address we don't recognize
     /// The String contains the original address for logging
     Unknown(String),
 }
 
-/// Direction for scroll commands (sent via broadcast channel to web server)
+/// Scroll commands for the notes views (the stage page and the Syphon notes
+/// output), sent on the scroll broadcast.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScrollDirection {
     Up,
     Down,
+    /// Teleprompter paging: the next screenful of the current slide's notes,
+    /// back to the top after the last. Each view resets on slide change.
+    Page,
+}
+
+impl ScrollDirection {
+    /// The `scroll` message both notes views read: `/api/ws` and the Syphon
+    /// notes feed.
+    pub fn message(&self) -> serde_json::Value {
+        let direction = match self {
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::Page => "page",
+        };
+        serde_json::json!({
+            "type": "scroll",
+            "payload": { "direction": direction, "pixels": 150 },
+        })
+    }
 }
 
 impl OscCommand {
@@ -91,6 +116,7 @@ impl OscCommand {
             }
             "/clicker/scrollUp" => Self::ScrollUp,
             "/clicker/scrollDown" => Self::ScrollDown,
+            "/clicker/notesPage" => Self::NotesPage,
 
             other => Self::Unknown(other.to_string()),
         }
@@ -242,6 +268,14 @@ mod tests {
         assert_eq!(
             OscCommand::from_message("/clicker/scrollDown", &[]),
             OscCommand::ScrollDown
+        );
+        assert_eq!(
+            OscCommand::from_message("/clicker/notesPage", &[]),
+            OscCommand::NotesPage
+        );
+        assert_eq!(
+            ScrollDirection::Page.message()["payload"]["direction"],
+            "page"
         );
     }
 
