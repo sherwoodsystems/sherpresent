@@ -24,6 +24,8 @@ import {
 /** How many caption lines the in-app monitor keeps. */
 const CAPTION_HISTORY = 40;
 
+const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+
 class AppStore {
   config = $state<AppConfig>(defaultConfig);
   liveStatus = $state<LiveStatus | null>(null);
@@ -57,6 +59,14 @@ class AppStore {
   private unlistenCaptionStatus: UnlistenFn | null = null;
   private unlistenOutputsStatus: UnlistenFn | null = null;
   private navigatingUntil = 0;
+
+  /**
+   * PowerPoint for Mac can't jump to a slide during a show from AppleScript
+   * (see docs/powerpoint-mac-goto-slide.md), so go-to is hidden there.
+   */
+  get supportsGoto() {
+    return !(isMac && this.config.adapter === 'powerpoint');
+  }
 
   async init() {
     try {

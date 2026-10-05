@@ -146,6 +146,7 @@
         class="slide-row"
         class:current={slide.number === currentSlide}
         data-slide={slide.number}
+        disabled={!appStore.supportsGoto}
         onclick={() => appStore.gotoSlide(slide.number)}
       >
         <span class="slide-number">{slide.number}</span>
@@ -295,10 +296,15 @@
     font: inherit;
   }
 
-  .slide-row:hover {
+  .slide-row:hover:not(:disabled) {
     background: #f8f9fa;
     border-color: #ddd;
     border-left-color: #ccc;
+  }
+
+  .slide-row:disabled {
+    cursor: default;
+    color: inherit;
   }
 
   .slide-row.current {
@@ -356,7 +362,7 @@
       border-color: #444;
     }
 
-    .slide-row:hover {
+    .slide-row:hover:not(:disabled) {
       background: #333;
       border-color: #555;
       border-left-color: #666;

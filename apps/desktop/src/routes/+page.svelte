@@ -22,7 +22,7 @@
         adapter={appStore.config.adapter}
         onprev={() => appStore.prevSlide()}
         onnext={() => appStore.nextSlide()}
-        ongoto={(slide) => appStore.gotoSlide(slide)}
+        ongoto={appStore.supportsGoto ? (slide) => appStore.gotoSlide(slide) : undefined}
         onpagenotes={() => appStore.pageNotes()}
       />
     </section>

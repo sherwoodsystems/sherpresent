@@ -93,32 +93,34 @@
           </button>
         </div>
 
-        <div class="goto-controls">
-          <input
-            type="number"
-            class="goto-input"
-            min="1"
-            max={status.total_slides}
-            bind:value={gotoValue}
-            placeholder="#"
-            onkeydown={(e) => {
-              if (e.key === 'Enter' && gotoValue) {
-                ongoto?.(Number(gotoValue));
-                gotoValue = '';
-              }
-            }}
-          />
-          <button
-            class="nav-btn"
-            onclick={() => {
-              if (gotoValue) {
-                ongoto?.(Number(gotoValue));
-                gotoValue = '';
-              }
-            }}
-            disabled={!gotoValue}>Go</button
-          >
-        </div>
+        {#if ongoto}
+          <div class="goto-controls">
+            <input
+              type="number"
+              class="goto-input"
+              min="1"
+              max={status.total_slides}
+              bind:value={gotoValue}
+              placeholder="#"
+              onkeydown={(e) => {
+                if (e.key === 'Enter' && gotoValue) {
+                  ongoto(Number(gotoValue));
+                  gotoValue = '';
+                }
+              }}
+            />
+            <button
+              class="nav-btn"
+              onclick={() => {
+                if (gotoValue) {
+                  ongoto(Number(gotoValue));
+                  gotoValue = '';
+                }
+              }}
+              disabled={!gotoValue}>Go</button
+            >
+          </div>
+        {/if}
       </div>
     </div>
 

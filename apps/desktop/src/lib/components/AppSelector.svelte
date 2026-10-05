@@ -13,6 +13,12 @@
   // Available adapters for this platform (loaded from Rust)
   let availableAdapters: [string, string][] = $state([]);
 
+  // LibreOffice isn't in use right now, so its button is hidden unless a saved
+  // config already selects it (the non-macOS default), so nobody is stranded.
+  const visibleAdapters = $derived(
+    availableAdapters.filter(([id]) => id !== 'libreoffice' || config.adapter === id)
+  );
+
   onMount(async () => {
     try {
       availableAdapters = await invoke<[string, string][]>('get_adapters');
@@ -27,7 +33,7 @@
 <div class="app-selector">
   <span class="label">Application</span>
   <div class="toggle-group">
-    {#each availableAdapters as [id, name] (id)}
+    {#each visibleAdapters as [id, name] (id)}
       <button
         class="toggle-btn"
         class:active={config.adapter === id}
