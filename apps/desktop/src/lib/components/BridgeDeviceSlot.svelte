@@ -170,18 +170,19 @@
   .connected-device-name {
     font-weight: 500;
     font-size: 0.8rem;
+    color: var(--text);
   }
 
   .connected-device-port {
     font-size: 0.7rem;
     font-family: monospace;
-    color: #888;
+    color: var(--text-muted);
     margin-top: 0.125rem;
   }
 
   .connected-empty {
     font-size: 0.75rem;
-    color: #999;
+    color: var(--text-faint);
     font-style: italic;
   }
 
@@ -195,12 +196,13 @@
     font-size: 0.8rem;
     font-weight: 600;
     text-transform: uppercase;
-    color: #666;
+    color: var(--text-secondary);
   }
 
   .slot-label {
     font-size: 0.85rem;
     font-weight: 500;
+    color: var(--text);
   }
 
   .slot-info {
@@ -227,12 +229,13 @@
   .btn-sm {
     padding: 0.25rem 0.5rem;
     font-size: 0.75rem;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
     border-radius: 4px;
     background: #fff;
     cursor: pointer;
     font-family: inherit;
     transition: all 0.15s ease;
+    color: var(--text);
   }
   .btn-sm:hover {
     background: #f0f0f0;
@@ -243,18 +246,18 @@
   }
 
   .btn-danger {
-    color: #c62828;
-    border-color: #ef9a9a;
+    color: var(--danger);
+    border-color: var(--danger-border);
     margin-left: auto;
   }
   .btn-danger:hover {
-    background: #ffebee;
+    background: var(--danger-bg);
   }
 
   .btn-register {
     padding: 0.5rem;
     background: #e8f5e9;
-    color: #2e7d32;
+    color: var(--success);
     border: 1px solid #a5d6a7;
     border-radius: 6px;
     cursor: pointer;
@@ -272,57 +275,38 @@
     font-size: 0.75rem;
     color: #888;
   }
-
   @media (prefers-color-scheme: dark) {
     .slot {
       background: #333;
       border-color: #555;
     }
+
     .slot.empty {
       border-color: #555;
     }
+
     .slot-right {
       border-left-color: #555;
     }
-    .connected-device-name {
-      color: #eee;
-    }
-    .connected-device-port {
-      color: #777;
-    }
-    .connected-empty {
-      color: #666;
-    }
-    .slot-name {
-      color: #aaa;
-    }
-    .slot-label {
-      color: #eee;
-    }
+
     .channel-badge {
       background: #1a3a5c;
       color: #8fcfff;
     }
+
     .btn-sm {
       background: #444;
-      border-color: #555;
-      color: #eee;
     }
+
     .btn-sm:hover {
       background: #555;
     }
-    .btn-danger {
-      color: #ff8a80;
-      border-color: #5c2a2a;
-    }
-    .btn-danger:hover {
-      background: #4a1a1a;
-    }
+
     .btn-register {
       background: #1b3a1b;
-      color: #81c784;
       border-color: #2e5a2e;
     }
+
     .btn-register:hover {
       background: #2a4a2a;
     }

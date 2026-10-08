@@ -1,3 +1,4 @@
+use crate::util::LockExt;
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -47,7 +48,7 @@ impl LatencyStore {
     }
 
     pub fn push(&self, event: LatencyEvent) {
-        let mut events = self.events.lock().unwrap();
+        let mut events = self.events.locked();
         if events.len() >= self.capacity {
             events.pop_front();
         }
@@ -55,12 +56,12 @@ impl LatencyStore {
     }
 
     pub fn get_all(&self) -> Vec<LatencyEvent> {
-        let events = self.events.lock().unwrap();
+        let events = self.events.locked();
         events.iter().cloned().collect()
     }
 
     pub fn clear(&self) {
-        let mut events = self.events.lock().unwrap();
+        let mut events = self.events.locked();
         events.clear();
     }
 }
@@ -70,15 +71,6 @@ pub fn monotonic_ms() -> u64 {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
     let epoch = EPOCH.get_or_init(Instant::now);
     epoch.elapsed().as_millis() as u64
-}
-
-/// Returns current wall-clock time in Unix milliseconds (for display).
-fn wall_clock_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 /// Build a LatencyEvent from before/after timestamps.
@@ -96,7 +88,7 @@ pub fn make_event(
         command,
         source,
         adapter,
-        wall_clock_ms: wall_clock_ms(),
+        wall_clock_ms: crate::util::now_ms(),
     }
 }
 

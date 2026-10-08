@@ -33,20 +33,8 @@
     flex-direction: column;
     gap: 0.75rem;
   }
-
   .section-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #333;
-    margin: 0;
     padding-bottom: 0.5rem;
-    border-bottom: 1px solid #eee;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .section-title {
-      color: #eee;
-      border-bottom-color: #444;
-    }
+    border-bottom: 1px solid var(--border-subtle);
   }
 </style>

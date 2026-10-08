@@ -75,26 +75,8 @@
 </div>
 
 <style>
-  .config-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
   .span {
     grid-column: 1 / -1;
-  }
-
-  .label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #666;
   }
 
   .check-row {
@@ -102,21 +84,10 @@
     align-items: center;
     gap: 0.5rem;
   }
-
   .input {
-    padding: 0.5rem 0.75rem;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    background: #fff;
-    font-size: 0.875rem;
     font-family: inherit;
     width: 100%;
     box-sizing: border-box;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: #007aff;
   }
 
   .status-field {
@@ -135,7 +106,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #b8860b;
+    background: var(--warning);
   }
 
   .status-dot.idle {
@@ -154,28 +125,9 @@
     font-size: 0.75rem;
     color: #555;
   }
-
   @media (prefers-color-scheme: dark) {
-    .label {
-      color: #aaa;
-    }
-
-    .input {
-      background: #333;
-      border-color: #555;
-      color: #eee;
-    }
-
-    .input:focus {
-      border-color: #0a84ff;
-    }
-
     .status-text {
       color: #bbb;
-    }
-
-    .status-dot {
-      background: #d9a441;
     }
   }
 </style>

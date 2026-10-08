@@ -1,10 +1,12 @@
 use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::LiveStatus;
 use crate::captions::{CaptionEngine, CaptionSinks};
-use crate::config::{AdapterConfig, CaptionsConfig, WebServerConfig};
-use crate::osc::{LatencyStore, OscServerHandle, ScrollDirection, StateManager};
+use crate::config::{CaptionsConfig, OscConfig, WebServerConfig};
+use crate::osc::state_manager::StateSinks;
+use crate::osc::{LatencyStore, OscServer, OscServerHandle, ScrollDirection, StateManager};
 use crate::output::feed::NotesSources;
 use crate::output::{OutputSources, Outputs};
+use crate::util::LockExt;
 use sherpresent_core::DiscoveryService;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -18,22 +20,17 @@ use std::sync::{Arc, Mutex};
 /// - `Mutex` for exclusive access to mutable data
 /// - `Arc` for shared ownership across tasks
 pub struct AppState {
-    /// Flag to control status polling
-    pub polling_active: Arc<Mutex<bool>>,
-
     /// Handle to the running OSC server (if any)
     pub osc_server: Mutex<Option<OscServerHandle>>,
 
-    /// Shared StateManager for presentation control (used by OSC server and WebSocket)
-    pub state_manager: Arc<Mutex<Option<Arc<StateManager>>>>,
+    /// Owner of presentation state and the only poller. Every control surface
+    /// (UI, OSC, web) sends commands through it.
+    pub state_manager: Arc<StateManager>,
 
     /// Discovery service for mDNS peer discovery
     ///
     /// Active when channel sync is enabled.
     pub discovery_service: Mutex<Option<DiscoveryService>>,
-
-    /// Per-adapter network configuration
-    pub adapter_config: Arc<Mutex<AdapterConfig>>,
 
     /// Canva adapter singleton (long-lived, holds webview reference)
     pub canva_adapter: Arc<Mutex<Option<CanvaAdapter>>>,
@@ -57,10 +54,6 @@ pub struct AppState {
     /// Latency measurement ring buffer
     pub latency_store: Arc<LatencyStore>,
 
-    /// Timestamp (Unix ms) of the last UI/OSC slide command.
-    /// Used by polling to skip cycles during active use, avoiding IPC contention.
-    pub last_command_at: Arc<Mutex<u64>>,
-
     /// Broadcast channel for scroll commands (consumed by web server WebSocket)
     pub scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
 
@@ -83,12 +76,12 @@ impl AppState {
         app: &tauri::AppHandle,
         config: &CaptionsConfig,
     ) -> Result<(), String> {
-        let mut slot = self.caption_engine.lock().unwrap();
+        let mut slot = self.caption_engine.locked();
         if slot.is_some() {
             return Err("Captions are already running".to_string());
         }
         // Clear stale lines so a new session doesn't open with the last one's text.
-        self.captions.buffer.lock().unwrap().clear();
+        self.captions.buffer.locked().clear();
         *slot = Some(crate::captions::start(
             app.clone(),
             config,
@@ -99,21 +92,34 @@ impl AppState {
 
     /// Start the LAN web server. Shared by the Start button and auto-start.
     pub async fn start_web_server(&self, config: WebServerConfig) -> Result<(), String> {
-        if self.web_server_handle.lock().unwrap().is_some() {
+        if self.web_server_handle.locked().is_some() {
             return Err("Web server is already running".to_string());
         }
-        let state_manager = self.state_manager.lock().unwrap().clone();
         let handle = crate::webserver::start(
             config,
             self.notes_cache.clone(),
             self.status_broadcast.clone(),
             self.notes_broadcast.clone(),
             self.scroll_broadcast.clone(),
-            state_manager,
+            self.state_manager.clone(),
             self.captions.clone(),
         )
         .await?;
-        *self.web_server_handle.lock().unwrap() = Some(handle);
+        *self.web_server_handle.locked() = Some(handle);
+        Ok(())
+    }
+
+    /// Start the OSC server. Shared by the Start button and auto-start.
+    pub async fn start_osc_server(&self, config: OscConfig) -> Result<(), String> {
+        if self.osc_server.locked().is_some() {
+            return Err("OSC server is already running".to_string());
+        }
+        let handle = OscServer::new(config, self.state_manager.clone())
+            .with_scroll_broadcast(self.scroll_broadcast.clone())
+            .start()
+            .await
+            .map_err(|e| format!("Failed to start OSC server: {}", e))?;
+        *self.osc_server.locked() = Some(handle);
         Ok(())
     }
 
@@ -135,20 +141,18 @@ impl AppState {
 // We need to implement Default manually because OscServerHandle doesn't implement Default
 impl Default for AppState {
     fn default() -> Self {
+        let sinks = StateSinks::default();
         Self {
-            polling_active: Arc::new(Mutex::new(false)),
             osc_server: Mutex::new(None),
-            state_manager: Arc::new(Mutex::new(None)),
+            state_manager: Arc::new(StateManager::new(sinks.clone())),
             discovery_service: Mutex::new(None),
-            adapter_config: Arc::new(Mutex::new(AdapterConfig::default())),
-            canva_adapter: Arc::new(Mutex::new(None)),
-            notes_cache: Arc::new(Mutex::new(HashMap::new())),
+            canva_adapter: sinks.canva_adapter,
+            notes_cache: sinks.notes,
             notes_scan_active: Arc::new(Mutex::new(false)),
-            status_broadcast: tokio::sync::broadcast::channel(64).0,
-            notes_broadcast: tokio::sync::broadcast::channel(64).0,
+            status_broadcast: sinks.status_broadcast,
+            notes_broadcast: sinks.notes_broadcast,
             web_server_handle: Mutex::new(None),
-            latency_store: Arc::new(LatencyStore::new(50)),
-            last_command_at: Arc::new(Mutex::new(0)),
+            latency_store: sinks.latency_store,
             scroll_broadcast: tokio::sync::broadcast::channel(16).0,
             caption_engine: Mutex::new(None),
             captions: CaptionSinks::default(),

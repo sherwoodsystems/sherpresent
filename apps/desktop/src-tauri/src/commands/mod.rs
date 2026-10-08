@@ -7,6 +7,5 @@ pub mod debug;
 pub mod discovery;
 pub mod network;
 pub mod osc;
-pub mod polling;
 pub mod presentation;
 pub mod webserver;

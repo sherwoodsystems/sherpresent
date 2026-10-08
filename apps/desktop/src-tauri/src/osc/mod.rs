@@ -46,4 +46,4 @@ pub mod state_manager;
 pub use latency::{LatencyEvent, LatencyStore};
 pub use messages::ScrollDirection;
 pub use server::{OscServer, OscServerHandle};
-pub use state_manager::{CachedState, StateManager};
+pub use state_manager::StateManager;

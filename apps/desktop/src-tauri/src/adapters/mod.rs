@@ -4,11 +4,14 @@ pub mod libreoffice;
 pub mod powerpoint;
 #[cfg(target_os = "windows")]
 pub mod powerpoint_windows;
+pub mod reply;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use crate::config::AdapterConfig;
+use crate::util::LockExt;
 
 /// Information about the current slide position
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +251,24 @@ pub fn get_adapter(
         "canva" => None,
         _ => None,
     }
+}
+
+/// Run `f` on the named adapter. Canva is the long-lived singleton (it holds a
+/// webview), so it comes from `canva`; every other adapter is built on demand.
+pub fn with_adapter<T>(
+    adapter_name: &str,
+    config: &AdapterConfig,
+    canva: &Mutex<Option<canva::CanvaAdapter>>,
+    f: impl FnOnce(&dyn PresentationAdapter) -> T,
+) -> Result<T, String> {
+    if adapter_name == "canva" {
+        let canva = canva.locked();
+        let a = canva.as_ref().ok_or("Canva adapter not initialized")?;
+        return Ok(f(a));
+    }
+    let a = get_adapter(adapter_name, config)
+        .ok_or_else(|| format!("Unknown adapter: {}", adapter_name))?;
+    Ok(f(a.as_ref()))
 }
 
 /// Get list of available adapters for the current platform

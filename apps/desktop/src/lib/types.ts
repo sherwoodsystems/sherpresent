@@ -314,12 +314,6 @@ export interface PresentationState {
   is_presenting: boolean;
 }
 
-export interface SlideInfo {
-  current: number;
-  total: number;
-  transition_duration?: number | null;
-}
-
 export type NotesCache = Record<string, string>;
 
 export interface LiveStatus {

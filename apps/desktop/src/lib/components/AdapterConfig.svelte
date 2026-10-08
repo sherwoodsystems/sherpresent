@@ -126,23 +126,16 @@
     flex-direction: column;
     gap: 0.5rem;
   }
-
   .label {
     font-size: 0.875rem;
-    font-weight: 500;
-    color: #666;
   }
 
   .row {
     display: flex;
     gap: 0.75rem;
   }
-
   .field {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
   }
 
   .field-small {
@@ -151,16 +144,11 @@
 
   .field-label {
     font-size: 0.75rem;
-    color: #888;
+    color: var(--text-muted);
   }
-
   .input {
     padding: 0.5rem;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    background: #fff;
-    color: #333;
+    border: 1px solid var(--border);
   }
 
   .btn {
@@ -179,7 +167,7 @@
   }
 
   .btn-connect {
-    background: #007aff;
+    background: var(--accent);
     color: white;
   }
 
@@ -199,26 +187,7 @@
     margin: 0.25rem 0 0 0;
     line-height: 1.4;
   }
-
   @media (prefers-color-scheme: dark) {
-    .label {
-      color: #aaa;
-    }
-
-    .field-label {
-      color: #777;
-    }
-
-    .input {
-      background: #333;
-      border-color: #555;
-      color: #eee;
-    }
-
-    .btn-connect {
-      background: #0a84ff;
-    }
-
     .btn-disconnect {
       background: #ff453a;
     }

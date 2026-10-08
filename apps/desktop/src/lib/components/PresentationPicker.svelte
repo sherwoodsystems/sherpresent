@@ -81,11 +81,8 @@
     flex-direction: column;
     gap: 0.5rem;
   }
-
   .label {
     font-size: 0.875rem;
-    font-weight: 500;
-    color: #666;
   }
 
   .picker-row {
@@ -119,8 +116,8 @@
   }
 
   .refresh-btn:hover:not(:disabled) {
-    border-color: #007aff;
-    color: #007aff;
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   .refresh-btn:disabled {
@@ -133,19 +130,12 @@
     font-size: 0.75rem;
     margin: 0;
   }
-
   .hint {
-    color: #888;
     font-size: 0.75rem;
     margin: 0;
     font-style: italic;
   }
-
   @media (prefers-color-scheme: dark) {
-    .label {
-      color: #aaa;
-    }
-
     .select,
     .refresh-btn {
       background: #333;
@@ -156,15 +146,6 @@
     .select option {
       background: #333;
       color: #eee;
-    }
-
-    .refresh-btn:hover:not(:disabled) {
-      border-color: #0a84ff;
-      color: #0a84ff;
-    }
-
-    .hint {
-      color: #777;
     }
   }
 </style>

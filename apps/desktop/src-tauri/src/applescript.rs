@@ -8,6 +8,8 @@ mod nsapplescript {
     use std::os::raw::c_char;
     use std::sync::Mutex;
 
+    use crate::util::LockExt;
+
     #[repr(C)]
     struct objc_object {
         _private: [u8; 0],
@@ -80,7 +82,7 @@ mod nsapplescript {
     pub fn run(script: &str) -> Result<String, String> {
         // A panic while holding the lock leaves no NSAppleScript state behind,
         // so a poisoned lock is safe to reuse.
-        let _guard = RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = RUN_LOCK.locked();
         unsafe {
             let source = nsstring(script);
 
@@ -175,6 +177,15 @@ pub fn is_app_running(process_name: &str) -> bool {
         process_name
     );
     matches!(run_applescript(&script), Ok(result) if result.trim() == "true")
+}
+
+/// `Err` naming the app unless it's running, for commands that need it.
+pub fn require_running(process_name: &str) -> Result<(), String> {
+    if is_app_running(process_name) {
+        Ok(())
+    } else {
+        Err(format!("{} is not running", process_name))
+    }
 }
 
 #[cfg(test)]

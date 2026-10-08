@@ -26,14 +26,7 @@ Python service running on a Raspberry Pi that converts USB presentation clicker 
 
 ## Operating Modes
 
-### Broadcast Mode (Default)
-
-- Sends commands to subnet broadcast address on configurable port (default 9002)
-- Uses channel-prefixed addresses: `/clicker/{channel}/next`
-- Receives feedback from any desktop app on the same broadcast port
-- Supports per-device channel assignment
-
-### Direct Mode (Legacy)
+### Direct Mode
 
 - Sends to a specific IP address on port 9000
 - Uses non-prefixed addresses: `/clicker/next`
@@ -56,7 +49,7 @@ Python service running on a Raspberry Pi that converts USB presentation clicker 
 
 ## Feedback Reception
 
-- Listens for OSC feedback on the broadcast port
+- Listens for OSC feedback on the feedback port
 - Writes received state to `/var/run/rpi-osc-bridge/feedback.json`
 - Format: `{ "channel": { "presenting": bool, "slide": int, "total": int } }`
 

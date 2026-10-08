@@ -3,5 +3,4 @@ build/
 node_modules/
 src-tauri/
 sidecars/
-src/lib/generated-constants.ts
 bun.lock

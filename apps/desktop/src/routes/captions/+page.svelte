@@ -212,20 +212,16 @@
   }
 
   .section {
-    background: #fff;
+    background: var(--surface);
     border-radius: 12px;
     padding: 1rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-card);
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
   }
-
   .section-title {
-    font-size: 0.875rem;
-    font-weight: 600;
     color: #333;
-    margin: 0;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -236,8 +232,8 @@
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #1a73e8;
-    background: #e8f4fd;
+    color: var(--link);
+    background: var(--info-bg);
     padding: 0.1rem 0.4rem;
     border-radius: 4px;
   }
@@ -248,35 +244,14 @@
     gap: 0.5rem;
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
   .grow {
     flex: 1;
     min-width: 0;
   }
-
-  .label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #666;
-  }
-
   .input {
-    padding: 0.5rem 0.75rem;
     border: 2px solid #ddd;
-    border-radius: 6px;
     background: #fff;
-    font-size: 0.875rem;
     width: 100%;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: #007aff;
   }
 
   .input:disabled {
@@ -430,7 +405,6 @@
     font-size: 0.75rem;
     color: #888;
   }
-
   @media (prefers-color-scheme: dark) {
     .header h1,
     .section-title,
@@ -444,30 +418,12 @@
       color: #777;
     }
 
-    .section {
-      background: #2a2a2a;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    }
-
-    .label {
-      color: #aaa;
-    }
-
     .input,
     .refresh,
     .secondary {
       background: #333;
       border-color: #555;
       color: #eee;
-    }
-
-    .input:focus {
-      border-color: #0a84ff;
-    }
-
-    .lang-tag {
-      background: #1a3a5c;
-      color: #6ab7ff;
     }
 
     .stat,

@@ -21,8 +21,8 @@
 
 <style>
   .connection-info {
-    background: #e8f4fd;
-    border: 1px solid #b3d9f7;
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
     border-radius: 8px;
     padding: 0.75rem;
     display: flex;
@@ -32,7 +32,7 @@
 
   .connection-label {
     font-size: 0.75rem;
-    color: #1a73e8;
+    color: var(--link);
     font-weight: 500;
   }
 
@@ -45,7 +45,7 @@
   .connection-address {
     font-size: 1.125rem;
     font-weight: 600;
-    color: #1a56c4;
+    color: var(--info-text);
   }
 
   .copy-btn {
@@ -61,21 +61,7 @@
   .copy-btn:hover {
     background: #d0e8fc;
   }
-
   @media (prefers-color-scheme: dark) {
-    .connection-info {
-      background: #1a3a5c;
-      border-color: #2a5a8c;
-    }
-
-    .connection-label {
-      color: #6ab7ff;
-    }
-
-    .connection-address {
-      color: #8fcfff;
-    }
-
     .copy-btn {
       background: #2a5a8c;
       border-color: #3a6a9c;

@@ -8,9 +8,9 @@
 //! - a replay buffer so a browser that connects late sees current captions
 //! - Tauri events for the in-app monitor
 
+use crate::util::{now_ms, LockExt};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -303,7 +303,7 @@ impl CaptionSinks {
 
     /// The `replay` message: whatever is on screen right now.
     pub fn replay_message(&self) -> String {
-        let segments: Vec<_> = self.buffer.lock().unwrap().iter().cloned().collect();
+        let segments: Vec<_> = self.buffer.locked().iter().cloned().collect();
         serde_json::json!({ "type": "replay", "segments": segments }).to_string()
     }
 
@@ -311,7 +311,7 @@ impl CaptionSinks {
     /// styling, engine status, and the current lines. One definition, so the
     /// web overlay and every native output start from the same state.
     pub fn opening_messages(&self, settings: &OverlaySettings) -> Vec<String> {
-        let status = self.status.lock().unwrap().clone();
+        let status = self.status.locked().clone();
         vec![
             settings_message(settings),
             CaptionUpdate::Status { status }.to_json(),
@@ -362,7 +362,7 @@ pub async fn run_silence_clear(sinks: CaptionSinks) {
             () = expiry => {
                 on_screen = false;
                 deadline = None;
-                sinks.buffer.lock().unwrap().clear();
+                sinks.buffer.locked().clear();
                 let _ = sinks.broadcast.send(CaptionUpdate::Clear);
             }
         }
@@ -477,7 +477,7 @@ impl StatusReporter {
             provider: self.provider.clone(),
             translate_enabled: self.translate_enabled,
         };
-        *self.sinks.status.lock().unwrap() = status.clone();
+        *self.sinks.status.locked() = status.clone();
         self.publish(CaptionUpdate::Status { status });
     }
 
@@ -522,7 +522,7 @@ async fn consume_events(
                 current.is_final = true;
                 current.timestamp = now_ms();
                 {
-                    let mut buf = status.sinks.buffer.lock().unwrap();
+                    let mut buf = status.sinks.buffer.locked();
                     buf.push_back(current.clone());
                     while buf.len() > BUFFER_CAPACITY {
                         buf.pop_front();
@@ -640,13 +640,6 @@ impl CaptionSegment {
         self.translated = translated;
         self.timestamp = now_ms();
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 impl Default for CaptionStatus {
@@ -788,7 +781,7 @@ mod tests {
         tokio::spawn(run_silence_clear(sinks.clone()));
         tokio::task::yield_now().await;
 
-        sinks.buffer.lock().unwrap().push_back(final_segment(1));
+        sinks.buffer.locked().push_back(final_segment(1));
         sinks.broadcast.send(segment(1)).unwrap();
         assert!(matches!(
             rx.recv().await.unwrap(),
@@ -801,7 +794,7 @@ mod tests {
         // ...then a clear, and the replay buffer is empty.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         assert!(matches!(rx.recv().await.unwrap(), CaptionUpdate::Clear));
-        assert!(sinks.buffer.lock().unwrap().is_empty());
+        assert!(sinks.buffer.locked().is_empty());
     }
 
     #[tokio::test(start_paused = true)]

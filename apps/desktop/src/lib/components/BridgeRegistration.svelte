@@ -182,16 +182,18 @@
   .reg-header h4 {
     margin: 0;
     font-size: 0.85rem;
+    color: var(--text);
   }
 
   .btn-cancel {
     padding: 0.25rem 0.5rem;
     font-size: 0.75rem;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
     border-radius: 4px;
     background: #fff;
     cursor: pointer;
     font-family: inherit;
+    color: var(--text);
   }
 
   .detect-prompt {
@@ -225,7 +227,7 @@
   .detected-info {
     margin: 0;
     font-size: 0.85rem;
-    color: #2e7d32;
+    color: var(--success);
   }
 
   .form-group {
@@ -237,7 +239,7 @@
   .form-group label {
     font-size: 0.75rem;
     font-weight: 500;
-    color: #666;
+    color: var(--text-secondary);
   }
 
   .form-group input,
@@ -273,29 +275,20 @@
     font-size: 0.75rem;
     color: #888;
   }
-
   @media (prefers-color-scheme: dark) {
     .registration {
       background: #3a3520;
       border-color: #5a4a20;
     }
-    .reg-header h4 {
-      color: #eee;
-    }
+
     .btn-cancel {
       background: #444;
-      border-color: #555;
-      color: #eee;
     }
+
     .countdown {
       color: #ffb74d;
     }
-    .detected-info {
-      color: #81c784;
-    }
-    .form-group label {
-      color: #aaa;
-    }
+
     .form-group input,
     .form-group select {
       background: #333;

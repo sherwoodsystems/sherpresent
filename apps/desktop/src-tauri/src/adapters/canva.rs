@@ -5,6 +5,7 @@
 //! provides a `window.__canvaNavigate()` function for slide navigation.
 
 use super::{ConnectionStatus, LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
+use crate::util::LockExt;
 use std::sync::{Arc, Mutex};
 use tauri::{webview::WebviewWindowBuilder, Emitter, Manager, Url};
 
@@ -302,9 +303,9 @@ impl CanvaAdapter {
             let _ = existing.close();
         }
 
-        *self.session_id.lock().unwrap() = Some(session_id.clone());
+        *self.session_id.locked() = Some(session_id.clone());
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.locked();
             state.current_page = 0;
             state.webview_open = true;
         }
@@ -329,8 +330,8 @@ impl CanvaAdapter {
         if let Some(window) = self.app_handle.get_webview_window("canva") {
             let _ = window.close();
         }
-        *self.session_id.lock().unwrap() = None;
-        let mut state = self.state.lock().unwrap();
+        *self.session_id.locked() = None;
+        let mut state = self.state.locked();
         *state = CanvaState::default();
         log::info!("Canva: Closed webview");
     }
@@ -342,7 +343,7 @@ impl CanvaAdapter {
 
     /// Update state from webview WS binary frame parsing
     pub fn update_state(&self, current_page: i32, total_pages: i32, notes: Option<String>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.locked();
         state.current_page = current_page; // Already 0-indexed from Canva WS protocol
         if total_pages > 0 {
             state.total_pages = total_pages;
@@ -380,8 +381,7 @@ impl CanvaAdapter {
     fn navigate_to_page(&self, page: i32) -> Result<(), String> {
         let session_id = self
             .session_id
-            .lock()
-            .unwrap()
+            .locked()
             .clone()
             .ok_or("No Canva session open")?;
 
@@ -397,7 +397,7 @@ impl CanvaAdapter {
 
         // Update cached state
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.locked();
             state.current_page = page;
         }
 
@@ -407,7 +407,7 @@ impl CanvaAdapter {
 
 impl PresentationAdapter for CanvaAdapter {
     fn get_open_presentations(&self) -> Result<Vec<String>, String> {
-        if self.has_webview() && self.session_id.lock().unwrap().is_some() {
+        if self.has_webview() && self.session_id.locked().is_some() {
             Ok(vec!["Canva Presentation".to_string()])
         } else {
             Ok(vec![])
@@ -415,7 +415,7 @@ impl PresentationAdapter for CanvaAdapter {
     }
 
     fn get_presentation_state(&self, _name: &str) -> Result<PresentationState, String> {
-        let has_session = self.session_id.lock().unwrap().is_some();
+        let has_session = self.session_id.locked().is_some();
         let has_webview = self.has_webview();
         Ok(PresentationState {
             is_open: has_webview && has_session,
@@ -424,7 +424,7 @@ impl PresentationAdapter for CanvaAdapter {
     }
 
     fn get_slide_info(&self, _name: &str) -> Result<SlideInfo, String> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.locked();
         Ok(SlideInfo {
             current: state.current_page + 1, // Convert 0-indexed to 1-indexed
             total: state.total_pages,
@@ -434,7 +434,7 @@ impl PresentationAdapter for CanvaAdapter {
 
     fn next_slide(&self, _name: &str) -> Result<SlideInfo, String> {
         let current_page = {
-            let state = self.state.lock().unwrap();
+            let state = self.state.locked();
             state.current_page
         };
 
@@ -443,7 +443,7 @@ impl PresentationAdapter for CanvaAdapter {
 
         Ok(SlideInfo {
             current: next_page + 1,
-            total: self.state.lock().unwrap().total_pages,
+            total: self.state.locked().total_pages,
             transition_duration: None,
         })
     }
@@ -453,21 +453,21 @@ impl PresentationAdapter for CanvaAdapter {
         self.navigate_to_page(page)?;
         Ok(SlideInfo {
             current: slide,
-            total: self.state.lock().unwrap().total_pages,
+            total: self.state.locked().total_pages,
             transition_duration: None,
         })
     }
 
     fn prev_slide(&self, _name: &str) -> Result<SlideInfo, String> {
         let current_page = {
-            let state = self.state.lock().unwrap();
+            let state = self.state.locked();
             state.current_page
         };
 
         if current_page <= 0 {
             return Ok(SlideInfo {
                 current: 1,
-                total: self.state.lock().unwrap().total_pages,
+                total: self.state.locked().total_pages,
                 transition_duration: None,
             });
         }
@@ -477,14 +477,14 @@ impl PresentationAdapter for CanvaAdapter {
 
         Ok(SlideInfo {
             current: prev_page + 1,
-            total: self.state.lock().unwrap().total_pages,
+            total: self.state.locked().total_pages,
             transition_duration: None,
         })
     }
 
     fn get_live_status(&self, _name: &str) -> LiveStatus {
-        let state = self.state.lock().unwrap();
-        let has_session = self.session_id.lock().unwrap().is_some();
+        let state = self.state.locked();
+        let has_session = self.session_id.locked().is_some();
         let has_webview = self.has_webview();
         let is_open = has_webview && has_session;
 
@@ -514,7 +514,7 @@ impl PresentationAdapter for CanvaAdapter {
     }
 
     fn connection_status(&self) -> ConnectionStatus {
-        let has_session = self.session_id.lock().unwrap().is_some();
+        let has_session = self.session_id.locked().is_some();
         let has_webview = self.has_webview();
 
         if has_webview && has_session {

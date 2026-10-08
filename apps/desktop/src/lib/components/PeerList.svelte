@@ -52,7 +52,7 @@
 <style>
   .no-peers {
     font-size: 0.75rem;
-    color: #888;
+    color: var(--text-muted);
     font-style: italic;
     margin: 0;
     padding: 0.5rem;
@@ -72,9 +72,9 @@
 
   .peer-item {
     display: flex;
-    background: #e8f4fd;
+    background: var(--info-bg);
     border-radius: 6px;
-    border: 1px solid #b3d9f7;
+    border: 1px solid var(--info-border);
   }
 
   .peer-button,
@@ -118,7 +118,7 @@
   .peer-name {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #1a56c4;
+    color: var(--info-text);
   }
 
   .peer-badge {
@@ -137,18 +137,11 @@
   .peer-address {
     font-size: 0.75rem;
     font-family: monospace;
-    color: #1a73e8;
+    color: var(--link);
   }
-
   @media (prefers-color-scheme: dark) {
     .no-peers {
       background: #333;
-      color: #777;
-    }
-
-    .peer-item {
-      background: #1a3a5c;
-      border-color: #2a5a8c;
     }
 
     .peer-button:hover {
@@ -160,16 +153,8 @@
       box-shadow: 0 0 4px rgba(48, 209, 88, 0.5);
     }
 
-    .peer-name {
-      color: #8fcfff;
-    }
-
     .peer-badge.bridge {
       background: #ff9f0a;
-    }
-
-    .peer-address {
-      color: #6ab7ff;
     }
   }
 </style>

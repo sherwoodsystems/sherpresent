@@ -710,29 +710,3 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         }
     }
 }
-
-impl PowerPointWindowsAdapter {
-    pub fn get_next_zoom_level(current: i32) -> i32 {
-        super::get_next_zoom_level(current)
-    }
-
-    pub fn get_prev_zoom_level(current: i32) -> i32 {
-        super::get_prev_zoom_level(current)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_zoom_levels() {
-        assert_eq!(PowerPointWindowsAdapter::get_next_zoom_level(100), 150);
-        assert_eq!(PowerPointWindowsAdapter::get_next_zoom_level(150), 200);
-        assert_eq!(PowerPointWindowsAdapter::get_next_zoom_level(400), 400);
-
-        assert_eq!(PowerPointWindowsAdapter::get_prev_zoom_level(400), 300);
-        assert_eq!(PowerPointWindowsAdapter::get_prev_zoom_level(150), 100);
-        assert_eq!(PowerPointWindowsAdapter::get_prev_zoom_level(100), 100);
-    }
-}

@@ -22,6 +22,6 @@ export default ts.config(
     languageOptions: { parserOptions: { parser: ts.parser } }
   },
   {
-    ignores: ['build/', '.svelte-kit/', 'src-tauri/', 'sidecars/', 'src/lib/generated-constants.ts']
+    ignores: ['build/', '.svelte-kit/', 'src-tauri/', 'sidecars/']
   }
 );

@@ -100,31 +100,31 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 700;
-    color: #333;
+    color: var(--text);
   }
 
   .subtitle {
     margin: 0.25rem 0 0;
     font-size: 0.875rem;
-    color: #888;
+    color: var(--text-muted);
   }
 
   .empty-state {
     text-align: center;
     padding: 2rem;
-    background: #fff;
+    background: var(--surface);
     border-radius: 12px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-card);
   }
 
   .empty-state p {
     margin: 0.5rem 0;
-    color: #666;
+    color: var(--text-secondary);
   }
 
   .empty-state .hint {
     font-size: 0.8rem;
-    color: #999;
+    color: var(--text-faint);
   }
 
   .bridge-grid {
@@ -136,16 +136,17 @@
   .bridge-card {
     display: flex;
     flex-direction: column;
-    background: #fff;
-    border: 1px solid #e0e0e0;
+    background: var(--surface);
+    border: 1px solid var(--divider);
     border-radius: 12px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-card);
     overflow: hidden;
     transition: all 0.15s ease;
+    color: var(--text);
   }
 
   .bridge-card:hover {
-    border-color: #1a73e8;
+    border-color: var(--link);
     box-shadow: 0 2px 8px rgba(26, 115, 232, 0.15);
   }
 
@@ -187,7 +188,7 @@
     display: flex;
     justify-content: space-between;
     font-size: 0.8rem;
-    color: #888;
+    color: var(--text-muted);
   }
 
   .open-config-btn {
@@ -195,10 +196,10 @@
     font-size: 0.75rem;
     font-family: inherit;
     font-weight: 500;
-    color: #1a73e8;
+    color: var(--link);
     background: rgba(26, 115, 232, 0.04);
     border: none;
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid var(--divider);
     cursor: pointer;
     transition: background 0.15s ease;
     width: 100%;
@@ -211,44 +212,15 @@
   .bridge-host {
     font-family: monospace;
   }
-
   @media (prefers-color-scheme: dark) {
-    .header h1 {
-      color: #eee;
-    }
-    .subtitle {
-      color: #777;
-    }
-
-    .empty-state {
-      background: #2a2a2a;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    }
-    .empty-state p {
-      color: #aaa;
-    }
-    .empty-state .hint {
-      color: #666;
-    }
-
-    .bridge-card {
-      background: #2a2a2a;
-      border-color: #444;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-      color: #eee;
-    }
     .bridge-card:hover {
-      border-color: #6ab7ff;
       box-shadow: 0 2px 8px rgba(106, 183, 255, 0.15);
     }
-    .bridge-meta {
-      color: #777;
-    }
+
     .open-config-btn {
-      color: #6ab7ff;
       background: rgba(106, 183, 255, 0.04);
-      border-top-color: #444;
     }
+
     .open-config-btn:hover {
       background: rgba(106, 183, 255, 0.1);
     }

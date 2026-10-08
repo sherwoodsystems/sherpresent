@@ -1,12 +1,10 @@
 use crate::adapters::{
-    canva::CanvaAdapter, get_adapter, get_available_adapters, LiveStatus, PresentationAdapter,
-    PresentationState, SlideInfo,
+    get_available_adapters, LiveStatus, PresentationAdapter, PresentationState, SlideInfo,
 };
-use crate::config::AdapterConfig;
-use crate::osc::latency::{self, CommandSource};
+use crate::osc::latency::CommandSource;
+use crate::osc::state_manager::NotesCache;
 use crate::state::AppState;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use crate::util::LockExt;
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
@@ -17,60 +15,13 @@ pub fn get_adapters() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Helper to get the adapter config from AppState
-fn get_adapter_config(state: &AppState) -> AdapterConfig {
-    state
-        .adapter_config
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-}
-
-/// Resolve the correct adapter (Canva singleton or get_adapter()) and call `f` on it.
+/// Resolve the named adapter (the Canva singleton or a fresh one) and call `f` on it.
 fn with_adapter<T>(
     adapter_name: &str,
     state: &AppState,
     f: impl FnOnce(&dyn PresentationAdapter) -> T,
 ) -> Result<T, String> {
-    if adapter_name == "canva" {
-        let canva = state
-            .canva_adapter
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let a = canva
-            .as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?;
-        Ok(f(a))
-    } else {
-        let config = get_adapter_config(state);
-        let a = get_adapter(adapter_name, &config)
-            .ok_or_else(|| format!("Unknown adapter: {}", adapter_name))?;
-        Ok(f(a.as_ref()))
-    }
-}
-
-/// Like `with_adapter` but works with cloned `Arc<Mutex<...>>` values (for use in spawned threads).
-fn with_adapter_from_arcs<T>(
-    adapter_name: &str,
-    adapter_config: &Arc<Mutex<AdapterConfig>>,
-    canva_adapter: &Arc<Mutex<Option<CanvaAdapter>>>,
-    f: impl FnOnce(&dyn PresentationAdapter) -> T,
-) -> Result<T, String> {
-    if adapter_name == "canva" {
-        let canva = canva_adapter.lock().unwrap_or_else(|e| e.into_inner());
-        let a = canva
-            .as_ref()
-            .ok_or("Canva adapter not initialized".to_string())?;
-        Ok(f(a))
-    } else {
-        let config = adapter_config
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let a = get_adapter(adapter_name, &config)
-            .ok_or_else(|| format!("Unknown adapter: {}", adapter_name))?;
-        Ok(f(a.as_ref()))
-    }
+    state.state_manager.with_adapter(adapter_name, f)
 }
 
 #[tauri::command]
@@ -99,177 +50,57 @@ pub fn get_slide_info(
     with_adapter(&adapter, &state, |a| a.get_slide_info(&name))?
 }
 
+/// The cached status, as last published in `presentation-status` events.
 #[tauri::command]
-pub fn get_live_status(adapter: String, name: String, state: tauri::State<AppState>) -> LiveStatus {
-    with_adapter(&adapter, &state, |a| a.get_live_status(&name)).unwrap_or_default()
+pub fn get_status(state: tauri::State<AppState>) -> LiveStatus {
+    LiveStatus::from(&state.state_manager.get_state())
 }
 
 #[tauri::command]
-pub fn get_notes_zoom() -> Result<Option<i32>, String> {
-    // Notes zoom only works for PowerPoint
-    #[cfg(target_os = "macos")]
-    {
-        use crate::adapters::PresentationAdapter;
-        let adapter = crate::adapters::powerpoint::PowerPointAdapter;
-        adapter.get_notes_zoom()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(None)
-    }
-}
-
-/// Record the current time as the last command timestamp (suppresses polling for 3s).
-fn stamp_command_time(state: &AppState) {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    *state
-        .last_command_at
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = now;
-}
-
-#[tauri::command]
-pub fn next_slide(
-    app: AppHandle,
-    adapter: String,
-    name: String,
-    state: tauri::State<AppState>,
-) -> Result<SlideInfo, String> {
-    stamp_command_time(&state);
-    let before = latency::monotonic_ms();
-    let result = with_adapter(&adapter, &state, |a| a.next_slide(&name))?;
-    let after = latency::monotonic_ms();
-    let event = latency::make_event(
-        before,
-        after,
-        "next".to_string(),
-        CommandSource::Ui,
-        adapter.clone(),
-    );
-    state.latency_store.push(event.clone());
-    let _ = app.emit("latency-event", &event);
-    result
-}
-
-#[tauri::command]
-pub fn prev_slide(
-    app: AppHandle,
-    adapter: String,
-    name: String,
-    state: tauri::State<AppState>,
-) -> Result<SlideInfo, String> {
-    stamp_command_time(&state);
-    let before = latency::monotonic_ms();
-    let result = with_adapter(&adapter, &state, |a| a.prev_slide(&name))?;
-    let after = latency::monotonic_ms();
-    let event = latency::make_event(
-        before,
-        after,
-        "prev".to_string(),
-        CommandSource::Ui,
-        adapter.clone(),
-    );
-    state.latency_store.push(event.clone());
-    let _ = app.emit("latency-event", &event);
-    result
-}
-
-#[tauri::command]
-pub fn goto_slide(
-    app: AppHandle,
-    adapter: String,
-    name: String,
-    slide: i32,
-    state: tauri::State<AppState>,
-) -> Result<SlideInfo, String> {
-    stamp_command_time(&state);
-    let before = latency::monotonic_ms();
-    let result = with_adapter(&adapter, &state, |a| a.goto_slide(&name, slide))?;
-    let after = latency::monotonic_ms();
-    let event = latency::make_event(
-        before,
-        after,
-        format!("goto:{}", slide),
-        CommandSource::Ui,
-        adapter.clone(),
-    );
-    state.latency_store.push(event.clone());
-    let _ = app.emit("latency-event", &event);
-    result
-}
-
-#[tauri::command]
-pub fn fetch_all_notes(
-    adapter: String,
-    name: String,
-    state: tauri::State<AppState>,
-) -> Result<HashMap<i32, String>, String> {
-    log::info!(
-        "fetch_all_notes: called for adapter={}, name={}",
-        adapter,
-        name
-    );
-    // Return cache if already populated (avoids duplicate fetch race with polling)
-    let cache = state.notes_cache.lock().map_err(|e| e.to_string())?;
-    if !cache.is_empty() {
-        log::info!(
-            "fetch_all_notes: returning cached {} entries (skipping expensive fetch)",
-            cache.len()
-        );
-        return Ok(cache.clone());
-    }
-    drop(cache);
-
-    log::info!("fetch_all_notes: cache empty, doing expensive AppleScript fetch...");
-    let bulk_notes = if adapter == "canva" {
-        // Canva doesn't support bulk fetch — return whatever is cached
-        HashMap::new()
-    } else {
-        with_adapter(&adapter, &state, |a| a.get_all_presenter_notes(&name))??
-    };
-
-    log::debug!(
-        "fetch_all_notes: bulk fetch returned {} entries",
-        bulk_notes.len()
-    );
-    let mut cache = state.notes_cache.lock().map_err(|e| e.to_string())?;
-    let cache_before = cache.len();
-    // Merge bulk results into cache (bulk results take precedence)
-    for (k, v) in bulk_notes {
-        cache.insert(k, v);
-    }
-    log::debug!(
-        "fetch_all_notes: cache {} -> {} entries, keys: {:?}",
-        cache_before,
-        cache.len(),
-        cache.keys().collect::<Vec<_>>()
-    );
-    Ok(cache.clone())
-}
-
-#[tauri::command]
-pub fn get_all_notes(state: tauri::State<AppState>) -> HashMap<i32, String> {
+pub fn get_notes_zoom(state: tauri::State<AppState>) -> Result<Option<i32>, String> {
     state
-        .notes_cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+        .state_manager
+        .with_current_adapter(|a, _| a.get_notes_zoom())?
+}
+
+// Navigation goes through the StateManager like OSC and the web page do, so
+// every surface gets the same optimistic update, latency log and feedback.
+// The new position arrives as a `presentation-status` event.
+
+#[tauri::command]
+pub fn next_slide(state: tauri::State<AppState>) {
+    state.state_manager.next_slide(CommandSource::Ui);
 }
 
 #[tauri::command]
-pub fn clear_notes_cache(state: tauri::State<AppState>) {
-    log::info!("clear_notes_cache: clearing notes cache and compiled AppleScript cache");
-    state
-        .notes_cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
-    // Also clear compiled AppleScript cache since adapter/presentation may have changed
-    crate::applescript::clear_compiled_cache();
+pub fn prev_slide(state: tauri::State<AppState>) {
+    state.state_manager.prev_slide(CommandSource::Ui);
+}
+
+#[tauri::command]
+pub fn goto_slide(slide: i32, state: tauri::State<AppState>) {
+    state.state_manager.goto_slide(slide, CommandSource::Ui);
+}
+
+/// Every slide's notes for the current presentation, fetching them in bulk
+/// if nothing is cached yet.
+#[tauri::command]
+pub fn fetch_all_notes(state: tauri::State<AppState>) -> Result<NotesCache, String> {
+    let sm = &state.state_manager;
+    let cached = sm.notes();
+    // Polling fills the cache when a show starts; don't race it for the
+    // AppleScript lock if it already has.
+    if !cached.is_empty() {
+        return Ok(cached);
+    }
+    let bulk = sm.with_current_adapter(|a, name| a.get_all_presenter_notes(name))??;
+    sm.add_notes(bulk);
+    Ok(sm.notes())
+}
+
+#[tauri::command]
+pub fn get_all_notes(state: tauri::State<AppState>) -> NotesCache {
+    state.state_manager.notes()
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -279,47 +110,33 @@ struct NotesScanProgress {
     status: String,
 }
 
+/// Visit every slide of the current presentation to collect notes from
+/// adapters that can't fetch them in bulk, then return to where it was.
 #[tauri::command]
-pub fn start_notes_scan(
-    app: AppHandle,
-    state: tauri::State<AppState>,
-    adapter: String,
-    name: String,
-) -> Result<(), String> {
-    // Check if already scanning
+pub fn start_notes_scan(app: AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
     {
-        let active = state
-            .notes_scan_active
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut active = state.notes_scan_active.locked();
         if *active {
             return Err("Scan already in progress".to_string());
         }
+        *active = true;
     }
+    let sm = state.state_manager.clone();
+    let scan_active = state.notes_scan_active.clone();
 
     // Get total slides and current slide to restore later
-    let slide_info = with_adapter(&adapter, &state, |a| a.get_slide_info(&name))??;
-    if slide_info.total <= 0 {
-        return Err("Cannot scan: total slides unknown".to_string());
+    let slide_info = match sm.with_current_adapter(|a, name| a.get_slide_info(name)) {
+        Ok(Ok(info)) if info.total > 0 => Ok(info),
+        Ok(Ok(_)) => Err("Cannot scan: total slides unknown".to_string()),
+        Ok(Err(e)) | Err(e) => Err(e),
     }
+    .inspect_err(|_| *scan_active.locked() = false)?;
     let total = slide_info.total;
-    let original_slide = slide_info.current;
-
-    // Mark scan as active
-    *state
-        .notes_scan_active
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = true;
-
-    let scan_active = state.notes_scan_active.clone();
-    let notes_cache = state.notes_cache.clone();
-    let adapter_config = state.adapter_config.clone();
-    let canva_adapter = state.canva_adapter.clone();
-    let app_clone = app.clone();
+    let is_canva = sm.adapter_name() == "canva";
 
     std::thread::spawn(move || {
-        let emit_progress = |current: i32, total: i32, status: &str| {
-            let _ = app_clone.emit(
+        let emit_progress = |current: i32, status: &str| {
+            let _ = app.emit(
                 "notes-scan-progress",
                 NotesScanProgress {
                     current,
@@ -330,24 +147,13 @@ pub fn start_notes_scan(
         };
 
         for i in 1..=total {
-            // Check cancellation
-            {
-                let active = scan_active.lock().unwrap_or_else(|e| e.into_inner());
-                if !*active {
-                    emit_progress(i, total, "cancelled");
-                    return;
-                }
+            if !*scan_active.locked() {
+                emit_progress(i, "cancelled");
+                return;
             }
+            emit_progress(i, "scanning");
 
-            emit_progress(i, total, "scanning");
-
-            // Navigate to slide i
-            let goto_result =
-                with_adapter_from_arcs(&adapter, &adapter_config, &canva_adapter, |a| {
-                    a.goto_slide(&name, i)
-                });
-
-            match goto_result {
+            match sm.with_current_adapter(|a, name| a.goto_slide(name, i)) {
                 Ok(Ok(_)) => {}
                 other => {
                     log::warn!("Notes scan: failed to goto slide {}: {:?}", i, other);
@@ -355,53 +161,34 @@ pub fn start_notes_scan(
                 }
             }
 
-            if adapter == "canva" {
-                // For Canva: wait for notes_cache to get populated by the batch notes handler
-                // Poll for up to 1.5s
-                let mut found = false;
-                for _ in 0..15 {
+            if is_canva {
+                // Canva's webview pushes notes into the cache itself; wait up to 1.5s.
+                let arrived = (0..15).any(|_| {
                     std::thread::sleep(std::time::Duration::from_millis(100));
-                    let cache = notes_cache.lock().unwrap_or_else(|e| e.into_inner());
-                    if cache.contains_key(&i) {
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
+                    sm.notes().contains_key(&i)
+                });
+                if !arrived {
                     log::debug!("Notes scan: no notes arrived for slide {} (Canva)", i);
                 }
             } else {
-                // For non-Canva: brief wait for adapter state to settle, then read notes
+                // Brief wait for adapter state to settle, then read notes
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                if let Ok(Ok(Some(notes_text))) =
-                    with_adapter_from_arcs(&adapter, &adapter_config, &canva_adapter, |a| {
-                        a.get_presenter_notes(&name)
-                    })
+                if let Ok(Ok(Some(text))) =
+                    sm.with_current_adapter(|a, name| a.get_presenter_notes(name))
                 {
-                    if !notes_text.is_empty() {
-                        let mut cache = notes_cache.lock().unwrap_or_else(|e| e.into_inner());
-                        cache.insert(i, notes_text);
+                    if !text.is_empty() {
+                        sm.add_notes([(i, text)]);
                     }
                 }
-            }
-
-            // Emit updated cache
-            {
-                let cache = notes_cache.lock().unwrap_or_else(|e| e.into_inner());
-                let snapshot = cache.clone();
-                drop(cache);
-                let _ = app_clone.emit("notes-cache-updated", &snapshot);
             }
         }
 
         // Restore original slide position
-        let _ = with_adapter_from_arcs(&adapter, &adapter_config, &canva_adapter, |a| {
-            a.goto_slide(&name, original_slide)
-        });
+        let current = slide_info.current;
+        let _ = sm.with_current_adapter(|a, name| a.goto_slide(name, current));
 
-        // Mark scan as complete
-        *scan_active.lock().unwrap_or_else(|e| e.into_inner()) = false;
-        emit_progress(total, total, "complete");
+        *scan_active.locked() = false;
+        emit_progress(total, "complete");
     });
 
     Ok(())
@@ -409,10 +196,7 @@ pub fn start_notes_scan(
 
 #[tauri::command]
 pub fn stop_notes_scan(state: tauri::State<AppState>) {
-    *state
-        .notes_scan_active
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = false;
+    *state.notes_scan_active.locked() = false;
 }
 
 #[tauri::command]

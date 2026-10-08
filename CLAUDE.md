@@ -49,9 +49,11 @@ Presentation Adapters              apps/desktop/src-tauri/src/adapters/
   - Keynote (macOS)
   - LibreOffice (cross-platform)
         ↓
+StateManager                       apps/desktop/src-tauri/src/osc/state_manager.rs
+  - the one state cache and poller; UI, OSC and web commands all go through it
+  - publishes `presentation-status` (UI), status_broadcast (web), subscribe() (OSC)
 OSC Server                         apps/desktop/src-tauri/src/osc/
   - server.rs - UDP listener
-  - state_manager.rs - State cache
   - messages.rs - OSC definitions
 ```
 
@@ -68,33 +70,30 @@ $effect(() => { /* side effects */ });
 
 See `spec/osc-protocol.md` for full specification.
 
-### Direct Mode (default)
 - **Receive port**: 9000
 - **Feedback port**: 9001
 
 | Command | Description |
 |---------|-------------|
 | `/clicker/next` | Next slide |
-| `/clicker/prev` | Previous slide |
+| `/clicker/prev` (or `/clicker/previous`) | Previous slide |
 | `/clicker/goto` (int) | Jump to slide N |
-| `/clicker/status` | Request state |
-| `/clicker/zoom/in` | Increase notes zoom |
-| `/clicker/zoom/out` | Decrease notes zoom |
+| `/clicker/status` | Request state (sends all feedback) |
+| `/clicker/refresh` | Re-read state from the presentation app |
+| `/clicker/zoom` | Request the notes zoom level |
+| `/clicker/zoomIn` | Increase notes zoom |
+| `/clicker/zoomOut` | Decrease notes zoom |
+| `/clicker/scrollUp`, `/clicker/scrollDown` | Scroll the notes views |
 | `/clicker/notesPage` | Next screenful of notes (stage page + Syphon notes), wraps to top |
 
-**Feedback:** `/clicker/slide/current`, `/clicker/slide/total`, `/clicker/state/presenting`, `/clicker/state/open`, `/clicker/state/zoom`
-
-### Broadcast Mode (multi-device)
-- **Port**: 9002 (configurable)
-- **Channels**: `main`, `backup`, `keynote1-9`, `aux1-9`
-
-Commands use channel prefix: `/clicker/<channel>/next`, `/clicker/<channel>/prev`, etc.
-
-Feedback: `/clicker/<channel>/state/presenting`, `/clicker/<channel>/state/slide` (current, total)
+**Feedback:** `/clicker/state/presenting`, `/clicker/state/open`, `/clicker/slide/current`,
+`/clicker/slide/total`, `/clicker/zoom/level`, plus `/clicker/slide/build` and
+`/clicker/slide/builds` when the slide has builds.
 
 ### Bridge
 
-USB presentation clicker → OSC bridge. It's a single Tauri app (`apps/bridge/`);
+USB presentation clicker → OSC bridge. It's a single Tauri app (`apps/bridge/`)
+that speaks OSCPoint's `/oscpoint/...` schema (the desktop app doesn't listen for it);
 the core engine (USB capture, OSC, mDNS discovery, config) lives in-crate under
 `apps/bridge/src-tauri/src/bridge/`.
 

@@ -435,35 +435,12 @@
     flex-direction: column;
     gap: 0.75rem;
   }
-
   .section-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #333;
-    margin: 0;
     padding-bottom: 0.25rem;
-  }
-
-  .config-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
   }
 
   .span {
     grid-column: 1 / -1;
-  }
-
-  .label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #666;
   }
 
   .key-header {
@@ -477,18 +454,12 @@
     border: none;
     padding: 0;
     font-size: 0.7rem;
-    color: #007aff;
+    color: var(--accent);
     cursor: pointer;
   }
 
-  .hint {
-    font-size: 0.7rem;
-    color: #888;
-    margin-top: 0.125rem;
-  }
-
   .hint.warn {
-    color: #b8860b;
+    color: var(--warning);
   }
 
   .status-row {
@@ -503,7 +474,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #b8860b;
+    background: var(--warning);
   }
 
   .status-dot.ok {
@@ -514,13 +485,9 @@
     font-size: 0.75rem;
     color: #555;
   }
-
   .input {
-    padding: 0.5rem 0.75rem;
     border: 2px solid #ddd;
-    border-radius: 6px;
     background: #fff;
-    font-size: 0.875rem;
     font-family: inherit;
     width: 100%;
     box-sizing: border-box;
@@ -528,11 +495,6 @@
 
   .mono {
     font-family: monospace;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: #007aff;
   }
 
   .colour-row {
@@ -580,20 +542,7 @@
     background: #fff;
     flex-shrink: 0;
   }
-
   @media (prefers-color-scheme: dark) {
-    .section-title {
-      color: #eee;
-    }
-
-    .hint {
-      color: #777;
-    }
-
-    .hint.warn {
-      color: #d9a441;
-    }
-
     .status-text {
       color: #bbb;
     }
@@ -602,27 +551,11 @@
       color: #ddd;
     }
 
-    .status-dot {
-      background: #d9a441;
-    }
-
-    .label {
-      color: #aaa;
-    }
-
-    .reveal {
-      color: #0a84ff;
-    }
-
     .input,
     .swatch {
       background: #333;
       border-color: #555;
       color: #eee;
-    }
-
-    .input:focus {
-      border-color: #0a84ff;
     }
   }
 </style>

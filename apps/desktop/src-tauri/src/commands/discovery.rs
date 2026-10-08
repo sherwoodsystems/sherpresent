@@ -1,10 +1,11 @@
 use crate::state::AppState;
+use crate::util::LockExt;
 use sherpresent_core::{DiscoveredPeer, DiscoveryService};
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
 pub fn get_discovered_peers(state: tauri::State<AppState>) -> Vec<DiscoveredPeer> {
-    let discovery = state.discovery_service.lock().unwrap();
+    let discovery = state.discovery_service.locked();
     if let Some(service) = &*discovery {
         service.get_peers()
     } else {
@@ -23,7 +24,7 @@ pub async fn start_discovery(
 ) -> Result<(), String> {
     // Check if already running
     {
-        let discovery = state.discovery_service.lock().unwrap();
+        let discovery = state.discovery_service.locked();
         if discovery.is_some() {
             return Err("Discovery service already running".to_string());
         }
@@ -52,7 +53,7 @@ pub async fn start_discovery(
 
     // Store the service
     {
-        let mut discovery_slot = state.discovery_service.lock().unwrap();
+        let mut discovery_slot = state.discovery_service.locked();
         *discovery_slot = Some(service);
     }
 
@@ -74,7 +75,7 @@ pub fn set_instance_name(
     state: tauri::State<AppState>,
     name: Option<String>,
 ) -> Result<(), String> {
-    let mut discovery = state.discovery_service.lock().unwrap();
+    let mut discovery = state.discovery_service.locked();
     if let Some(service) = discovery.as_mut() {
         service.update_display_name(name)?;
         log::info!("Instance display name updated");
@@ -86,7 +87,7 @@ pub fn set_instance_name(
 
 #[tauri::command]
 pub fn stop_discovery(state: tauri::State<AppState>) -> Result<(), String> {
-    let mut discovery = state.discovery_service.lock().unwrap();
+    let mut discovery = state.discovery_service.locked();
     if let Some(mut service) = discovery.take() {
         service.shutdown()?;
         log::info!("Discovery service stopped");

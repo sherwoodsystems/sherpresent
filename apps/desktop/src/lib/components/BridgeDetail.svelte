@@ -368,11 +368,12 @@
   }
 
   .modal-content {
-    background: #fff;
+    background: var(--surface);
     border-radius: 12px;
     width: 100%;
     max-width: 520px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    color: var(--text);
   }
 
   .modal-header {
@@ -380,18 +381,19 @@
     justify-content: space-between;
     align-items: flex-start;
     padding: 1.25rem 1.25rem 1rem;
-    border-bottom: 1px solid #e0e0e0;
+    border-bottom: 1px solid var(--divider);
   }
 
   .modal-header h2 {
     margin: 0;
     font-size: 1.25rem;
+    color: var(--text);
   }
 
   .host-label {
     font-size: 0.75rem;
     font-family: monospace;
-    color: #888;
+    color: var(--text-muted);
   }
 
   .close-btn {
@@ -404,7 +406,7 @@
     line-height: 1;
   }
   .close-btn:hover {
-    color: #333;
+    color: var(--text);
   }
 
   .config-link {
@@ -414,7 +416,7 @@
     background: none;
     border: none;
     font-size: 0.75rem;
-    color: #1a73e8;
+    color: var(--link);
     cursor: pointer;
     font-family: inherit;
     text-decoration: underline;
@@ -425,7 +427,7 @@
 
   .offline-banner {
     background: #fce4e4;
-    color: #c62828;
+    color: var(--danger);
     text-align: center;
     padding: 0.5rem;
     font-size: 0.85rem;
@@ -459,7 +461,7 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     padding-bottom: 0.25rem;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .status-row {
@@ -486,7 +488,7 @@
   .form-group label {
     font-size: 0.75rem;
     font-weight: 500;
-    color: #666;
+    color: var(--text-secondary);
   }
 
   .form-group input,
@@ -545,24 +547,24 @@
   .save-message {
     margin: 0;
     font-size: 0.8rem;
-    color: #2e7d32;
+    color: var(--success);
   }
   .save-message.error {
-    color: #c62828;
+    color: var(--danger);
   }
 
   .shutdown-area {
     display: flex;
     justify-content: center;
     padding-top: 0.5rem;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--border-subtle);
   }
 
   .shutdown-btn {
     padding: 0.5rem 1.25rem;
-    background: #fff;
-    color: #c62828;
-    border: 1px solid #ef9a9a;
+    background: var(--input-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger-border);
     border-radius: 8px;
     font-size: 0.8rem;
     font-weight: 500;
@@ -570,77 +572,40 @@
     transition: all 0.15s ease;
   }
   .shutdown-btn:hover {
-    background: #ffebee;
+    background: var(--danger-bg);
   }
   .shutdown-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
-
   @media (prefers-color-scheme: dark) {
-    .modal-content {
-      background: #2a2a2a;
-      color: #eee;
-    }
-    .modal-header {
-      border-bottom-color: #444;
-    }
-    .modal-header h2 {
-      color: #eee;
-    }
-    .host-label {
-      color: #777;
-    }
     .close-btn {
       color: #888;
     }
-    .close-btn:hover {
-      color: #eee;
-    }
-    .config-link {
-      color: #6ab7ff;
-    }
+
     .config-link:hover {
       color: #90caf9;
     }
+
     .offline-banner {
       background: #4a1a1a;
-      color: #ff8a80;
     }
+
     .detail-section h3 {
       color: #aaa;
-      border-bottom-color: #444;
     }
-    .form-group label {
-      color: #aaa;
-    }
+
     .form-group input,
     .form-group select {
       background: #333;
       border-color: #555;
       color: #eee;
     }
+
     .form-group input:focus,
     .form-group select:focus {
       border-color: #6ab7ff;
       box-shadow: 0 0 0 2px rgba(106, 183, 255, 0.15);
-    }
-    .save-message {
-      color: #81c784;
-    }
-    .save-message.error {
-      color: #ff8a80;
-    }
-    .shutdown-area {
-      border-top-color: #444;
-    }
-    .shutdown-btn {
-      background: #333;
-      color: #ff8a80;
-      border-color: #5c2a2a;
-    }
-    .shutdown-btn:hover {
-      background: #4a1a1a;
     }
   }
 </style>

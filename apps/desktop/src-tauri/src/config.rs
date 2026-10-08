@@ -9,7 +9,7 @@ use uuid::Uuid;
 // =============================================================================
 
 /// Per-adapter network configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AdapterConfig {
     #[serde(rename = "libreoffice")]

@@ -19,6 +19,7 @@
     <section class="section status-section">
       <StatusDisplay
         status={appStore.liveStatus}
+        notes={appStore.notesCache[appStore.liveStatus?.current_slide ?? 0]}
         adapter={appStore.config.adapter}
         onprev={() => appStore.prevSlide()}
         onnext={() => appStore.nextSlide()}
@@ -89,20 +90,20 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 700;
-    color: #333;
+    color: var(--text);
   }
 
   .subtitle {
     margin: 0.25rem 0 0;
     font-size: 0.875rem;
-    color: #888;
+    color: var(--text-muted);
   }
 
   .section {
-    background: #fff;
+    background: var(--surface);
     border-radius: 12px;
     padding: 1rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-card);
   }
 
   .status-section {
@@ -112,7 +113,7 @@
   .loading {
     grid-column: 1 / -1;
     text-align: center;
-    color: #888;
+    color: var(--text-muted);
     font-style: italic;
   }
 
@@ -137,25 +138,7 @@
   .quit-btn:hover {
     background: #c82333;
   }
-
   @media (prefers-color-scheme: dark) {
-    .header h1 {
-      color: #eee;
-    }
-
-    .subtitle {
-      color: #777;
-    }
-
-    .section {
-      background: #2a2a2a;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    }
-
-    .loading {
-      color: #777;
-    }
-
     .quit-btn {
       background: #a82030;
     }

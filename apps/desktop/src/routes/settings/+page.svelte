@@ -41,44 +41,25 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 700;
-    color: #333;
+    color: var(--text);
   }
 
   .subtitle {
     margin: 0.25rem 0 0;
     font-size: 0.875rem;
-    color: #888;
+    color: var(--text-muted);
   }
 
   .section {
-    background: #fff;
+    background: var(--surface);
     border-radius: 12px;
     padding: 1rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-card);
   }
 
   .loading {
     text-align: center;
-    color: #888;
+    color: var(--text-muted);
     font-style: italic;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .header h1 {
-      color: #eee;
-    }
-
-    .subtitle {
-      color: #777;
-    }
-
-    .section {
-      background: #2a2a2a;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    }
-
-    .loading {
-      color: #777;
-    }
   }
 </style>

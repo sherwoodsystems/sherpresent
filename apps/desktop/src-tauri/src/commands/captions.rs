@@ -2,6 +2,7 @@ use crate::captions::provider::apple::AppleCaptionSupport;
 use crate::captions::{self, audio::AudioDevice, CaptionStatus};
 use crate::config;
 use crate::state::AppState;
+use crate::util::LockExt;
 
 /// List audio input devices the user can capture from.
 #[tauri::command]
@@ -23,7 +24,7 @@ pub async fn start_captions(
 #[tauri::command]
 pub async fn stop_captions(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let engine = {
-        let mut slot = state.caption_engine.lock().unwrap();
+        let mut slot = state.caption_engine.locked();
         slot.take()
     };
 
@@ -38,13 +39,13 @@ pub async fn stop_captions(state: tauri::State<'_, AppState>) -> Result<(), Stri
 
 #[tauri::command]
 pub fn is_captions_running(state: tauri::State<AppState>) -> bool {
-    let engine = state.caption_engine.lock().unwrap();
+    let engine = state.caption_engine.locked();
     engine.is_some()
 }
 
 #[tauri::command]
 pub fn get_caption_status(state: tauri::State<AppState>) -> CaptionStatus {
-    state.captions.status.lock().unwrap().clone()
+    state.captions.status.locked().clone()
 }
 
 /// Ask the Apple speech helper what it can actually do on this machine.

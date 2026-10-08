@@ -3,6 +3,8 @@
 
   interface Props {
     status: LiveStatus | null;
+    /** The current slide's presenter notes */
+    notes?: string;
     adapter: string;
     onprev?: () => void;
     onnext?: () => void;
@@ -11,7 +13,7 @@
     onpagenotes?: () => void;
   }
 
-  let { status, adapter, onprev, onnext, ongoto, onpagenotes }: Props = $props();
+  let { status, notes, adapter, onprev, onnext, ongoto, onpagenotes }: Props = $props();
 
   let gotoValue = $state('');
 
@@ -124,10 +126,10 @@
       </div>
     </div>
 
-    {#if status.presenter_notes}
+    {#if notes}
       <div class="presenter-notes">
         <span class="notes-label">Notes</span>
-        <p class="notes-text">{status.presenter_notes}</p>
+        <p class="notes-text">{notes}</p>
       </div>
     {/if}
   {/if}
@@ -139,19 +141,14 @@
     flex-direction: column;
     gap: 0.75rem;
   }
-
   .section-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #333;
-    margin: 0;
     padding-bottom: 0.5rem;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border-subtle);
     text-align: center;
   }
 
   .placeholder {
-    color: #888;
+    color: var(--text-muted);
     font-size: 0.875rem;
     font-style: italic;
     margin: 0;
@@ -192,10 +189,10 @@
   .goto-input {
     width: 3rem;
     padding: 0.5rem 0.5rem;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
     border-radius: 8px;
     background: #f5f5f5;
-    color: #333;
+    color: var(--text);
     font-size: 0.875rem;
     text-align: center;
     -moz-appearance: textfield;
@@ -210,10 +207,10 @@
 
   .nav-btn {
     padding: 0.5rem 1rem;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
     border-radius: 8px;
     background: #f5f5f5;
-    color: #333;
+    color: var(--text);
     font-size: 0.875rem;
     font-weight: 600;
     cursor: pointer;
@@ -224,7 +221,7 @@
 
   .nav-btn:hover:not(:disabled) {
     background: #e8e8e8;
-    border-color: #ccc;
+    border-color: var(--border-strong);
   }
 
   .nav-btn:disabled {
@@ -241,7 +238,7 @@
   .status-label {
     font-size: 0.75rem;
     font-weight: 500;
-    color: #666;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -249,7 +246,7 @@
   .status-value {
     font-size: 1.25rem;
     font-weight: 600;
-    color: #333;
+    color: var(--text);
     font-variant-numeric: tabular-nums;
     min-width: 5ch;
   }
@@ -270,12 +267,12 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #ddd;
+    background: var(--border);
     transition: background 0.15s;
   }
 
   .build-dot.filled {
-    background: #007aff;
+    background: var(--accent);
   }
 
   .build-count {
@@ -290,13 +287,13 @@
     flex-direction: column;
     gap: 0.25rem;
     padding-top: 0.75rem;
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--border-subtle);
   }
 
   .notes-label {
     font-size: 0.75rem;
     font-weight: 500;
-    color: #666;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -304,72 +301,29 @@
   .notes-text {
     margin: 0;
     font-size: 0.875rem;
-    color: #333;
+    color: var(--text);
     white-space: pre-wrap;
     line-height: 1.4;
   }
-
   @media (prefers-color-scheme: dark) {
-    .section-title {
-      color: #eee;
-      border-bottom-color: #444;
-    }
-
-    .placeholder {
-      color: #777;
-    }
-
-    .status-label {
-      color: #aaa;
-    }
-
-    .status-value {
-      color: #eee;
-    }
-
     .status-value.presenting {
       color: #30d158;
     }
 
     .nav-btn {
       background: #3a3a3a;
-      border-color: #555;
-      color: #eee;
     }
 
     .nav-btn:hover:not(:disabled) {
       background: #4a4a4a;
-      border-color: #666;
     }
 
     .goto-input {
       background: #3a3a3a;
-      border-color: #555;
-      color: #eee;
-    }
-
-    .build-dot {
-      background: #555;
-    }
-
-    .build-dot.filled {
-      background: #0a84ff;
     }
 
     .build-count {
       color: #777;
-    }
-
-    .presenter-notes {
-      border-top-color: #444;
-    }
-
-    .notes-label {
-      color: #aaa;
-    }
-
-    .notes-text {
-      color: #eee;
     }
   }
 </style>

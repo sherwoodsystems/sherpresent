@@ -1,4 +1,5 @@
 <script lang="ts">
+  import '../app.css';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -55,15 +56,6 @@
 </div>
 
 <style>
-  :global(body) {
-    margin: 0;
-    font-family:
-      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
-      'Helvetica Neue', sans-serif;
-    background: #fafafa;
-    color: #333;
-  }
-
   .app-shell {
     display: flex;
     flex-direction: column;
@@ -73,8 +65,8 @@
   .nav-bar {
     display: flex;
     gap: 0;
-    background: #fff;
-    border-bottom: 1px solid #e0e0e0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--divider);
     padding: 0 1rem;
   }
 
@@ -89,12 +81,12 @@
   }
 
   .nav-link:hover {
-    color: #333;
+    color: var(--text);
   }
 
   .nav-link.active {
-    color: #1a73e8;
-    border-bottom-color: #1a73e8;
+    color: var(--link);
+    border-bottom-color: var(--link);
   }
 
   .page-content {
@@ -117,9 +109,9 @@
     width: 2rem;
     height: 2rem;
     border-radius: 50%;
-    border: 1px solid #ddd;
-    background: #fff;
-    color: #666;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-secondary);
     font-size: 0.9rem;
     font-weight: 700;
     cursor: pointer;
@@ -142,7 +134,7 @@
     position: absolute;
     bottom: 2.5rem;
     right: 0;
-    background: #fff;
+    background: var(--surface);
     border: 1px solid #ddd;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -169,36 +161,9 @@
   .help-item:hover {
     background: #f5f5f5;
   }
-
   @media (prefers-color-scheme: dark) {
-    :global(body) {
-      background: #1a1a1a;
-      color: #eee;
-      color-scheme: dark;
-    }
-
-    .nav-bar {
-      background: #2a2a2a;
-      border-bottom-color: #444;
-    }
-
     .nav-link {
       color: #888;
-    }
-
-    .nav-link:hover {
-      color: #eee;
-    }
-
-    .nav-link.active {
-      color: #6ab7ff;
-      border-bottom-color: #6ab7ff;
-    }
-
-    .help-btn {
-      background: #333;
-      border-color: #555;
-      color: #aaa;
     }
 
     .help-btn:hover,
@@ -209,7 +174,6 @@
     }
 
     .help-popover {
-      background: #2a2a2a;
       border-color: #444;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }

@@ -1,43 +1,58 @@
 //! # State Manager
 //!
-//! Manages cached presentation state with **optimistic updates** for fast feedback.
+//! The single owner of presentation state: every control surface (the app UI,
+//! OSC, the stage page's WebSocket and REST API) sends commands here, and one
+//! poller keeps the cache in sync with the presentation app.
 //!
 //! ## The Problem We're Solving
 //!
 //! Controlling PowerPoint/Keynote via AppleScript is slow (~100-500ms per call).
-//! If we wait for AppleScript to complete before sending OSC feedback, the user
-//! sees noticeable lag. This feels unresponsive and unprofessional.
+//! If we wait for AppleScript to complete before sending feedback, the user
+//! sees noticeable lag. AppleScript calls also serialize on one channel, so two
+//! pollers asking the same question would just double the load on the app.
 //!
 //! ## The Solution: Optimistic Updates
 //!
 //! When a command comes in (e.g., "next slide"):
 //! 1. **Immediately** update the cached state (assume the command will succeed)
-//! 2. **Immediately** send feedback to the OSC client
+//! 2. **Immediately** publish it (UI event, web server, OSC feedback)
 //! 3. **In the background**, execute the actual AppleScript command
-//! 4. **After a short delay**, verify the state matches reality
+//! 4. Apply the slide the adapter reports back; the poller catches anything else
 //!
-//! This makes the system feel instant while still being accurate.
+//! ## Where State Goes
+//!
+//! Every change is published three ways: a `presentation-status` Tauri event
+//! for the UI, `status_broadcast` for the web server and Syphon notes, and
+//! `subscribe()` for OSC feedback. Notes go to `notes-cache-updated` and
+//! `notes_broadcast`.
 //!
 //! ## Key Rust Concepts Used
 //!
-//! - `Arc<Mutex<T>>` - Shared mutable state across async tasks
-//! - `tokio::task::spawn_blocking` - Run blocking code (AppleScript) without blocking the async runtime
-//! - `tokio::sync::mpsc` - Channel to notify the server when state changes
-//! - `tokio::task::JoinHandle` - Handle to a spawned task (for cancellation)
+//! - `Arc<Self>` - methods that spawn background work take `self: &Arc<Self>`
+//!   so the task can keep the manager alive
+//! - `spawn_blocking` - Run blocking code (AppleScript) without blocking the async runtime
+//! - `tokio::sync::broadcast` - Fan state changes out to any number of listeners
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
+use tauri::async_runtime::{self, JoinHandle};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
 
 use super::latency::{self, CommandSource, LatencyStore};
-use crate::adapters::{
-    canva::CanvaAdapter, get_adapter, powerpoint::PowerPointAdapter, LiveStatus,
-    PresentationAdapter,
-};
+use crate::adapters::{self, canva::CanvaAdapter, LiveStatus, PresentationAdapter, SlideInfo};
 use crate::config::AdapterConfig;
+use crate::util::{now_ms, LockExt};
+
+/// Polls are skipped for this long after a command, so they don't compete
+/// with it for the Apple Event channel during active use.
+const COMMAND_QUIET_MS: u64 = 3000;
+
+pub type NotesCache = HashMap<i32, String>;
 
 // =============================================================================
 // CACHED STATE
@@ -47,12 +62,6 @@ use crate::config::AdapterConfig;
 ///
 /// This struct mirrors the `LiveStatus` from adapters, but adds a timestamp
 /// for debugging and staleness detection.
-///
-/// ## Derive Macros Explained
-///
-/// - `Debug` - Allows printing with `{:?}` for debugging
-/// - `Clone` - Allows making copies (needed for sending over channels)
-/// - `Serialize/Deserialize` - JSON conversion for Tauri events
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CachedState {
     /// Is a presentation file currently open?
@@ -77,8 +86,7 @@ pub struct CachedState {
     /// Total click-triggered build steps on this slide (None/0 = no builds)
     pub total_builds: Option<i32>,
 
-    /// When this state was last updated (not serialized)
-    /// Using u64 milliseconds instead of Instant for serialization
+    /// When this state was last updated (Unix ms, not serialized)
     #[serde(skip)]
     pub last_updated_ms: u64,
 }
@@ -87,19 +95,10 @@ impl CachedState {
     /// Create a new state with the current timestamp
     fn now() -> Self {
         Self {
-            last_updated_ms: current_time_ms(),
+            last_updated_ms: now_ms(),
             ..Default::default()
         }
     }
-}
-
-/// Get current time in milliseconds (for timestamps)
-fn current_time_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 impl From<&CachedState> for LiveStatus {
@@ -117,93 +116,105 @@ impl From<&CachedState> for LiveStatus {
     }
 }
 
+impl From<&LiveStatus> for CachedState {
+    fn from(status: &LiveStatus) -> Self {
+        Self {
+            is_open: status.is_open,
+            is_presenting: status.is_presenting,
+            current_slide: status.current_slide,
+            total_slides: status.total_slides,
+            zoom_level: status.zoom_level,
+            current_build: status.current_build,
+            total_builds: status.total_builds,
+            last_updated_ms: now_ms(),
+        }
+    }
+}
+
 // =============================================================================
 // STATE MANAGER
 // =============================================================================
 
-/// Manages presentation state with optimistic updates and background polling.
-///
-/// ## Thread Safety
-///
-/// This struct is designed to be shared across multiple async tasks:
-/// - The OSC server reads state and triggers commands
-/// - The polling task updates state periodically
-/// - The main Tauri thread may also access state
-///
-/// We use `Arc<Mutex<T>>` for the state:
-/// - `Arc` (Atomic Reference Count) allows multiple owners
-/// - `Mutex` ensures only one thread can access the data at a time
-pub struct StateManager {
-    /// The cached state, wrapped for thread-safe access.
-    state: Arc<Mutex<CachedState>>,
-
-    /// Which adapter to use ("powerpoint", "keynote", "libreoffice", "canva")
-    adapter_name: String,
-
-    /// The name of the presentation file to control
-    presentation_name: String,
-
-    /// Per-adapter network configuration
+/// Which presentation is being controlled. Changed from Settings.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Target {
+    adapter: String,
+    presentation: String,
     adapter_config: AdapterConfig,
+}
 
-    /// Channel sender to notify when state changes.
-    state_change_tx: mpsc::Sender<CachedState>,
+/// The channels and shared caches state is published to.
+#[derive(Clone)]
+pub struct StateSinks {
+    pub latency_store: Arc<LatencyStore>,
+    pub status_broadcast: broadcast::Sender<LiveStatus>,
+    pub notes: Arc<Mutex<NotesCache>>,
+    pub notes_broadcast: broadcast::Sender<NotesCache>,
+    pub canva_adapter: Arc<Mutex<Option<CanvaAdapter>>>,
+}
 
-    /// Handle to the polling task (so we can cancel it on shutdown).
-    polling_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+impl Default for StateSinks {
+    fn default() -> Self {
+        Self {
+            latency_store: Arc::new(LatencyStore::new(50)),
+            status_broadcast: broadcast::channel(64).0,
+            notes: Arc::default(),
+            notes_broadcast: broadcast::channel(64).0,
+            canva_adapter: Arc::default(),
+        }
+    }
+}
 
-    /// Flag to prevent concurrent refresh operations.
-    refresh_in_progress: Arc<Mutex<bool>>,
+/// Manages presentation state with optimistic updates and background polling.
+pub struct StateManager {
+    state: Mutex<CachedState>,
+    target: Mutex<Target>,
 
-    /// Latency measurement store
-    latency_store: Arc<LatencyStore>,
+    /// Bumped on every target change, so an in-flight poll or command for the
+    /// previous presentation can't overwrite the new one's state.
+    generation: AtomicU64,
 
-    /// Tauri app handle for emitting events to the frontend
-    app_handle: Option<AppHandle>,
+    /// State changes, for OSC feedback
+    changes: broadcast::Sender<CachedState>,
 
-    /// Shared timestamp of last UI/OSC command (Unix ms).
-    /// Polling skips cycles when a command was recent (avoids IPC contention).
-    last_command_at: Arc<Mutex<u64>>,
+    sinks: StateSinks,
 
-    /// Broadcast channel for web server status updates.
-    /// When present, state changes are also broadcast here so the stage view
-    /// updates instantly without waiting for the separate polling loop.
-    status_broadcast: Option<tokio::sync::broadcast::Sender<LiveStatus>>,
+    /// Set once Tauri is up; events to the UI are skipped before that (and in tests).
+    app_handle: OnceLock<AppHandle>,
 
-    /// Canva adapter singleton (shared with AppState).
-    /// Canva is not created by `get_adapter()` — it's a long-lived singleton
-    /// that holds a webview reference, so we need a direct reference here.
-    canva_adapter: Option<Arc<Mutex<Option<CanvaAdapter>>>>,
+    polling_handle: Mutex<Option<JoinHandle<()>>>,
+
+    /// Prevents overlapping refreshes.
+    refresh_in_progress: AtomicBool,
+
+    /// Unix ms of the last slide command; polling pauses for a while after it.
+    last_command_at: AtomicU64,
+
+    /// Navigation commands sent to the adapter but not yet answered. Only the
+    /// last one's answer is applied: an earlier one would undo the optimistic
+    /// state of the presses after it.
+    commands_in_flight: AtomicUsize,
 }
 
 impl StateManager {
-    /// Create a new StateManager.
-    #[allow(clippy::too_many_arguments)] // one call site; each is a distinct shared handle
-    pub fn new(
-        adapter_name: String,
-        presentation_name: String,
-        adapter_config: AdapterConfig,
-        state_change_tx: mpsc::Sender<CachedState>,
-        latency_store: Arc<LatencyStore>,
-        app_handle: Option<AppHandle>,
-        last_command_at: Arc<Mutex<u64>>,
-        status_broadcast: Option<tokio::sync::broadcast::Sender<LiveStatus>>,
-        canva_adapter: Option<Arc<Mutex<Option<CanvaAdapter>>>>,
-    ) -> Self {
+    pub fn new(sinks: StateSinks) -> Self {
         Self {
-            state: Arc::new(Mutex::new(CachedState::now())),
-            adapter_name,
-            presentation_name,
-            adapter_config,
-            state_change_tx,
+            state: Mutex::new(CachedState::now()),
+            target: Mutex::default(),
+            generation: AtomicU64::new(0),
+            changes: broadcast::channel(32).0,
+            sinks,
+            app_handle: OnceLock::new(),
             polling_handle: Mutex::new(None),
-            refresh_in_progress: Arc::new(Mutex::new(false)),
-            latency_store,
-            app_handle,
-            last_command_at,
-            status_broadcast,
-            canva_adapter,
+            refresh_in_progress: AtomicBool::new(false),
+            last_command_at: AtomicU64::new(0),
+            commands_in_flight: AtomicUsize::new(0),
         }
+    }
+
+    /// Connect to Tauri so state changes reach the UI as events.
+    pub fn attach(&self, app: AppHandle) {
+        let _ = self.app_handle.set(app);
     }
 
     // =========================================================================
@@ -211,37 +222,86 @@ impl StateManager {
     // =========================================================================
 
     /// Get a copy of the current cached state (instant, no AppleScript).
-    ///
-    /// ## Why Return a Clone?
-    ///
-    /// We can't return a reference because the Mutex lock would need to be held.
-    /// Instead, we lock briefly, clone the data, and release the lock.
-    /// This is very fast since CachedState is small.
     pub fn get_state(&self) -> CachedState {
-        // lock() returns a MutexGuard that auto-unlocks when dropped
-        let state = self.state.lock().unwrap();
-        state.clone()
+        self.state.locked().clone()
     }
 
-    /// Update the cached state and notify listeners.
-    #[allow(dead_code)]
-    fn set_state(&self, new_state: CachedState) {
-        // Check if state actually changed
-        let changed = {
-            let current = self.state.lock().unwrap();
-            Self::has_state_changed(&current, &new_state)
+    /// Receive every state change (used for OSC feedback).
+    pub fn subscribe(&self) -> broadcast::Receiver<CachedState> {
+        self.changes.subscribe()
+    }
+
+    pub fn adapter_name(&self) -> String {
+        self.target.locked().adapter.clone()
+    }
+
+    pub fn presentation_name(&self) -> String {
+        self.target.locked().presentation.clone()
+    }
+
+    /// Run `f` on the named adapter, using the current adapter config.
+    pub fn with_adapter<T>(
+        &self,
+        adapter_name: &str,
+        f: impl FnOnce(&dyn PresentationAdapter) -> T,
+    ) -> Result<T, String> {
+        let config = self.target.locked().adapter_config.clone();
+        adapters::with_adapter(adapter_name, &config, &self.sinks.canva_adapter, f)
+    }
+
+    /// Run `f` on the current adapter and presentation.
+    pub fn with_current_adapter<T>(
+        &self,
+        f: impl FnOnce(&dyn PresentationAdapter, &str) -> T,
+    ) -> Result<T, String> {
+        let target = self.target.locked().clone();
+        if target.presentation.is_empty() {
+            return Err("No presentation selected".to_string());
+        }
+        adapters::with_adapter(
+            &target.adapter,
+            &target.adapter_config,
+            &self.sinks.canva_adapter,
+            |a| f(a, &target.presentation),
+        )
+    }
+
+    /// Switch to a different adapter, presentation or adapter config. A no-op
+    /// when nothing changed, so it's safe to call on every config save.
+    pub fn set_target(
+        self: &Arc<Self>,
+        adapter: String,
+        presentation: String,
+        adapter_config: AdapterConfig,
+    ) {
+        let new = Target {
+            adapter,
+            presentation,
+            adapter_config,
         };
+        let presentation_changed = {
+            let mut target = self.target.locked();
+            if *target == new {
+                return;
+            }
+            let changed = target.adapter != new.adapter || target.presentation != new.presentation;
+            log::info!(
+                "StateManager: target {}/{:?}",
+                new.adapter,
+                new.presentation
+            );
+            *target = new;
+            changed
+        };
+        self.generation.fetch_add(1, Ordering::SeqCst);
 
-        // Update the state
-        {
-            let mut state = self.state.lock().unwrap();
-            *state = new_state.clone();
+        if presentation_changed {
+            self.clear_notes();
+            // Compiled scripts embed the presentation name.
+            crate::applescript::clear_compiled_cache();
         }
-
-        // Notify if changed
-        if changed {
-            self.notify_state_change(new_state);
-        }
+        self.replace_state(CachedState::now());
+        self.refresh_state();
     }
 
     /// Check if two states differ in meaningful ways.
@@ -255,312 +315,268 @@ impl StateManager {
             || old.total_builds != new.total_builds
     }
 
-    /// Send state change notification through the channel.
-    fn notify_state_change(&self, state: CachedState) {
-        // try_send is non-blocking - if the channel is full, we just skip
-        // This is fine because we'll send updated state soon anyway
-        let _ = self.state_change_tx.try_send(state.clone());
-
-        // Also broadcast to web server so stage view updates instantly
-        if let Some(ref tx) = self.status_broadcast {
-            let _ = tx.send(LiveStatus::from(&state));
+    /// Store `new` and publish it if it differs. Returns the previous state.
+    fn replace_state(&self, new: CachedState) -> CachedState {
+        let old = std::mem::replace(&mut *self.state.locked(), new.clone());
+        if Self::has_state_changed(&old, &new) {
+            self.publish(&new);
         }
+        old
+    }
+
+    /// Publish a state change to every listener.
+    fn publish(&self, state: &CachedState) {
+        let status = LiveStatus::from(state);
+        // Errors only mean nobody is listening right now.
+        let _ = self.changes.send(state.clone());
+        let _ = self.sinks.status_broadcast.send(status.clone());
+        if let Some(app) = self.app_handle.get() {
+            let _ = app.emit("presentation-status", &status);
+        }
+    }
+
+    /// Apply a full status read from an adapter (a poll, or Canva pushing its state).
+    pub fn apply_status(self: &Arc<Self>, status: LiveStatus) {
+        let new = CachedState::from(&status);
+        let slide = new.current_slide;
+        let old = self.replace_state(new);
+
+        if let Some(notes) = status.presenter_notes {
+            if slide > 0 && !notes.is_empty() {
+                self.add_notes([(slide, notes)]);
+            }
+        }
+
+        // A show just started: fetch every slide's notes at once rather than
+        // waiting for each slide to be visited.
+        if status.is_presenting && !old.is_presenting {
+            self.fetch_all_notes_in_background();
+        }
+    }
+
+    // =========================================================================
+    // NOTES
+    // =========================================================================
+
+    pub fn notes(&self) -> NotesCache {
+        self.sinks.notes.locked().clone()
+    }
+
+    /// Merge notes into the cache and publish if anything changed.
+    pub fn add_notes(&self, notes: impl IntoIterator<Item = (i32, String)>) {
+        let snapshot = {
+            let mut cache = self.sinks.notes.locked();
+            let mut changed = false;
+            for (slide, text) in notes {
+                if cache.get(&slide) != Some(&text) {
+                    cache.insert(slide, text);
+                    changed = true;
+                }
+            }
+            if !changed {
+                return;
+            }
+            cache.clone()
+        };
+        self.publish_notes(snapshot);
+    }
+
+    pub fn clear_notes(&self) {
+        self.sinks.notes.locked().clear();
+        self.publish_notes(NotesCache::new());
+    }
+
+    fn publish_notes(&self, snapshot: NotesCache) {
+        if let Some(app) = self.app_handle.get() {
+            let _ = app.emit("notes-cache-updated", &snapshot);
+        }
+        let _ = self.sinks.notes_broadcast.send(snapshot);
+    }
+
+    fn fetch_all_notes_in_background(self: &Arc<Self>) {
+        let sm = self.clone();
+        let generation = self.generation.load(Ordering::SeqCst);
+        async_runtime::spawn_blocking(move || {
+            log::info!("StateManager: presenting started, fetching all notes");
+            match sm.with_current_adapter(|a, name| a.get_all_presenter_notes(name)) {
+                Ok(Ok(notes)) if sm.generation.load(Ordering::SeqCst) == generation => {
+                    sm.add_notes(notes)
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) | Err(e) => log::warn!("Bulk notes fetch failed: {}", e),
+            }
+        });
     }
 
     // =========================================================================
     // COMMANDS (with optimistic updates)
     // =========================================================================
 
-    /// Advance to the next slide (optimistic update).
-    ///
-    /// ## How Optimistic Updates Work Here
-    ///
-    /// 1. Check if we're presenting (can't navigate if not)
-    /// 2. Immediately increment current_slide in cache
-    /// 3. Notify listeners (OSC feedback goes out NOW)
-    /// 4. Spawn a background task to actually call PowerPoint
-    /// 5. After AppleScript completes, refresh state to verify
-    pub fn next_slide(&self, source: CommandSource) {
-        // First, do the optimistic update
-        let should_execute = {
-            let mut state = self.state.lock().unwrap();
+    /// Advance to the next slide (or the next build on this slide).
+    pub fn next_slide(self: &Arc<Self>, source: CommandSource) {
+        self.navigate(
+            "next".to_string(),
+            source,
+            |state| {
+                let has_remaining_builds = matches!(
+                    (state.current_build, state.total_builds),
+                    (Some(current), Some(total)) if current < total
+                );
+                if state.current_slide >= state.total_slides && !has_remaining_builds {
+                    return false;
+                }
+                // A build step stays on the same slide.
+                if !has_remaining_builds {
+                    state.current_slide += 1;
+                }
+                true
+            },
+            |adapter, name| adapter.next_slide(name),
+        );
+    }
 
-            // Can't navigate if not presenting
+    /// Go to the previous slide (or back one build on this slide).
+    pub fn prev_slide(self: &Arc<Self>, source: CommandSource) {
+        self.navigate(
+            "prev".to_string(),
+            source,
+            |state| {
+                let has_fired_builds = state.current_build.is_some_and(|b| b > 0);
+                if state.current_slide <= 1 && !has_fired_builds {
+                    return false;
+                }
+                if !has_fired_builds {
+                    state.current_slide -= 1;
+                }
+                true
+            },
+            |adapter, name| adapter.prev_slide(name),
+        );
+    }
+
+    /// Jump to a specific slide.
+    pub fn goto_slide(self: &Arc<Self>, slide: i32, source: CommandSource) {
+        self.navigate(
+            format!("goto:{}", slide),
+            source,
+            |state| {
+                if slide < 1 || slide > state.total_slides {
+                    return false;
+                }
+                state.current_slide = slide;
+                true
+            },
+            move |adapter, name| adapter.goto_slide(name, slide),
+        );
+    }
+
+    /// Shared body of the navigation commands: apply `optimistic` to the cache
+    /// and publish it now, then run `command` on the adapter in the background.
+    fn navigate(
+        self: &Arc<Self>,
+        label: String,
+        source: CommandSource,
+        optimistic: impl FnOnce(&mut CachedState) -> bool,
+        command: impl FnOnce(&dyn PresentationAdapter, &str) -> Result<SlideInfo, String>
+            + Send
+            + 'static,
+    ) {
+        let (before, after) = {
+            let mut state = self.state.locked();
             if !state.is_presenting {
                 return;
             }
-
-            // Check if builds remain on the current slide
-            let has_remaining_builds = match (state.current_build, state.total_builds) {
-                (Some(current), Some(total)) => current < total,
-                _ => false,
-            };
-
-            // Don't go past the last slide (unless builds remain)
-            if state.current_slide >= state.total_slides && !has_remaining_builds {
+            let before = state.current_slide;
+            if !optimistic(&mut state) {
                 return;
             }
-
-            // Optimistic update: only increment slide when no builds remain
-            if !has_remaining_builds {
-                state.current_slide += 1;
-            }
-            state.last_updated_ms = current_time_ms();
-
-            true
+            state.last_updated_ms = now_ms();
+            (before, state.clone())
         };
+        self.last_command_at.store(now_ms(), Ordering::SeqCst);
+        self.publish(&after);
 
-        if !should_execute {
-            return;
-        }
+        let sm = self.clone();
+        let generation = self.generation.load(Ordering::SeqCst);
+        let adapter_label = self.adapter_name();
+        self.commands_in_flight.fetch_add(1, Ordering::SeqCst);
 
-        // Notify immediately (this is the "optimistic" part)
-        self.notify_state_change(self.get_state());
+        async_runtime::spawn(async move {
+            let started = latency::monotonic_ms();
+            let sm2 = sm.clone();
+            let result =
+                async_runtime::spawn_blocking(move || sm2.with_current_adapter(command)).await;
 
-        // Now spawn the actual AppleScript command in the background
-        self.spawn_adapter_command("next".to_string(), source, |adapter, name| {
-            adapter.next_slide(&name)
+            let event = latency::make_event(
+                started,
+                latency::monotonic_ms(),
+                label,
+                source,
+                adapter_label,
+            );
+            sm.sinks.latency_store.push(event.clone());
+            if let Some(app) = sm.app_handle.get() {
+                let _ = app.emit("latency-event", &event);
+            }
+
+            let last = sm.commands_in_flight.fetch_sub(1, Ordering::SeqCst) == 1;
+            match result {
+                Ok(Ok(Ok(info))) if last => sm.apply_slide_info(generation, before, info),
+                Ok(Ok(Ok(_))) => {}
+                Ok(Ok(Err(e))) | Ok(Err(e)) => log::warn!("Adapter command failed: {}", e),
+                Err(e) => log::warn!("Adapter task panicked: {:?}", e),
+            }
         });
     }
 
-    /// Go to the previous slide (optimistic update).
-    pub fn prev_slide(&self, source: CommandSource) {
-        let should_execute = {
-            let mut state = self.state.lock().unwrap();
-
-            if !state.is_presenting {
-                return;
-            }
-
-            // Check if builds have been fired on this slide
-            let has_fired_builds = match state.current_build {
-                Some(current) => current > 0,
-                _ => false,
-            };
-
-            // Don't go before slide 1 (unless builds have been fired)
-            if state.current_slide <= 1 && !has_fired_builds {
-                return;
-            }
-
-            // Optimistic update: only decrement slide when no builds fired
-            if !has_fired_builds {
-                state.current_slide -= 1;
-            }
-            state.last_updated_ms = current_time_ms();
-
-            true
-        };
-
-        if !should_execute {
+    /// Apply the slide position an adapter reported after a command.
+    fn apply_slide_info(&self, generation: u64, before: i32, info: SlideInfo) {
+        if self.generation.load(Ordering::SeqCst) != generation {
             return;
         }
-
-        self.notify_state_change(self.get_state());
-        self.spawn_adapter_command("prev".to_string(), source, |adapter, name| {
-            adapter.prev_slide(&name)
-        });
-    }
-
-    /// Jump to a specific slide (optimistic update).
-    pub fn goto_slide(&self, slide: i32, source: CommandSource) {
-        let should_execute = {
-            let mut state = self.state.lock().unwrap();
-
-            if !state.is_presenting {
-                return;
-            }
-
-            // Clamp to valid range
-            if slide < 1 || slide > state.total_slides {
-                return;
-            }
-
-            // Optimistic update
-            state.current_slide = slide;
-            state.last_updated_ms = current_time_ms();
-
-            true
-        };
-
-        if !should_execute {
-            return;
+        let mut new = self.get_state();
+        // Some adapters still report the old slide while a transition plays.
+        // Keep the optimistic number then; the next poll settles it.
+        if !(info.current == before && new.current_slide != before) {
+            new.current_slide = info.current;
         }
-
-        self.notify_state_change(self.get_state());
-        self.spawn_adapter_command(format!("goto:{}", slide), source, move |adapter, name| {
-            adapter.goto_slide(&name, slide)
-        });
+        new.total_slides = info.total;
+        new.last_updated_ms = now_ms();
+        self.replace_state(new);
     }
 
     /// Increase notes zoom level (optimistic update).
-    pub fn zoom_in(&self) {
-        let new_zoom = {
-            let mut state = self.state.lock().unwrap();
-
-            if !state.is_presenting {
-                return;
-            }
-
-            let current = state.zoom_level.unwrap_or(100);
-            let new_zoom = PowerPointAdapter::get_next_zoom_level(current);
-
-            // Optimistic update
-            state.zoom_level = Some(new_zoom);
-            state.last_updated_ms = current_time_ms();
-
-            new_zoom
-        };
-
-        self.notify_state_change(self.get_state());
-        self.spawn_zoom_command(new_zoom);
+    pub fn zoom_in(self: &Arc<Self>) {
+        self.zoom(adapters::get_next_zoom_level);
     }
 
     /// Decrease notes zoom level (optimistic update).
-    pub fn zoom_out(&self) {
-        let new_zoom = {
-            let mut state = self.state.lock().unwrap();
+    pub fn zoom_out(self: &Arc<Self>) {
+        self.zoom(adapters::get_prev_zoom_level);
+    }
 
+    fn zoom(self: &Arc<Self>, step: impl FnOnce(i32) -> i32) {
+        let (level, new) = {
+            let mut state = self.state.locked();
             if !state.is_presenting {
                 return;
             }
-
-            let current = state.zoom_level.unwrap_or(100);
-            let new_zoom = PowerPointAdapter::get_prev_zoom_level(current);
-
-            // Optimistic update
-            state.zoom_level = Some(new_zoom);
-            state.last_updated_ms = current_time_ms();
-
-            new_zoom
+            let level = step(state.zoom_level.unwrap_or(100));
+            state.zoom_level = Some(level);
+            state.last_updated_ms = now_ms();
+            (level, state.clone())
         };
+        self.publish(&new);
 
-        self.notify_state_change(self.get_state());
-        self.spawn_zoom_command(new_zoom);
-    }
-
-    // =========================================================================
-    // BACKGROUND TASKS
-    // =========================================================================
-
-    /// Spawn a background task to execute an adapter command.
-    ///
-    /// ## Why spawn_blocking?
-    ///
-    /// The adapters use `std::process::Command` to run AppleScript, which
-    /// blocks the thread. In async Rust, blocking the thread blocks the
-    /// entire async runtime, starving other tasks.
-    ///
-    /// `spawn_blocking` runs the closure on a dedicated thread pool for
-    /// blocking operations, keeping the async runtime free.
-    fn spawn_adapter_command<F>(&self, command_label: String, source: CommandSource, command: F)
-    where
-        F: FnOnce(
-                &dyn crate::adapters::PresentationAdapter,
-                String,
-            ) -> Result<crate::adapters::SlideInfo, String>
-            + Send
-            + 'static,
-    {
-        let adapter_name = self.adapter_name.clone();
-        let presentation_name = self.presentation_name.clone();
-        let adapter_config = self.adapter_config.clone();
-        let state = self.state.clone();
-        let tx = self.state_change_tx.clone();
-        let latency_store = self.latency_store.clone();
-        let app_handle = self.app_handle.clone();
-        let adapter_label = self.adapter_name.clone();
-        let canva_adapter = self.canva_adapter.clone();
-
-        let before_ms = latency::monotonic_ms();
-
-        // Spawn the blocking work on a separate thread
-        tokio::task::spawn(async move {
-            // Run the blocking AppleScript on a blocking thread
-            let result = tokio::task::spawn_blocking(move || {
-                if adapter_name == "canva" {
-                    if let Some(ref canva_arc) = canva_adapter {
-                        let canva = canva_arc.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(ref adapter) = *canva {
-                            command(adapter as &dyn PresentationAdapter, presentation_name)
-                        } else {
-                            Err("Canva adapter not initialized".to_string())
-                        }
-                    } else {
-                        Err("Canva adapter not available".to_string())
-                    }
-                } else if let Some(adapter) = get_adapter(&adapter_name, &adapter_config) {
-                    command(adapter.as_ref(), presentation_name)
-                } else {
-                    Err("Adapter not found".to_string())
+        let sm = self.clone();
+        async_runtime::spawn_blocking(move || {
+            match sm.with_current_adapter(|a, _| a.set_notes_zoom(level)) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) | Err(e) => {
+                    log::warn!("Zoom command failed: {}", e);
+                    // Put the real level back.
+                    sm.refresh_state();
                 }
-            })
-            .await;
-
-            // Capture latency after adapter completes
-            let after_ms = latency::monotonic_ms();
-            let event =
-                latency::make_event(before_ms, after_ms, command_label, source, adapter_label);
-            latency_store.push(event.clone());
-            if let Some(ref handle) = app_handle {
-                let _ = handle.emit("latency-event", &event);
-            }
-
-            // Use the command result to update state directly instead of a full refresh.
-            // The adapter's next_slide/prev_slide/goto_slide already return accurate SlideInfo.
-            // The 2s polling cycle catches any desync from external changes.
-            match result {
-                Ok(Ok(slide_info)) => {
-                    let changed = {
-                        let mut st = state.lock().unwrap();
-                        let old_current = st.current_slide;
-                        let old_total = st.total_slides;
-                        st.current_slide = slide_info.current;
-                        st.total_slides = slide_info.total;
-                        st.last_updated_ms = current_time_ms();
-                        old_current != slide_info.current || old_total != slide_info.total
-                    };
-                    if changed {
-                        let new_state = state.lock().unwrap().clone();
-                        let _ = tx.try_send(new_state);
-                    }
-                }
-                Ok(Err(e)) => {
-                    log::warn!("Adapter command failed: {}", e);
-                }
-                Err(e) => {
-                    log::warn!("Adapter task panicked: {:?}", e);
-                }
-            }
-        });
-    }
-
-    /// Spawn a background task to set zoom level.
-    fn spawn_zoom_command(&self, level: i32) {
-        let state = self.state.clone();
-        let tx = self.state_change_tx.clone();
-
-        tokio::task::spawn(async move {
-            // Run the blocking AppleScript
-            let result = tokio::task::spawn_blocking(move || {
-                let adapter = PowerPointAdapter;
-                adapter.set_notes_zoom(level)
-            })
-            .await;
-
-            // Update state directly with the requested zoom level on success
-            match result {
-                Ok(Ok(())) => {
-                    {
-                        let mut st = state.lock().unwrap();
-                        st.zoom_level = Some(level);
-                        st.last_updated_ms = current_time_ms();
-                    }
-                    let new_state = state.lock().unwrap().clone();
-                    let _ = tx.try_send(new_state);
-                }
-                Ok(Err(e)) => log::warn!("Zoom command failed: {}", e),
-                Err(e) => log::warn!("Zoom task panicked: {:?}", e),
             }
         });
     }
@@ -569,260 +585,56 @@ impl StateManager {
     // STATE REFRESH
     // =========================================================================
 
-    /// Trigger a background state refresh.
-    ///
-    /// This coalesces multiple refresh requests - if a refresh is already
-    /// in progress, we skip this one. The ongoing refresh will pick up
-    /// any changes anyway.
-    pub fn refresh_state(&self) {
-        // Check if refresh is already in progress
-        {
-            let in_progress = self.refresh_in_progress.lock().unwrap();
-            if *in_progress {
-                return;
-            }
-        }
-
-        let adapter_name = self.adapter_name.clone();
-        let presentation_name = self.presentation_name.clone();
-        let adapter_config = self.adapter_config.clone();
-        let refresh_flag = self.refresh_in_progress.clone();
-        let state = self.state.clone();
-        let tx = self.state_change_tx.clone();
-        let canva_adapter = self.canva_adapter.clone();
-
-        tokio::task::spawn(async move {
-            Self::do_refresh_internal(
-                adapter_name,
-                presentation_name,
-                adapter_config,
-                refresh_flag,
-                state,
-                tx,
-                canva_adapter,
-            )
-            .await;
-        });
+    /// Trigger a background state refresh. Coalesces with one already running.
+    pub fn refresh_state(self: &Arc<Self>) {
+        let sm = self.clone();
+        async_runtime::spawn(async move { sm.refresh().await });
     }
 
-    /// Internal refresh implementation (used by multiple callers).
-    async fn do_refresh_internal(
-        adapter_name: String,
-        presentation_name: String,
-        adapter_config: AdapterConfig,
-        refresh_flag: Arc<Mutex<bool>>,
-        state: Arc<Mutex<CachedState>>,
-        tx: mpsc::Sender<CachedState>,
-        canva_adapter: Option<Arc<Mutex<Option<CanvaAdapter>>>>,
-    ) {
-        // Set flag to prevent concurrent refreshes
-        {
-            let mut in_progress = refresh_flag.lock().unwrap();
-            if *in_progress {
-                return;
-            }
-            *in_progress = true;
+    /// Read the full status from the presentation app and apply it.
+    async fn refresh(self: &Arc<Self>) {
+        if self.refresh_in_progress.swap(true, Ordering::SeqCst) {
+            return;
         }
-
-        // Fetch state from presentation software (blocking)
-        let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(
-                &adapter_name,
-                &presentation_name,
-                &adapter_config,
-                &canva_adapter,
-            )
+        let generation = self.generation.load(Ordering::SeqCst);
+        let sm = self.clone();
+        let status = async_runtime::spawn_blocking(move || {
+            sm.with_current_adapter(|a, name| a.get_live_status(name))
+                .unwrap_or_default()
         })
         .await
-        .unwrap_or_else(|_| CachedState::now());
+        .unwrap_or_default();
+        self.refresh_in_progress.store(false, Ordering::SeqCst);
 
-        // Clear the in-progress flag
-        {
-            let mut in_progress = refresh_flag.lock().unwrap();
-            *in_progress = false;
+        if self.generation.load(Ordering::SeqCst) == generation {
+            self.apply_status(status);
         }
-
-        // Check if state changed
-        let changed = {
-            let current = state.lock().unwrap();
-            Self::has_state_changed(&current, &new_state)
-        };
-
-        // Update state
-        {
-            let mut current = state.lock().unwrap();
-            *current = new_state.clone();
-        }
-
-        // Notify if changed
-        if changed {
-            let _ = tx.try_send(new_state);
-        }
-    }
-
-    /// Force a synchronous state refresh (for initial load).
-    ///
-    /// ## When to Use
-    ///
-    /// Call this when starting the OSC server to ensure we have valid
-    /// initial state before accepting commands.
-    pub async fn force_refresh(&self) -> CachedState {
-        let adapter_name = self.adapter_name.clone();
-        let presentation_name = self.presentation_name.clone();
-        let adapter_config = self.adapter_config.clone();
-        let canva_adapter = self.canva_adapter.clone();
-
-        let new_state = tokio::task::spawn_blocking(move || {
-            Self::fetch_all_state(
-                &adapter_name,
-                &presentation_name,
-                &adapter_config,
-                &canva_adapter,
-            )
-        })
-        .await
-        .unwrap_or_else(|_| CachedState::now());
-
-        // Update state
-        {
-            let mut state = self.state.lock().unwrap();
-            *state = new_state.clone();
-        }
-
-        new_state
-    }
-
-    /// Fetch complete state from the presentation software.
-    ///
-    /// This is the actual AppleScript work - it's blocking and slow.
-    /// For Canva, uses the singleton adapter instead of the factory.
-    fn fetch_all_state(
-        adapter_name: &str,
-        presentation_name: &str,
-        adapter_config: &AdapterConfig,
-        canva_adapter: &Option<Arc<Mutex<Option<CanvaAdapter>>>>,
-    ) -> CachedState {
-        let mut new_state = CachedState::now();
-
-        if adapter_name == "canva" {
-            if let Some(ref canva_arc) = canva_adapter {
-                let canva = canva_arc.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(ref adapter) = *canva {
-                    let status = adapter.get_live_status(presentation_name);
-                    new_state.is_open = status.is_open;
-                    new_state.is_presenting = status.is_presenting;
-                    new_state.current_slide = status.current_slide;
-                    new_state.total_slides = status.total_slides;
-                    new_state.zoom_level = status.zoom_level;
-                    new_state.current_build = status.current_build;
-                    new_state.total_builds = status.total_builds;
-                }
-            }
-            return new_state;
-        }
-
-        let Some(adapter) = get_adapter(adapter_name, adapter_config) else {
-            return new_state;
-        };
-
-        let status = adapter.get_live_status(presentation_name);
-        new_state.is_open = status.is_open;
-        new_state.is_presenting = status.is_presenting;
-        new_state.current_slide = status.current_slide;
-        new_state.total_slides = status.total_slides;
-        new_state.zoom_level = status.zoom_level;
-        new_state.current_build = status.current_build;
-        new_state.total_builds = status.total_builds;
-
-        new_state
     }
 
     // =========================================================================
     // POLLING
     // =========================================================================
 
-    /// Start background polling for external state changes.
-    ///
-    /// ## Why Poll?
-    ///
-    /// The user might change slides using their keyboard or clicker,
-    /// bypassing our OSC commands. Polling every 2 seconds catches
-    /// these external changes so our OSC clients stay in sync.
-    ///
-    /// ## Parameters
-    ///
-    /// - `interval_ms` - Polling interval in milliseconds (default: 2000)
-    pub fn start_polling(&self, interval_ms: u64) {
-        // Check if already polling
-        {
-            let handle = self.polling_handle.lock().unwrap();
-            if handle.is_some() {
-                return;
-            }
+    /// Start background polling for external state changes (the presenter's
+    /// own keyboard or clicker bypasses us). Runs for the app's lifetime.
+    pub fn start_polling(self: &Arc<Self>, interval_ms: u64) {
+        let mut handle = self.polling_handle.locked();
+        if handle.is_some() {
+            return;
         }
-
-        let adapter_name = self.adapter_name.clone();
-        let presentation_name = self.presentation_name.clone();
-        let adapter_config = self.adapter_config.clone();
-        let refresh_flag = self.refresh_in_progress.clone();
-        let state = self.state.clone();
-        let tx = self.state_change_tx.clone();
-        let last_command_at = self.last_command_at.clone();
-        let canva_adapter = self.canva_adapter.clone();
-
-        // Spawn the polling task
-        let handle = tokio::task::spawn(async move {
+        let sm = self.clone();
+        *handle = Some(async_runtime::spawn(async move {
             let mut timer = interval(Duration::from_millis(interval_ms));
-
             loop {
                 timer.tick().await;
-
-                // Skip this poll cycle if a slide command was executed within the last 3s.
-                // This avoids competing for the Apple Event IPC channel during active use.
-                {
-                    let last_cmd = *last_command_at.lock().unwrap();
-                    if last_cmd > 0 {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        if now.saturating_sub(last_cmd) < 3000 {
-                            continue;
-                        }
-                    }
+                let since_command =
+                    now_ms().saturating_sub(sm.last_command_at.load(Ordering::SeqCst));
+                if sm.presentation_name().is_empty() || since_command < COMMAND_QUIET_MS {
+                    continue;
                 }
-
-                Self::do_refresh_internal(
-                    adapter_name.clone(),
-                    presentation_name.clone(),
-                    adapter_config.clone(),
-                    refresh_flag.clone(),
-                    state.clone(),
-                    tx.clone(),
-                    canva_adapter.clone(),
-                )
-                .await;
+                sm.refresh().await;
             }
-        });
-
-        // Store the handle so we can cancel later
-        {
-            let mut polling = self.polling_handle.lock().unwrap();
-            *polling = Some(handle);
-        }
-    }
-
-    /// Stop background polling.
-    pub fn stop_polling(&self) {
-        let handle = {
-            let mut polling = self.polling_handle.lock().unwrap();
-            polling.take()
-        };
-
-        if let Some(h) = handle {
-            // abort() cancels the task immediately
-            h.abort();
-        }
+        }));
     }
 }
 
@@ -833,6 +645,18 @@ impl StateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn presenting(current: i32, total: i32) -> Arc<StateManager> {
+        let sm = Arc::new(StateManager::new(StateSinks::default()));
+        *sm.state.locked() = CachedState {
+            is_open: true,
+            is_presenting: true,
+            current_slide: current,
+            total_slides: total,
+            ..Default::default()
+        };
+        sm
+    }
 
     #[test]
     fn test_default_state() {
@@ -855,5 +679,89 @@ mod tests {
         // Different slide = change
         new.current_slide = 5;
         assert!(StateManager::has_state_changed(&old, &new));
+    }
+
+    #[test]
+    fn test_live_status_round_trip() {
+        let status = LiveStatus {
+            is_open: true,
+            is_presenting: true,
+            current_slide: 3,
+            total_slides: 9,
+            zoom_level: Some(150),
+            presenter_notes: Some("hi".into()),
+            current_build: Some(1),
+            total_builds: Some(2),
+        };
+        let back = LiveStatus::from(&CachedState::from(&status));
+        assert_eq!(
+            back,
+            LiveStatus {
+                presenter_notes: None,
+                ..status
+            }
+        );
+    }
+
+    #[test]
+    fn test_apply_slide_info_keeps_optimistic_slide_during_transition() {
+        let sm = presenting(3, 10); // optimistically moved from 2
+        sm.apply_slide_info(
+            0,
+            2,
+            SlideInfo {
+                current: 2,
+                total: 10,
+                transition_duration: Some(1.0),
+            },
+        );
+        assert_eq!(sm.get_state().current_slide, 3);
+
+        sm.apply_slide_info(
+            0,
+            2,
+            SlideInfo {
+                current: 4,
+                total: 10,
+                transition_duration: None,
+            },
+        );
+        assert_eq!(sm.get_state().current_slide, 4);
+    }
+
+    #[test]
+    fn test_apply_slide_info_ignores_stale_generation() {
+        let sm = presenting(3, 10);
+        sm.generation.fetch_add(1, Ordering::SeqCst);
+        sm.apply_slide_info(
+            0,
+            2,
+            SlideInfo {
+                current: 7,
+                total: 10,
+                transition_duration: None,
+            },
+        );
+        assert_eq!(sm.get_state().current_slide, 3);
+    }
+
+    #[test]
+    fn test_add_notes_publishes_only_changes() {
+        let sm = StateManager::new(StateSinks::default());
+        let mut rx = sm.sinks.notes_broadcast.subscribe();
+        sm.add_notes([(1, "a".to_string())]);
+        sm.add_notes([(1, "a".to_string())]);
+        assert_eq!(rx.try_recv().unwrap().get(&1).unwrap(), "a");
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_publish_reaches_subscribers() {
+        let sm = presenting(1, 5);
+        let mut rx = sm.subscribe();
+        let mut new = sm.get_state();
+        new.current_slide = 2;
+        sm.replace_state(new);
+        assert_eq!(rx.try_recv().unwrap().current_slide, 2);
     }
 }

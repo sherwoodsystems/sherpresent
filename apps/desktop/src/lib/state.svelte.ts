@@ -11,7 +11,6 @@ import {
   type DiscoveryConfig,
   type WebServerConfig,
   type DiscoveredPeer,
-  type SlideInfo,
   type LatencyEvent,
   type CaptionsConfig,
   type CaptionSegment,
@@ -29,7 +28,6 @@ const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('
 class AppStore {
   config = $state<AppConfig>(defaultConfig);
   liveStatus = $state<LiveStatus | null>(null);
-  pollingActive = $state(false);
   discoveryRunning = $state(false);
   configLoaded = $state(false);
   connectionStatus = $state<ConnectionStatus>('Disconnected');
@@ -58,7 +56,6 @@ class AppStore {
   private unlistenCaptionSegment: UnlistenFn | null = null;
   private unlistenCaptionStatus: UnlistenFn | null = null;
   private unlistenOutputsStatus: UnlistenFn | null = null;
-  private navigatingUntil = 0;
 
   /**
    * PowerPoint for Mac can't jump to a slide during a show from AppleScript
@@ -74,10 +71,10 @@ class AppStore {
       this.config = savedConfig;
       this.configLoaded = true;
 
-      // Auto-start polling if presentation was already selected
-      if (savedConfig.presentationName) {
-        await this.startPolling();
-      }
+      // The backend polls the saved presentation from startup; catch up on
+      // what it already knows. Changes then arrive as events.
+      this.liveStatus = await invoke<LiveStatus>('get_status');
+      this.notesCache = await invoke<NotesCache>('get_all_notes');
 
       // Check discovery state on init
       if (savedConfig.discovery.enabled) {
@@ -91,20 +88,14 @@ class AppStore {
       this.configLoaded = true;
     }
 
-    // Listen for status updates
+    // Status from the backend StateManager: polls, plus the optimistic
+    // update of every slide command, whichever surface sent it.
     this.unlistenStatus = await listen<LiveStatus>('presentation-status', (event) => {
-      if (Date.now() < this.navigatingUntil) return; // Skip stale updates during transition
       this.liveStatus = event.payload;
     });
 
-    // Listen for notes cache updates (progressive fill from polling)
+    // Notes cache updates (bulk fetch when a show starts, then per slide)
     this.unlistenNotes = await listen<NotesCache>('notes-cache-updated', (event) => {
-      console.log(
-        '[notes] polling cache update:',
-        Object.keys(event.payload).length,
-        'entries, keys:',
-        Object.keys(event.payload)
-      );
       this.notesCache = event.payload;
     });
 
@@ -202,40 +193,20 @@ class AppStore {
     }, 500);
   }
 
+  /**
+   * Saving the config re-targets the backend, which clears the notes and
+   * publishes the new presentation's status. Save now rather than after the
+   * debounce so the switch is immediate.
+   */
   async updateAdapter(adapter: AdapterType) {
-    if (this.pollingActive) {
-      await this.stopPolling();
-    }
     this.config = { ...this.config, adapter, presentationName: '' };
     this.liveStatus = null;
-    await this.clearNotesCache();
-    this.scheduleConfigSave();
+    await this.flushConfigSave().catch((e) => console.error('Failed to save config:', e));
   }
 
   async selectPresentation(name: string) {
-    console.log('[selectPresentation] called with:', name, '| pollingActive:', this.pollingActive);
-    if (this.pollingActive) {
-      console.log('[selectPresentation] stopping existing polling...');
-      await this.stopPolling();
-      console.log('[selectPresentation] polling stopped');
-    }
-
-    console.log('[selectPresentation] clearing notes cache...');
-    await this.clearNotesCache();
-    console.log('[selectPresentation] notes cache cleared');
     this.config = { ...this.config, presentationName: name };
-    this.scheduleConfigSave();
-
-    if (name) {
-      console.log('[selectPresentation] starting polling for:', name);
-      await this.startPolling();
-      console.log('[selectPresentation] polling started');
-      // Notes are fetched by the polling background thread when presenting is detected,
-      // and delivered via 'notes-cache-updated' event. Calling fetchAllNotes() here would
-      // race with the polling thread for the AppleScript EXECUTION_LOCK, blocking the
-      // Tauri IPC thread and freezing the UI.
-    }
-    console.log('[selectPresentation] done');
+    await this.flushConfigSave().catch((e) => console.error('Failed to save config:', e));
   }
 
   updateOscConfig(oscConfig: OscConfig) {
@@ -280,31 +251,6 @@ class AppStore {
     }
   }
 
-  async startPolling() {
-    if (!this.config.presentationName) {
-      alert('Please select a presentation first');
-      return;
-    }
-    try {
-      await invoke('start_status_polling', {
-        adapter: this.config.adapter,
-        presentationName: this.config.presentationName
-      });
-      this.pollingActive = true;
-    } catch (e) {
-      console.error('Failed to start polling:', e);
-    }
-  }
-
-  async stopPolling() {
-    try {
-      await invoke('stop_status_polling');
-      this.pollingActive = false;
-    } catch (e) {
-      console.error('Failed to stop polling:', e);
-    }
-  }
-
   async getDiscoveredPeers(): Promise<DiscoveredPeer[]> {
     try {
       return await invoke<DiscoveredPeer[]>('get_discovered_peers');
@@ -327,109 +273,27 @@ class AppStore {
     }
   }
 
+  // Navigation goes through the backend StateManager, which publishes the
+  // new position (optimistically, then confirmed) as `presentation-status`.
+
   async nextSlide() {
-    try {
-      const oldSlide = this.liveStatus?.current_slide ?? 0;
-      const info = await invoke<SlideInfo>('next_slide', {
-        adapter: this.config.adapter,
-        name: this.config.presentationName
-      });
-      if (this.liveStatus && info) {
-        let displaySlide = info.current;
-        // If the adapter returned the old slide number and a transition is in progress,
-        // optimistically show the next slide number
-        if (info.current === oldSlide && (info.transition_duration ?? 0) > 0) {
-          displaySlide = oldSlide + 1;
-        }
-        this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
-        this.liveStatus = {
-          ...this.liveStatus,
-          current_slide: displaySlide,
-          total_slides: info.total
-        };
-      }
-    } catch (e) {
-      console.error('Failed to go to next slide:', e);
-    }
+    await invoke('next_slide').catch((e) => console.error('Failed to go to next slide:', e));
   }
 
   async prevSlide() {
-    try {
-      const oldSlide = this.liveStatus?.current_slide ?? 0;
-      const info = await invoke<SlideInfo>('prev_slide', {
-        adapter: this.config.adapter,
-        name: this.config.presentationName
-      });
-      if (this.liveStatus && info) {
-        let displaySlide = info.current;
-        if (info.current === oldSlide && oldSlide > 1) {
-          displaySlide = oldSlide - 1;
-        }
-        this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
-        this.liveStatus = {
-          ...this.liveStatus,
-          current_slide: displaySlide,
-          total_slides: info.total
-        };
-      }
-    } catch (e) {
-      console.error('Failed to go to previous slide:', e);
-    }
+    await invoke('prev_slide').catch((e) => console.error('Failed to go to previous slide:', e));
   }
 
   async gotoSlide(slide: number) {
-    try {
-      const oldSlide = this.liveStatus?.current_slide ?? 0;
-      const info = await invoke<SlideInfo>('goto_slide', {
-        adapter: this.config.adapter,
-        name: this.config.presentationName,
-        slide
-      });
-      if (this.liveStatus && info) {
-        let displaySlide = info.current;
-        // If the adapter returned the old slide number, optimistically use the target
-        if (info.current === oldSlide && info.current !== slide) {
-          displaySlide = slide;
-        }
-        this.navigatingUntil = Date.now() + ((info.transition_duration ?? 0) * 1000 || 1500);
-        this.liveStatus = {
-          ...this.liveStatus,
-          current_slide: displaySlide,
-          total_slides: info.total
-        };
-      }
-    } catch (e) {
-      console.error('Failed to go to slide:', e);
-    }
+    await invoke('goto_slide', { slide }).catch((e) => console.error('Failed to go to slide:', e));
   }
 
   async fetchAllNotes() {
     if (!this.config.presentationName) return;
     try {
-      const result = await invoke<NotesCache>('fetch_all_notes', {
-        adapter: this.config.adapter,
-        name: this.config.presentationName
-      });
-      console.log(
-        '[notes] fetchAllNotes result:',
-        Object.keys(result).length,
-        'entries, keys:',
-        Object.keys(result),
-        'values preview:',
-        Object.fromEntries(Object.entries(result).map(([k, v]) => [k, v.substring(0, 50)]))
-      );
-      this.notesCache = result;
+      this.notesCache = await invoke<NotesCache>('fetch_all_notes');
     } catch (e) {
       console.error('Failed to fetch all notes:', e);
-    }
-  }
-
-  async clearNotesCache() {
-    try {
-      await invoke('clear_notes_cache');
-      this.notesCache = {};
-    } catch (e) {
-      console.error('Failed to clear notes cache:', e);
     }
   }
 
@@ -441,10 +305,7 @@ class AppStore {
   async startNotesScan() {
     if (!this.config.presentationName) return;
     try {
-      await invoke('start_notes_scan', {
-        adapter: this.config.adapter,
-        name: this.config.presentationName
-      });
+      await invoke('start_notes_scan');
     } catch (e) {
       console.error('Failed to start notes scan:', e);
     }

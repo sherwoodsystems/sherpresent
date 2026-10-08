@@ -183,21 +183,21 @@
     margin: 0;
     font-size: 1.25rem;
     font-weight: 700;
-    color: #333;
+    color: var(--text);
   }
 
   .subtitle {
     margin: 0.25rem 0 0;
     font-size: 0.8rem;
-    color: #888;
+    color: var(--text-muted);
   }
 
   .refresh-btn {
     padding: 0.4rem 0.8rem;
     font-size: 0.8rem;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border);
     border-radius: 6px;
-    background: #fff;
+    background: var(--input-bg);
     color: #555;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -205,7 +205,7 @@
 
   .refresh-btn:hover {
     background: #f5f5f5;
-    border-color: #ccc;
+    border-color: var(--border-strong);
   }
 
   .header-actions {
@@ -260,7 +260,7 @@
 
   .progress-fill {
     height: 100%;
-    background: #1a73e8;
+    background: var(--link);
     border-radius: 2px;
     transition: width 0.3s ease;
   }
@@ -269,12 +269,12 @@
     display: block;
     margin-top: 0.25rem;
     font-size: 0.75rem;
-    color: #888;
+    color: var(--text-muted);
   }
 
   .empty {
     text-align: center;
-    color: #888;
+    color: var(--text-muted);
     font-style: italic;
     padding: 2rem 0;
   }
@@ -287,7 +287,7 @@
     text-align: left;
     padding: 0.75rem 1rem;
     margin-bottom: 0.5rem;
-    background: #fff;
+    background: var(--surface);
     border: 1px solid #e8e8e8;
     border-radius: 8px;
     border-left: 3px solid transparent;
@@ -298,8 +298,8 @@
 
   .slide-row:hover:not(:disabled) {
     background: #f8f9fa;
-    border-color: #ddd;
-    border-left-color: #ccc;
+    border-color: var(--border);
+    border-left-color: var(--border-strong);
   }
 
   .slide-row:disabled {
@@ -308,7 +308,7 @@
   }
 
   .slide-row.current {
-    border-left-color: #1a73e8;
+    border-left-color: var(--link);
     background: #f0f6ff;
   }
 
@@ -332,44 +332,24 @@
     color: #bbb;
     font-style: italic;
   }
-
   @media (prefers-color-scheme: dark) {
-    .header h1 {
-      color: #eee;
-    }
-
-    .subtitle {
-      color: #777;
-    }
-
     .refresh-btn {
-      background: #333;
-      border-color: #555;
       color: #ccc;
     }
 
     .refresh-btn:hover {
       background: #3a3a3a;
-      border-color: #666;
-    }
-
-    .empty {
-      color: #777;
     }
 
     .slide-row {
-      background: #2a2a2a;
       border-color: #444;
     }
 
     .slide-row:hover:not(:disabled) {
       background: #333;
-      border-color: #555;
-      border-left-color: #666;
     }
 
     .slide-row.current {
-      border-left-color: #6ab7ff;
       background: #1e2d3d;
     }
 
@@ -387,14 +367,6 @@
 
     .progress-bar {
       background: #444;
-    }
-
-    .progress-fill {
-      background: #6ab7ff;
-    }
-
-    .progress-text {
-      color: #777;
     }
   }
 </style>

@@ -59,11 +59,8 @@
     flex-direction: column;
     gap: 0.5rem;
   }
-
   .label {
     font-size: 0.875rem;
-    font-weight: 500;
-    color: #666;
   }
 
   .toggle-group {
@@ -74,13 +71,14 @@
   .toggle-btn {
     flex: 1;
     padding: 0.75rem 1rem;
-    border: 2px solid #ddd;
+    border: 2px solid var(--border);
     border-radius: 8px;
-    background: #fff;
+    background: var(--input-bg);
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
+    color: var(--text);
   }
 
   .toggle-btn:hover {
@@ -88,8 +86,8 @@
   }
 
   .toggle-btn.active {
-    border-color: #007aff;
-    background: #007aff;
+    border-color: var(--accent);
+    background: var(--accent);
     color: white;
   }
 
@@ -99,25 +97,12 @@
     margin: 0.5rem 0 0 0;
     line-height: 1.4;
   }
-
   @media (prefers-color-scheme: dark) {
-    .label {
-      color: #aaa;
-    }
-
-    .toggle-btn {
-      background: #333;
-      border-color: #555;
-      color: #eee;
-    }
-
     .toggle-btn:hover {
       border-color: #777;
     }
 
     .toggle-btn.active {
-      border-color: #0a84ff;
-      background: #0a84ff;
       color: white;
     }
   }

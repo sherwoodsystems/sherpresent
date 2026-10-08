@@ -1,5 +1,6 @@
 use crate::config::{self, AppConfig};
 use crate::state::AppState;
+use crate::util::LockExt;
 use tauri::{AppHandle, Manager};
 
 #[tauri::command]
@@ -17,13 +18,16 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     let state = app.state::<AppState>();
     state.captions.set_overlay(&config.captions);
 
+    // Point the StateManager at the selected presentation (no-op if unchanged).
+    state.state_manager.set_target(
+        config.adapter.clone(),
+        config.presentation_name.clone(),
+        config.adapter_config.clone(),
+    );
+
     // Start/stop/rename native outputs to match; unchanged ones are untouched.
     let sources = state.output_sources();
-    state
-        .outputs
-        .lock()
-        .unwrap()
-        .reconcile(&app, &sources, &config);
+    state.outputs.locked().reconcile(&app, &sources, &config);
 
     Ok(())
 }
@@ -32,5 +36,5 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
 /// Settings. Changes are also pushed as `outputs-status` events.
 #[tauri::command]
 pub fn get_outputs_status(state: tauri::State<'_, AppState>) -> crate::output::OutputsStatus {
-    state.outputs.lock().unwrap().status()
+    state.outputs.locked().status()
 }

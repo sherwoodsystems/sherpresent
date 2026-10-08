@@ -10,7 +10,7 @@ Specialized knowledge areas for this codebase.
 - `src/lib.rs` - Tauri commands
 - `src/adapters/mod.rs` - `PresentationAdapter` trait
 - `src/osc/server.rs` - OSC UDP server
-- `src/osc/state_manager.rs` - State caching
+- `src/osc/state_manager.rs` - The one state cache and poller; every surface (UI, OSC, web) sends commands through it
 
 **Patterns**:
 - `#[tauri::command]` for frontend-callable functions

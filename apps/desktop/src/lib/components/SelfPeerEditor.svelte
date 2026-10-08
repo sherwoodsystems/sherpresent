@@ -80,9 +80,9 @@
     justify-content: space-between;
     align-items: center;
     padding: 0.625rem 0.75rem;
-    background: #e8f4fd;
+    background: var(--info-bg);
     border-radius: 8px;
-    border: 1px solid #b3d9f7;
+    border: 1px solid var(--info-border);
   }
 
   .self-info {
@@ -96,8 +96,8 @@
   .peer-id {
     font-size: 0.75rem;
     font-weight: 700;
-    color: #1a56c4;
-    background: #b3d9f7;
+    color: var(--info-text);
+    background: var(--info-border);
     padding: 0.125rem 0.375rem;
     border-radius: 4px;
     flex-shrink: 0;
@@ -106,7 +106,7 @@
   .self-name {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #1a56c4;
+    color: var(--info-text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -115,14 +115,14 @@
   .you-badge {
     font-size: 0.7rem;
     font-weight: 400;
-    color: #1a73e8;
+    color: var(--link);
     margin-left: 0.25rem;
   }
 
   .self-address {
     font-size: 0.75rem;
     font-family: monospace;
-    color: #888;
+    color: var(--text-muted);
     flex-shrink: 0;
     margin-left: 0.5rem;
   }
@@ -143,7 +143,7 @@
 
   .btn-edit:hover {
     background: rgba(0, 0, 0, 0.05);
-    color: #333;
+    color: var(--text);
   }
 
   .name-input {
@@ -151,14 +151,15 @@
     min-width: 100px;
     padding: 0.25rem 0.5rem;
     font-size: 0.875rem;
-    border: 1px solid #b3d9f7;
+    border: 1px solid var(--info-border);
     border-radius: 4px;
     background: #fff;
     outline: none;
+    color: var(--text);
   }
 
   .name-input:focus {
-    border-color: #1a73e8;
+    border-color: var(--link);
     box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
   }
 
@@ -183,54 +184,27 @@
   }
 
   .btn-cancel {
-    background: #e0e0e0;
-    color: #666;
+    background: var(--divider);
+    color: var(--text-secondary);
   }
 
   .btn-cancel:hover {
     background: #d0d0d0;
   }
-
   @media (prefers-color-scheme: dark) {
-    .self-peer-editor {
-      background: #1a3a5c;
-      border-color: #2a5a8c;
-    }
-
-    .peer-id {
-      background: #2a5a8c;
-      color: #8fcfff;
-    }
-
-    .self-name {
-      color: #8fcfff;
-    }
-
-    .you-badge {
-      color: #6ab7ff;
-    }
-
-    .self-address {
-      color: #777;
-    }
-
     .btn-edit {
       color: #888;
     }
 
     .btn-edit:hover {
       background: rgba(255, 255, 255, 0.1);
-      color: #eee;
     }
 
     .name-input {
       background: #222;
-      border-color: #2a5a8c;
-      color: #eee;
     }
 
     .name-input:focus {
-      border-color: #6ab7ff;
       box-shadow: 0 0 0 2px rgba(106, 183, 255, 0.2);
     }
 
@@ -240,11 +214,6 @@
 
     .btn-save:hover {
       background: #2a8af8;
-    }
-
-    .btn-cancel {
-      background: #444;
-      color: #aaa;
     }
 
     .btn-cancel:hover {

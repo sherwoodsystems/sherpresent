@@ -4,18 +4,17 @@ mod bridge;
 mod captions;
 mod commands;
 mod config;
-mod generated_constants;
 mod ontime;
 mod osc;
 mod output;
 mod sidecar;
 mod state;
+mod util;
 mod webserver;
 
-use crate::osc::{OscServer, StateManager};
 use crate::state::AppState;
+use crate::util::LockExt;
 use sherpresent_core::{DiscoveredPeer, DiscoveryService};
-use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
@@ -41,20 +40,16 @@ pub fn run() {
             commands::presentation::get_open_presentations,
             commands::presentation::get_presentation_state,
             commands::presentation::get_slide_info,
-            commands::presentation::get_live_status,
+            commands::presentation::get_status,
             commands::presentation::get_notes_zoom,
             commands::presentation::next_slide,
             commands::presentation::prev_slide,
             commands::presentation::goto_slide,
             commands::presentation::fetch_all_notes,
             commands::presentation::get_all_notes,
-            commands::presentation::clear_notes_cache,
             commands::presentation::start_notes_scan,
             commands::presentation::stop_notes_scan,
             commands::presentation::save_text_file,
-            // Polling
-            commands::polling::start_status_polling,
-            commands::polling::stop_status_polling,
             // OSC Server
             commands::osc::start_osc_server,
             commands::osc::stop_osc_server,
@@ -118,11 +113,18 @@ pub fn run() {
                 config.adapter
             );
 
-            // Store adapter config in AppState
+            // One StateManager owns presentation state for the app's lifetime;
+            // OSC, the web server and the UI all go through it.
             {
                 let state = app.state::<AppState>();
-                let mut ac = state.adapter_config.lock().unwrap();
-                *ac = config.adapter_config.clone();
+                let sm = &state.state_manager;
+                sm.attach(app.handle().clone());
+                sm.set_target(
+                    config.adapter.clone(),
+                    config.presentation_name.clone(),
+                    config.adapter_config.clone(),
+                );
+                sm.start_polling(2000);
             }
 
             // Sync the persisted overlay styling into the live channel the
@@ -138,94 +140,25 @@ pub fn run() {
                 let sources = state.output_sources();
                 state
                     .outputs
-                    .lock()
-                    .unwrap()
+                    .locked()
                     .reconcile(app.handle(), &sources, &config);
             }
 
+            // Auto-start OSC server
             let app_handle = app.handle().clone();
             let osc_config = config.osc.clone();
-            let adapter = config.adapter.clone();
-            let presentation_name = config.presentation_name.clone();
-            let adapter_config = config.adapter_config.clone();
-
-            let latency_store = {
-                let state = app_handle.state::<AppState>();
-                state.latency_store.clone()
-            };
-            let last_command_at = {
-                let state = app_handle.state::<AppState>();
-                state.last_command_at.clone()
-            };
-            let status_broadcast = {
-                let state = app_handle.state::<AppState>();
-                state.status_broadcast.clone()
-            };
-            let scroll_broadcast = {
-                let state = app_handle.state::<AppState>();
-                state.scroll_broadcast.clone()
-            };
-
-            // Auto-start OSC server
             tauri::async_runtime::spawn(async move {
                 log::info!(
                     "Auto-starting OSC server on port {}",
                     osc_config.receive_port
                 );
-
-                // Create state change channel
-                let (state_change_tx, state_change_rx) =
-                    tokio::sync::mpsc::channel::<osc::CachedState>(32);
-
-                // Create state manager
-                let canva_adapter = {
-                    let state = app_handle.state::<AppState>();
-                    state.canva_adapter.clone()
-                };
-                let state_manager = Arc::new(StateManager::new(
-                    adapter,
-                    presentation_name,
-                    adapter_config,
-                    state_change_tx,
-                    latency_store,
-                    Some(app_handle.clone()),
-                    last_command_at,
-                    Some(status_broadcast),
-                    Some(canva_adapter),
-                ));
-
-                // Initial state fetch
-                let initial_state = state_manager.force_refresh().await;
-                log::info!(
-                    "Initial state: presenting={}, slide={}/{}",
-                    initial_state.is_presenting,
-                    initial_state.current_slide,
-                    initial_state.total_slides
-                );
-
-                // Store state manager in AppState for webserver access
-                {
-                    let state = app_handle.state::<AppState>();
-                    let mut sm = state.state_manager.lock().unwrap();
-                    *sm = Some(state_manager.clone());
-                }
-
-                // Start OSC server (direct mode only)
-                let osc_server = OscServer::new(osc_config, state_manager)
-                    .with_scroll_broadcast(scroll_broadcast.clone());
-
-                match osc_server.start(state_change_rx).await {
-                    Ok(handle) => {
-                        let state = app_handle.state::<AppState>();
-                        let mut server_slot = state.osc_server.lock().unwrap();
-                        *server_slot = Some(handle);
-
+                let state = app_handle.state::<AppState>();
+                match state.start_osc_server(osc_config).await {
+                    Ok(()) => {
                         let _ = app_handle.emit("osc-server-started", ());
                         log::info!("OSC server auto-started successfully");
                     }
-                    Err(e) => {
-                        log::error!("Failed to auto-start OSC server: {}", e);
-                    }
+                    Err(e) => log::error!("Failed to auto-start OSC server: {}", e),
                 }
             });
 
@@ -261,7 +194,7 @@ pub fn run() {
 
                         {
                             let state = app_handle2.state::<AppState>();
-                            let mut discovery_slot = state.discovery_service.lock().unwrap();
+                            let mut discovery_slot = state.discovery_service.locked();
                             *discovery_slot = Some(service);
                             log::info!("Discovery service auto-started successfully");
                         }

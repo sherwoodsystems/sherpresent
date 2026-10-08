@@ -1,6 +1,7 @@
 use crate::config;
 use crate::osc::ScrollDirection;
 use crate::state::AppState;
+use crate::util::LockExt;
 
 #[tauri::command]
 pub async fn start_web_server(
@@ -15,7 +16,7 @@ pub async fn start_web_server(
 
 #[tauri::command]
 pub fn is_web_server_running(state: tauri::State<AppState>) -> bool {
-    let handle = state.web_server_handle.lock().unwrap();
+    let handle = state.web_server_handle.locked();
     handle.is_some()
 }
 

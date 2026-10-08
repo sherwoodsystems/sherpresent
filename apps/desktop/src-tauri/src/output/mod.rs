@@ -20,6 +20,7 @@
 pub mod feed;
 pub mod syphon;
 
+use crate::util::LockExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -133,7 +134,7 @@ pub struct Outputs {
 
 impl Outputs {
     pub fn status(&self) -> OutputsStatus {
-        self.status.lock().unwrap().clone()
+        self.status.locked().clone()
     }
 
     /// Start, stop or restart outputs so they match `cfg`. Idempotent, so it's
@@ -215,7 +216,7 @@ impl Outputs {
         let app = app.clone();
         Arc::new(move |s: OutputStatus| {
             let snapshot = {
-                let mut all = status.lock().unwrap();
+                let mut all = status.locked();
                 *field(&mut all) = s;
                 all.clone()
             };

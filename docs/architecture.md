@@ -50,7 +50,7 @@ Python service running on a Raspberry Pi that converts USB HID events from prese
 - Detects USB keyboards via evdev
 - Maps KEY_LEFT/KEY_RIGHT to prev/next
 - Supports up to 3 simultaneous USB devices with per-device channel assignment
-- Broadcasts or direct-sends OSC messages
+- Sends OSC messages directly to a desktop app
 - Web config UI on port 80
 
 ## Communication
@@ -60,4 +60,3 @@ All components communicate via the OSC protocol. See [spec/osc-protocol.md](../s
 ### Operating Modes
 
 - **Direct Mode**: Point-to-point, bridge sends to a single desktop app (ports 9000/9001)
-- **Broadcast Mode**: Multi-device, all participants on a shared port (default 9002)

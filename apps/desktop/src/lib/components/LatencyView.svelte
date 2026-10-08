@@ -101,11 +101,8 @@
     justify-content: space-between;
     margin-bottom: 0.75rem;
   }
-
   .section-title {
-    margin: 0;
     font-size: 1rem;
-    font-weight: 600;
   }
 
   .clear-btn {
@@ -113,8 +110,9 @@
     font-size: 0.75rem;
     border: 1px solid #ccc;
     border-radius: 4px;
-    background: #fff;
+    background: var(--input-bg);
     cursor: pointer;
+    color: var(--text);
   }
 
   .clear-btn:hover {
@@ -136,7 +134,7 @@
   }
 
   .placeholder {
-    color: #999;
+    color: var(--text-faint);
     font-size: 0.875rem;
     text-align: center;
     padding: 2rem 0;
@@ -155,7 +153,7 @@
   th {
     text-align: left;
     padding: 0.4rem 0.6rem;
-    border-bottom: 2px solid #e0e0e0;
+    border-bottom: 2px solid var(--divider);
     font-weight: 600;
     font-size: 0.75rem;
     color: #666;
@@ -209,12 +207,9 @@
     color: #c62828;
     font-weight: 600;
   }
-
   @media (prefers-color-scheme: dark) {
     .clear-btn {
-      background: #333;
       border-color: #555;
-      color: #eee;
     }
 
     .clear-btn:hover {
@@ -225,12 +220,7 @@
       background: #2a2a2a;
     }
 
-    .placeholder {
-      color: #666;
-    }
-
     th {
-      border-bottom-color: #444;
       color: #999;
     }
 

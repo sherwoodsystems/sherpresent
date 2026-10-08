@@ -372,6 +372,7 @@ mod tests {
     use super::*;
     use crate::captions::{CaptionSegment, CaptionSinks, CaptionUpdate};
     use crate::output::feed;
+    use crate::util::LockExt;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
 
@@ -447,7 +448,7 @@ mod tests {
     fn recorder() -> (Arc<Mutex<Vec<OutputStatus>>>, StatusReporter) {
         let statuses: Arc<Mutex<Vec<OutputStatus>>> = Arc::default();
         let seen = Arc::clone(&statuses);
-        (statuses, Arc::new(move |s| seen.lock().unwrap().push(s)))
+        (statuses, Arc::new(move |s| seen.locked().push(s)))
     }
 
     async fn wait_for(log: &Path, needle: &str) -> String {
@@ -473,7 +474,7 @@ mod tests {
         let script = fake_helper(&log);
 
         let sinks = CaptionSinks::default();
-        sinks.buffer.lock().unwrap().push_back(CaptionSegment {
+        sinks.buffer.locked().push_back(CaptionSegment {
             id: 1,
             source: "earlier".into(),
             translated: String::new(),
@@ -501,8 +502,7 @@ mod tests {
         // Wait for ready before publishing, so the subscription is live.
         for _ in 0..100 {
             if statuses
-                .lock()
-                .unwrap()
+                .locked()
                 .iter()
                 .any(|s| s.state == OutputState::Running)
             {
@@ -510,7 +510,7 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let running = statuses.lock().unwrap().last().cloned().unwrap();
+        let running = statuses.locked().last().cloned().unwrap();
         assert_eq!(running.state, OutputState::Running);
         assert!(running.has_clients);
 
@@ -534,7 +534,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            statuses.lock().unwrap().last().unwrap().state,
+            statuses.locked().last().unwrap().state,
             OutputState::Stopped
         );
     }
@@ -562,7 +562,7 @@ mod tests {
         .await
         .expect("fatal error must end run() without retrying");
 
-        let last = statuses.lock().unwrap().last().cloned().unwrap();
+        let last = statuses.locked().last().cloned().unwrap();
         assert_eq!(last.state, OutputState::Error);
         assert!(last.message.unwrap().contains("No Metal device"));
     }
@@ -590,8 +590,7 @@ mod tests {
         let mut seen = None;
         for _ in 0..100 {
             seen = statuses
-                .lock()
-                .unwrap()
+                .locked()
                 .iter()
                 .find(|s| s.message.is_some())
                 .cloned();

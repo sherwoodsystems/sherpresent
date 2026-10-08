@@ -8,6 +8,7 @@
 //! https://wiki.documentfoundation.org/Development/Impress_Remote_Protocol
 
 use super::{PresentationAdapter, PresentationState, SlideInfo};
+use crate::util::LockExt;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -55,7 +56,7 @@ impl LibreOfficeAdapter {
     fn connect(&self) -> Result<(), String> {
         // Check if already connected
         {
-            let conn = self.connection.lock().unwrap();
+            let conn = self.connection.locked();
             if conn.is_some() {
                 return Ok(());
             }
@@ -84,7 +85,7 @@ impl LibreOfficeAdapter {
 
         // Store the connection
         {
-            let mut conn = self.connection.lock().unwrap();
+            let mut conn = self.connection.locked();
             *conn = Some(stream);
         }
 
@@ -109,7 +110,7 @@ impl LibreOfficeAdapter {
 
     /// Send a raw message to LibreOffice
     fn send_raw(&self, message: &str) -> Result<(), String> {
-        let mut conn_guard = self.connection.lock().unwrap();
+        let mut conn_guard = self.connection.locked();
         let stream = conn_guard.as_mut().ok_or("Not connected to LibreOffice")?;
 
         stream
@@ -136,7 +137,7 @@ impl LibreOfficeAdapter {
         while start.elapsed() < timeout {
             self.process_available_messages()?;
 
-            let state = self.state.lock().unwrap();
+            let state = self.state.locked();
             if state.paired {
                 return Ok(());
             }
@@ -150,7 +151,7 @@ impl LibreOfficeAdapter {
 
     /// Process any available messages from the server
     fn process_available_messages(&self) -> Result<(), String> {
-        let mut conn_guard = self.connection.lock().unwrap();
+        let mut conn_guard = self.connection.locked();
         let stream = match conn_guard.as_mut() {
             Some(s) => s,
             None => return Ok(()),
@@ -202,7 +203,7 @@ impl LibreOfficeAdapter {
         let message_type = &lines[0];
         log::debug!("LibreOffice message: {} {:?}", message_type, &lines[1..]);
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.locked();
 
         match message_type.as_str() {
             "LO_SERVER_SERVER_PAIRED" | "LO_SERVER_PAIRED" => {
@@ -266,16 +267,16 @@ impl LibreOfficeAdapter {
 
     /// Disconnect from LibreOffice
     fn disconnect(&self) {
-        let mut conn = self.connection.lock().unwrap();
+        let mut conn = self.connection.locked();
         *conn = None;
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.locked();
         *state = ImpressState::default();
     }
 
     /// Check if we have an active connection
     fn is_connected(&self) -> bool {
-        let conn = self.connection.lock().unwrap();
+        let conn = self.connection.locked();
         conn.is_some()
     }
 
@@ -315,7 +316,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
     fn get_presentation_state(&self, _name: &str) -> Result<PresentationState, String> {
         self.ensure_connected()?;
 
-        let state = self.state.lock().unwrap();
+        let state = self.state.locked();
         Ok(PresentationState {
             is_open: state.paired,
             is_presenting: state.slideshow_running,
@@ -325,7 +326,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
     fn get_slide_info(&self, _name: &str) -> Result<SlideInfo, String> {
         self.ensure_connected()?;
 
-        let state = self.state.lock().unwrap();
+        let state = self.state.locked();
 
         if !state.slideshow_running {
             return Err("No slideshow is currently running".to_string());
@@ -343,7 +344,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
         self.ensure_connected()?;
 
         {
-            let state = self.state.lock().unwrap();
+            let state = self.state.locked();
             if !state.slideshow_running {
                 return Err("No slideshow is currently running".to_string());
             }
@@ -357,7 +358,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
         self.process_available_messages()?;
 
         // Return current state
-        let state = self.state.lock().unwrap();
+        let state = self.state.locked();
         Ok(SlideInfo {
             current: state.current_slide + 1,
             total: state.total_slides,
@@ -369,7 +370,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
         self.ensure_connected()?;
 
         {
-            let state = self.state.lock().unwrap();
+            let state = self.state.locked();
             if !state.slideshow_running {
                 return Err("No slideshow is currently running".to_string());
             }
@@ -383,7 +384,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
         self.process_available_messages()?;
 
         // Return current state
-        let state = self.state.lock().unwrap();
+        let state = self.state.locked();
         Ok(SlideInfo {
             current: state.current_slide + 1,
             total: state.total_slides,
@@ -397,14 +398,14 @@ impl PresentationAdapter for LibreOfficeAdapter {
     }
 
     fn get_presenter_notes(&self, _name: &str) -> Result<Option<String>, String> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.locked();
         Ok(state.presenter_notes.clone())
     }
 
     fn connection_status(&self) -> super::ConnectionStatus {
-        let conn = self.connection.lock().unwrap();
+        let conn = self.connection.locked();
         if conn.is_some() {
-            let state = self.state.lock().unwrap();
+            let state = self.state.locked();
             if state.paired {
                 super::ConnectionStatus::Connected
             } else {
@@ -472,7 +473,7 @@ mod tests {
     fn test_handle_paired_message() {
         let adapter = LibreOfficeAdapter::default();
         adapter.handle_message(&["LO_SERVER_SERVER_PAIRED".to_string()]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert!(state.paired);
     }
 
@@ -480,7 +481,7 @@ mod tests {
     fn test_handle_paired_alternate_message() {
         let adapter = LibreOfficeAdapter::default();
         adapter.handle_message(&["LO_SERVER_PAIRED".to_string()]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert!(state.paired);
     }
 
@@ -492,7 +493,7 @@ mod tests {
             "10".to_string(),
             "0".to_string(),
         ]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert!(state.slideshow_running);
         assert!(state.paired); // slideshow_started also sets paired
         assert_eq!(state.total_slides, 10);
@@ -510,7 +511,7 @@ mod tests {
         ]);
         // Then finish
         adapter.handle_message(&["slideshow_finished".to_string()]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert!(!state.slideshow_running);
         assert!(state.paired); // Still paired after finish
     }
@@ -524,7 +525,7 @@ mod tests {
             "0".to_string(),
         ]);
         adapter.handle_message(&["slide_updated".to_string(), "3".to_string()]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert_eq!(state.current_slide, 3);
     }
 
@@ -540,7 +541,7 @@ mod tests {
         let adapter = LibreOfficeAdapter::default();
         // Should not panic, state should be unchanged
         adapter.handle_message(&["some_unknown_message".to_string()]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert!(!state.paired);
         assert!(!state.slideshow_running);
     }
@@ -550,14 +551,14 @@ mod tests {
         let adapter = LibreOfficeAdapter::default();
         // Simulate some state
         {
-            let mut state = adapter.state.lock().unwrap();
+            let mut state = adapter.state.locked();
             state.paired = true;
             state.slideshow_running = true;
             state.current_slide = 5;
             state.total_slides = 10;
         }
         adapter.disconnect();
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert!(!state.paired);
         assert!(!state.slideshow_running);
         assert_eq!(state.current_slide, 0);
@@ -569,7 +570,7 @@ mod tests {
         let adapter = LibreOfficeAdapter::default();
         // Manually set state as if connected and presenting
         {
-            let mut state = adapter.state.lock().unwrap();
+            let mut state = adapter.state.locked();
             state.paired = true;
             state.slideshow_running = true;
             state.current_slide = 0; // 0-indexed from protocol
@@ -579,7 +580,7 @@ mod tests {
         // We can't easily test get_slide_info without a real connection
         // because ensure_connected will fail, but we can verify the
         // state conversion logic via handle_message + state check
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         // The adapter converts 0-indexed to 1-indexed in get_slide_info
         assert_eq!(state.current_slide + 1, 1); // First slide
         assert_eq!(state.total_slides, 5);
@@ -599,7 +600,7 @@ mod tests {
         let adapter = LibreOfficeAdapter::default();
         // Only message type, no slide count/index
         adapter.handle_message(&["slideshow_started".to_string()]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert!(state.slideshow_running);
         assert!(state.paired);
         // Should default to 0 since we didn't have enough lines
@@ -626,7 +627,7 @@ mod tests {
             "slide_notes".to_string(),
             "<p>These are my notes</p>".to_string(),
         ]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert_eq!(
             state.presenter_notes,
             Some("These are my notes".to_string())
@@ -637,7 +638,7 @@ mod tests {
     fn test_handle_slide_notes_empty_html() {
         let adapter = LibreOfficeAdapter::default();
         adapter.handle_message(&["slide_notes".to_string(), "<p></p>".to_string()]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert_eq!(state.presenter_notes, None);
     }
 
@@ -649,7 +650,7 @@ mod tests {
             "<p>Line one</p>".to_string(),
             "<p>Line two</p>".to_string(),
         ]);
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert_eq!(
             state.presenter_notes,
             Some("Line one\nLine two".to_string())
@@ -660,12 +661,12 @@ mod tests {
     fn test_slide_updated_with_invalid_number() {
         let adapter = LibreOfficeAdapter::default();
         {
-            let mut state = adapter.state.lock().unwrap();
+            let mut state = adapter.state.locked();
             state.current_slide = 2;
         }
         adapter.handle_message(&["slide_updated".to_string(), "not_a_number".to_string()]);
         // Should keep the old value on parse failure
-        let state = adapter.state.lock().unwrap();
+        let state = adapter.state.locked();
         assert_eq!(state.current_slide, 2);
     }
 }

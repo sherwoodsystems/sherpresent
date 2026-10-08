@@ -113,10 +113,10 @@ impl OscServer {
     ///
     /// - `Ok(OscServerHandle)` - Server is running, use handle to stop it
     /// - `Err(String)` - Failed to bind sockets
-    pub async fn start(
-        self,
-        mut state_change_rx: mpsc::Receiver<CachedState>,
-    ) -> Result<OscServerHandle, String> {
+    pub async fn start(self) -> Result<OscServerHandle, String> {
+        // Subscribe before binding so no change published meanwhile is missed.
+        let mut state_changes = self.state_manager.subscribe();
+
         // =====================================================================
         // BIND SOCKETS
         // =====================================================================
@@ -152,12 +152,6 @@ impl OscServer {
         // =====================================================================
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-
-        // =====================================================================
-        // START POLLING
-        // =====================================================================
-
-        self.state_manager.start_polling(2000);
 
         // =====================================================================
         // SPAWN MAIN EVENT LOOP
@@ -209,7 +203,9 @@ impl OscServer {
                     // =========================================================
                     // BRANCH 2: State changed -> send feedback
                     // =========================================================
-                    Some(state) = state_change_rx.recv() => {
+                    changed = state_changes.recv() => {
+                        // Lagged: skip the backlog and send where things are now.
+                        let state = changed.unwrap_or_else(|_| state_manager.get_state());
                         Self::send_feedback_to_all(&state, &feedback_socket, &feedback_addrs).await;
                     }
 
@@ -218,7 +214,6 @@ impl OscServer {
                     // =========================================================
                     _ = shutdown_rx.recv() => {
                         log::info!("OSC server received shutdown signal");
-                        state_manager.stop_polling();
                         break;
                     }
                 }
@@ -277,7 +272,7 @@ impl OscServer {
     /// Handle an incoming OSC packet.
     async fn handle_packet(
         packet: OscPacket,
-        state_manager: &StateManager,
+        state_manager: &Arc<StateManager>,
         feedback_socket: &UdpSocket,
         feedback_addrs: &[SocketAddr],
         scroll_tx: Option<&tokio::sync::broadcast::Sender<ScrollDirection>>,
@@ -311,7 +306,7 @@ impl OscServer {
     /// Handle a single OSC message.
     async fn handle_message(
         msg: &rosc::OscMessage,
-        state_manager: &StateManager,
+        state_manager: &Arc<StateManager>,
         feedback_socket: &UdpSocket,
         feedback_addrs: &[SocketAddr],
         scroll_tx: Option<&tokio::sync::broadcast::Sender<ScrollDirection>>,

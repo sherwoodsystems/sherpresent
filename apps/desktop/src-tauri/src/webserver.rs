@@ -7,8 +7,6 @@ use axum::extract::WebSocketUpgrade;
 use axum::response::{Html, Json};
 use axum::routing::{get, post};
 use axum::Router;
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::StreamExt;
 
 use crate::adapters::LiveStatus;
 use crate::captions::CaptionSinks;
@@ -16,12 +14,12 @@ use crate::config::WebServerConfig;
 use crate::osc::latency::CommandSource;
 use crate::osc::state_manager::StateManager;
 use crate::osc::ScrollDirection;
+use crate::util::LockExt;
 
 /// Handle for a running web server. Holds JoinHandles to keep tasks alive.
 #[allow(dead_code)]
 pub struct WebServerHandle {
     serve_handle: tokio::task::JoinHandle<()>,
-    updater_handle: tokio::task::JoinHandle<()>,
 }
 
 /// Shared state for the axum web server
@@ -31,12 +29,11 @@ struct WebServerState {
     status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
     notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
     scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
-    last_status: Arc<Mutex<LiveStatus>>,
     ontime_host: String,
     ontime_port: u16,
     font_size: u16,
-    /// StateManager for handling incoming commands via WebSocket/REST
-    state_manager: Option<Arc<StateManager>>,
+    /// Current status, and the target of commands via WebSocket/REST
+    state_manager: Arc<StateManager>,
     /// Live caption fan-out and overlay styling for the /captions overlay
     captions: CaptionSinks,
 }
@@ -48,7 +45,7 @@ pub async fn start(
     status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
     notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
     scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
-    state_manager: Option<Arc<StateManager>>,
+    state_manager: Arc<StateManager>,
     captions: CaptionSinks,
 ) -> Result<WebServerHandle, String> {
     let state = WebServerState {
@@ -56,24 +53,12 @@ pub async fn start(
         status_broadcast,
         notes_broadcast,
         scroll_broadcast,
-        last_status: Arc::new(Mutex::new(LiveStatus::default())),
         ontime_host: config.ontime_host,
         ontime_port: config.ontime_port,
         font_size: config.font_size,
         state_manager,
         captions,
     };
-
-    // Spawn a task to keep last_status updated for REST endpoint
-    let status_rx = state.status_broadcast.subscribe();
-    let last_status = state.last_status.clone();
-    let updater_handle = tokio::spawn(async move {
-        let mut stream = BroadcastStream::new(status_rx);
-        while let Some(Ok(status)) = stream.next().await {
-            let mut last = last_status.lock().unwrap();
-            *last = status;
-        }
-    });
 
     let app = Router::new()
         .route("/", get(page_handler))
@@ -99,10 +84,7 @@ pub async fn start(
         }
     });
 
-    Ok(WebServerHandle {
-        serve_handle,
-        updater_handle,
-    })
+    Ok(WebServerHandle { serve_handle })
 }
 
 // =============================================================================
@@ -130,43 +112,28 @@ struct CommandResponse {
     error: Option<String>,
 }
 
-/// Execute a command on the StateManager
-fn execute_command(
-    state_manager: &StateManager,
-    action: &str,
-    slide: Option<i32>,
-) -> Result<(), String> {
+/// Execute a command from the stage page (WebSocket or REST).
+fn execute_command(state: &WebServerState, action: &str, slide: Option<i32>) -> Result<(), String> {
+    let sm = &state.state_manager;
+    let scroll = |dir| {
+        let _ = state.scroll_broadcast.send(dir);
+    };
     match action {
-        "next" => {
-            state_manager.next_slide(CommandSource::Ws);
-            Ok(())
-        }
-        "prev" | "previous" => {
-            state_manager.prev_slide(CommandSource::Ws);
-            Ok(())
-        }
+        "next" => sm.next_slide(CommandSource::Ws),
+        "prev" | "previous" => sm.prev_slide(CommandSource::Ws),
         "goto" => {
             let s = slide.ok_or("Missing 'slide' parameter for goto")?;
-            state_manager.goto_slide(s, CommandSource::Ws);
-            Ok(())
+            sm.goto_slide(s, CommandSource::Ws);
         }
-        "status" | "refresh" => {
-            state_manager.refresh_state();
-            Ok(())
-        }
-        "zoomIn" => {
-            state_manager.zoom_in();
-            Ok(())
-        }
-        "zoomOut" => {
-            state_manager.zoom_out();
-            Ok(())
-        }
-        "scrollUp" => Ok(()), // handled separately via scroll_broadcast
-        "scrollDown" => Ok(()),
-        "notesPage" => Ok(()),
-        _ => Err(format!("Unknown action: {}", action)),
+        "status" | "refresh" => sm.refresh_state(),
+        "zoomIn" => sm.zoom_in(),
+        "zoomOut" => sm.zoom_out(),
+        "scrollUp" => scroll(ScrollDirection::Up),
+        "scrollDown" => scroll(ScrollDirection::Down),
+        "notesPage" => scroll(ScrollDirection::Page),
+        _ => return Err(format!("Unknown action: {}", action)),
     }
+    Ok(())
 }
 
 // =============================================================================
@@ -181,8 +148,8 @@ struct StateResponse {
 }
 
 async fn state_handler(AxumState(state): AxumState<WebServerState>) -> Json<StateResponse> {
-    let status = state.last_status.lock().unwrap().clone();
-    let notes = state.notes_cache.lock().unwrap().clone();
+    let status = LiveStatus::from(&state.state_manager.get_state());
+    let notes = state.notes_cache.locked().clone();
 
     Json(StateResponse { status, notes })
 }
@@ -192,40 +159,7 @@ async fn command_handler(
     AxumState(state): AxumState<WebServerState>,
     axum::Json(cmd): axum::Json<CommandRequest>,
 ) -> Json<CommandResponse> {
-    let Some(ref sm) = state.state_manager else {
-        return Json(CommandResponse {
-            ok: false,
-            error: Some("StateManager not available".to_string()),
-        });
-    };
-
-    // Handle scroll commands via broadcast channel
-    match cmd.action.as_str() {
-        "scrollUp" => {
-            let _ = state.scroll_broadcast.send(ScrollDirection::Up);
-            return Json(CommandResponse {
-                ok: true,
-                error: None,
-            });
-        }
-        "scrollDown" => {
-            let _ = state.scroll_broadcast.send(ScrollDirection::Down);
-            return Json(CommandResponse {
-                ok: true,
-                error: None,
-            });
-        }
-        "notesPage" => {
-            let _ = state.scroll_broadcast.send(ScrollDirection::Page);
-            return Json(CommandResponse {
-                ok: true,
-                error: None,
-            });
-        }
-        _ => {}
-    }
-
-    match execute_command(sm, &cmd.action, cmd.slide) {
+    match execute_command(&state, &cmd.action, cmd.slide) {
         Ok(()) => Json(CommandResponse {
             ok: true,
             error: None,
@@ -252,8 +186,8 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
     log::info!("WebSocket client connected");
 
     // Send initial state immediately
-    let initial_status = state.last_status.lock().unwrap().clone();
-    let initial_notes = state.notes_cache.lock().unwrap().clone();
+    let initial_status = LiveStatus::from(&state.state_manager.get_state());
+    let initial_notes = state.notes_cache.locked().clone();
 
     let status_json = serde_json::json!({
         "type": "status",
@@ -333,39 +267,18 @@ async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
                         if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
                             if ws_msg.msg_type == "command" {
                                 if let Some(action) = &ws_msg.action {
-                                    // Handle scroll commands via broadcast
-                                    match action.as_str() {
-                                        "scrollUp" => {
-                                            let _ = state.scroll_broadcast.send(ScrollDirection::Up);
-                                            continue;
+                                    match execute_command(&state, action, ws_msg.slide) {
+                                        Ok(()) => {
+                                            log::debug!("WS command executed: {}", action);
                                         }
-                                        "scrollDown" => {
-                                            let _ = state.scroll_broadcast.send(ScrollDirection::Down);
-                                            continue;
+                                        Err(e) => {
+                                            log::warn!("WS command failed: {}", e);
+                                            let err_msg = serde_json::json!({
+                                                "type": "error",
+                                                "payload": e,
+                                            });
+                                            let _ = socket.send(Message::Text(err_msg.to_string().into())).await;
                                         }
-                                        "notesPage" => {
-                                            let _ = state.scroll_broadcast.send(ScrollDirection::Page);
-                                            continue;
-                                        }
-                                        _ => {}
-                                    }
-
-                                    if let Some(ref sm) = state.state_manager {
-                                        match execute_command(sm, action, ws_msg.slide) {
-                                            Ok(()) => {
-                                                log::debug!("WS command executed: {}", action);
-                                            }
-                                            Err(e) => {
-                                                log::warn!("WS command failed: {}", e);
-                                                let err_msg = serde_json::json!({
-                                                    "type": "error",
-                                                    "payload": e,
-                                                });
-                                                let _ = socket.send(Message::Text(err_msg.to_string().into())).await;
-                                            }
-                                        }
-                                    } else {
-                                        log::warn!("WS command received but no StateManager available");
                                     }
                                 }
                             }

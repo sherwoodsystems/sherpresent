@@ -1,6 +1,7 @@
 //! What each output's helper is fed on stdin: the same NDJSON a web page for
 //! that content gets over its socket, so native and web outputs agree.
 
+use crate::util::LockExt;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -63,21 +64,16 @@ pub struct NotesSources {
     /// Scroll and teleprompter paging, as the stage page gets them
     pub scroll_broadcast: broadcast::Sender<ScrollDirection>,
     /// For the opening status: the broadcast only carries changes.
-    pub state_manager: Arc<Mutex<Option<Arc<StateManager>>>>,
+    pub state_manager: Arc<StateManager>,
 }
 
 impl NotesSources {
     fn current_status(&self) -> LiveStatus {
-        self.state_manager
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|sm| LiveStatus::from(&sm.get_state()))
-            .unwrap_or_default()
+        LiveStatus::from(&self.state_manager.get_state())
     }
 
     fn notes_message(&self) -> String {
-        message("notes", &*self.notes.lock().unwrap())
+        message("notes", &*self.notes.locked())
     }
 }
 
@@ -136,7 +132,7 @@ mod tests {
             notes_broadcast: broadcast::channel(4).0,
             status_broadcast: broadcast::channel(4).0,
             scroll_broadcast: broadcast::channel(4).0,
-            state_manager: Arc::new(Mutex::new(None)),
+            state_manager: Arc::new(StateManager::new(Default::default())),
         }
     }
 
