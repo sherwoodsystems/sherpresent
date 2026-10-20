@@ -3,6 +3,27 @@
 All notable changes to the SherPresent desktop app. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-10-20
+
+### Added
+
+- **QLab cue on slide change.** On the QLab tab, "GO the matching cue in
+  QLab" makes each slide change during a show GO the QLab cue numbered with a
+  prefix plus the slide number (prefix `S` by default: slide 7 GOes cue `S7`).
+  Extra OSC can be sent alongside, with `{slide}` replaced by the slide
+  number. It goes over the existing QLab connection the moment the slide
+  changes; changes made in PowerPoint itself are caught within about a
+  quarter second. The tab shows what was last sent, or QLab's error.
+- **PowerPoint is picked automatically.** When exactly one presentation is
+  presenting in PowerPoint (macOS or Windows), it's selected, and when that
+  show stops and another starts, the app follows. Choosing a presentation by
+  hand still sticks while a show keeps running.
+
+### Fixed
+
+- In custom QLab OSC, a quoted argument (`/go "53"`) is sent as the text
+  `53`, as QLab requires for cue numbers.
+
 ## [1.1.1] - 2026-10-19
 
 ### Fixed
