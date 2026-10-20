@@ -7,9 +7,12 @@
 //! several linear cues of one kind run at once, the one that ends last is
 //! shown. With nothing running, the cue at the playhead is shown as "next".
 //!
-//! QLab pushes no time, so [`client`] polls: `runningOrPausedCues` for what's
+//! QLab pushes no time, so [`client`] polls `runningOrPausedCues` for what's
 //! active (every 100 ms while anything is, 500 ms otherwise, and at once when
-//! QLab reports a cue changed), then `valuesForKeys` per audio or video cue.
+//! QLab reports a cue changed), and reads each audio or video cue's time with
+//! `valuesForKeys` when it starts and every 2 s after. Between readings the
+//! time runs on a local clock, published just after each second turns over,
+//! so the count-out ticks on true seconds rather than when replies land.
 //!
 //! One [`QLab`] hub per app: the client publishes [`QLabState`] to it, and the
 //! QLab tab, the `/qlab` web page and the Syphon output all read the same

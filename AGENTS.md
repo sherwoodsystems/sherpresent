@@ -169,8 +169,18 @@ with many active cues.
 - `client.rs` - OSC over TCP (SLIP, port 53000): `/workspaces` →
   `/workspace/{id}/connect {passcode}` → `updates 1`, then polls
   `runningOrPausedCues` (100 ms while active, 500 ms idle, immediately on a
-  `/update/.../cue_id/` push) and each audio/video cue's `valuesForKeys`.
+  `/update/.../cue_id/` push) and each audio/video cue's `valuesForKeys`
+  (when it starts, every `SYNC_EVERY` = 2 s, and when it pauses or resumes).
+  QLab doesn't document whether a pause sends a `cue_id` push, so pauses are
+  found by also polling `runningCues` (only cues whose time is elapsing)
+  while anything is active: a counting cue that leaves or rejoins it is read
+  again (`ActiveCues::set_elapsing`).
   `Session` is the protocol with no I/O, so tests feed it QLab replies.
+- Time left is never shown straight from a reply: each cue has a `Clock`
+  (`cues.rs`) started by a reading and reset only when a later one is
+  `RESYNC_DRIFT` off. `Session::wake_at` wakes just after each shown second
+  turns over (`next_second`, matching the views' round-up) and every 100 ms
+  for the bar, so the views tick on true seconds without timers of their own.
 - `cues.rs` - which cue each kind shows: ignores loops (`infiniteLoop`,
   `playCount > 1`), cues without a duration and `hiddenCues`; picks the one
   ending last and sticks with it unless another ends `SWITCH_MARGIN` later

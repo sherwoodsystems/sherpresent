@@ -21,6 +21,12 @@ All notable changes to the SherPresent desktop app. Versions follow
 
 ### Fixed
 
+- **QLab count-out ticks in true seconds.** The time left used to move
+  whenever a poll reply landed, so seconds felt uneven. Each cue's time is
+  now read from QLab when it starts and counted down on the app's own clock,
+  checked against QLab every 2 seconds and corrected only if it has drifted.
+  Stopping, pausing or resuming a cue still shows within a tenth of a
+  second; scrubbing one shows at the next check.
 - In custom QLab OSC, a quoted argument (`/go "53"`) is sent as the text
   `53`, as QLab requires for cue numbers.
 

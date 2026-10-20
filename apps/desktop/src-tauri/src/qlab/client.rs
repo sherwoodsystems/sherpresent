@@ -8,8 +8,17 @@
 //! 2. `/workspace/{id}/connect {passcode}`; `ok` (QLab 5 adds `:permissions`)
 //!    or `badpass`.
 //! 3. `/workspace/{id}/updates 1`, so QLab says when a cue changes or the
-//!    playhead moves, and from then on poll `runningOrPausedCues`, each
-//!    active audio or video cue's `valuesForKeys`, and the playhead cue's.
+//!    playhead moves. From then on poll:
+//!    - `runningOrPausedCues`: what's active (and, while anything is,
+//!      `runningCues`: which of it is elapsing, to see pauses and resumes);
+//!    - the playhead cue's `valuesForKeys`;
+//!    - each active audio or video cue's `valuesForKeys`: when it starts,
+//!      every [`cues::SYNC_EVERY`], and when it pauses, resumes or QLab says
+//!      it changed.
+//!
+//! Between readings each cue's time runs on a local clock, and the state is
+//! published just after every second turns over, so the views tick on true
+//! seconds.
 //!
 //! Every reply is `/reply/{address} {json}` with `status` and `data`.
 //!
@@ -33,8 +42,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY: Duration = Duration::from_secs(2);
 /// QLab delays progressively after each wrong passcode; don't hammer it.
 const BADPASS_RETRY: Duration = Duration::from_secs(10);
-/// Poll rate while anything is active: tenths are what a count-out needs.
+/// Poll rate while anything is active, to see cues stop promptly. Only new
+/// cues are read here; time comes from the clocks.
 const POLL_ACTIVE: Duration = Duration::from_millis(100);
+/// While a cue counts down, how often its bar moves.
+const FRAME: Duration = Duration::from_millis(100);
 /// Idle: a cue starting also triggers an immediate poll via `/updates`.
 const POLL_IDLE: Duration = Duration::from_millis(500);
 const PLAYHEAD_EVERY: Duration = Duration::from_secs(1);
@@ -103,7 +115,7 @@ async fn connect_and_follow(
     log::info!("Connected to QLab at {}", addr);
 
     let mut session = Session::new(key.clone(), Instant::now());
-    session.set_hidden(&hidden.borrow_and_update());
+    session.set_hidden(&hidden.borrow_and_update(), Instant::now());
     let mut decoder = slip::Decoder::default();
     let mut buf = vec![0u8; 64 * 1024];
     let mut outgoing = session.start();
@@ -117,7 +129,7 @@ async fn connect_and_follow(
                 return (format!("Lost connection to QLab: {}", e), RETRY);
             }
         }
-        out.publish(session.state());
+        out.publish(session.state(Instant::now()));
         if let Some(end) = session.ended.take() {
             return end;
         }
@@ -139,14 +151,14 @@ async fn connect_and_follow(
                     }
                 }
             }
-            _ = tokio::time::sleep_until(session.wake_at()) => {
+            _ = tokio::time::sleep_until(session.wake_at(Instant::now())) => {
                 outgoing.extend(session.tick(Instant::now()));
             }
             Some(trigger) = triggers.recv() => {
                 outgoing.extend(session.fire(trigger));
             }
             Ok(()) = hidden.changed() => {
-                session.set_hidden(&hidden.borrow_and_update());
+                session.set_hidden(&hidden.borrow_and_update(), Instant::now());
             }
         }
     }
@@ -232,15 +244,16 @@ impl Session {
         }
     }
 
-    pub fn set_hidden(&mut self, hidden: &[String]) {
-        self.cues.set_hidden(hidden);
+    pub fn set_hidden(&mut self, hidden: &[String], now: Instant) {
+        self.cues.set_hidden(hidden, now);
     }
 
     pub fn start(&self) -> Vec<OscMessage> {
         vec![osc("/workspaces", vec![])]
     }
 
-    pub fn state(&self) -> QLabState {
+    /// What the views show at `now`.
+    pub fn state(&self, now: Instant) -> QLabState {
         let (connected, workspace) = match &self.phase {
             Phase::Connected { name, .. } => (true, Some(name.clone())),
             Phase::Connecting { name, .. } => (false, Some(name.clone())),
@@ -257,10 +270,10 @@ impl Session {
             workspace,
             workspaces: self.workspaces.clone(),
             video: connected
-                .then(|| self.cues.countdown(Kind::Video))
+                .then(|| self.cues.countdown(Kind::Video, now))
                 .flatten(),
             audio: connected
-                .then(|| self.cues.countdown(Kind::Audio))
+                .then(|| self.cues.countdown(Kind::Audio, now))
                 .flatten(),
             next: connected.then(|| self.next.clone()).flatten(),
             slide_trigger: self.slide_trigger.clone(),
@@ -325,11 +338,18 @@ impl Session {
         true
     }
 
-    /// When [`tick`](Self::tick) next has something to do.
-    pub fn wake_at(&self) -> Instant {
+    /// When [`tick`](Self::tick) next has something to do, or the views
+    /// something new to show.
+    pub fn wake_at(&self, now: Instant) -> Instant {
         let silence = self.last_heard + SILENCE_LIMIT;
         match self.phase {
-            Phase::Connected { .. } => self.next_poll.min(self.next_playhead).min(silence),
+            Phase::Connected { .. } => {
+                let polls = self.next_poll.min(self.next_playhead).min(silence);
+                match self.cues.next_second(now) {
+                    Some(second) => polls.min(second).min(now + FRAME),
+                    None => polls,
+                }
+            }
             Phase::Discovering => self.next_workspaces.min(silence),
             Phase::Connecting { .. } => silence,
         }
@@ -343,17 +363,19 @@ impl Session {
         let mut out = Vec::new();
         match &self.phase {
             Phase::Connected { id, .. } => {
+                // A clock that ran out hands over to the next cue.
+                self.cues.reselect(now);
                 if now >= self.next_poll {
                     out.push(osc(
                         format!("/workspace/{}/runningOrPausedCues", id),
                         vec![],
                     ));
-                    let every = if self.cues.is_empty() {
-                        POLL_IDLE
-                    } else {
-                        POLL_ACTIVE
-                    };
-                    self.next_poll = now + every;
+                    let active = !self.cues.is_empty();
+                    if active {
+                        // Which of them are elapsing: catches a pause or resume.
+                        out.push(osc(format!("/workspace/{}/runningCues", id), vec![]));
+                    }
+                    self.next_poll = now + if active { POLL_ACTIVE } else { POLL_IDLE };
                 }
                 if now >= self.next_playhead {
                     out.push(osc(
@@ -418,28 +440,20 @@ impl Session {
             return vec![];
         };
 
+        // Anything but a list means nothing can be confirmed running: clear
+        // rather than keep the last answer.
+        let cue_list = || match status {
+            "ok" => data.clone(),
+            _ => {
+                log::info!("QLab {} replied {}: {}", addr, status, data);
+                Value::Array(vec![])
+            }
+        };
         if addr.ends_with("/runningOrPausedCues") {
-            // Anything but a list means nothing can be confirmed running:
-            // clear rather than keep showing the last answer.
-            let empty = Value::Array(vec![]);
-            let data = if status == "ok" {
-                data
-            } else {
-                log::info!("QLab runningOrPausedCues replied {}: {}", status, data);
-                &empty
-            };
-            let keys = keys_arg(CUE_KEYS);
-            return self
-                .cues
-                .set_running(data)
-                .into_iter()
-                .map(|cue| {
-                    osc(
-                        format!("/workspace/{}/cue_id/{}/valuesForKeys", id, cue),
-                        vec![keys.clone()],
-                    )
-                })
-                .collect();
+            return values_requests(id, self.cues.set_running(&cue_list(), now));
+        }
+        if addr.ends_with("/runningCues") {
+            return values_requests(id, self.cues.set_elapsing(&cue_list(), now));
         }
         if addr.contains("/cue/playhead/") {
             // An error here just means no cue is at the playhead.
@@ -449,7 +463,7 @@ impl Session {
             return vec![];
         }
         if addr.contains("/cue_id/") && addr.ends_with("/valuesForKeys") && status == "ok" {
-            self.cues.set_values(data);
+            self.cues.set_values(data, now);
         }
         vec![]
     }
@@ -547,8 +561,10 @@ impl Session {
             self.ended = Some(("QLab closed the workspace".to_string(), RETRY));
         } else if rest.ends_with("/playbackPosition") {
             self.next_playhead = now;
-        } else if rest.starts_with("/cue_id/") {
-            // A cue started, stopped or changed: look now, not at the next poll.
+        } else if let Some(cue) = rest.strip_prefix("/cue_id/") {
+            // A cue started, stopped, paused or changed: look now, not at the
+            // next poll, and read its time again.
+            self.cues.resync(cue.split('/').next().unwrap_or_default());
             self.next_poll = now;
         }
     }
@@ -562,6 +578,19 @@ fn in_workspace(id: &str, addr: &str) -> String {
     } else {
         format!("/workspace/{}{}", id, addr)
     }
+}
+
+/// Ask for each cue's [`CUE_KEYS`].
+fn values_requests(workspace: &str, cues: Vec<String>) -> Vec<OscMessage> {
+    let keys = keys_arg(CUE_KEYS);
+    cues.into_iter()
+        .map(|cue| {
+            osc(
+                format!("/workspace/{}/cue_id/{}/valuesForKeys", workspace, cue),
+                vec![keys.clone()],
+            )
+        })
+        .collect()
 }
 
 /// `valuesForKeys` takes the keys as one JSON array string.
@@ -641,14 +670,14 @@ mod tests {
         );
         assert_eq!(addrs(&out), vec!["/workspace/W/connect"]);
         assert_eq!(out[0].args, vec![OscType::String("1234".into())]);
-        assert!(!s.state().connected);
+        assert!(!s.state(now).connected);
 
         let out = s.handle(
             &reply("/workspace/W/connect", "ok", json!("ok:view|edit|control")),
             now,
         );
         assert_eq!(addrs(&out), vec!["/workspace/W/updates"]);
-        let state = s.state();
+        let state = s.state(now);
         assert!(state.connected);
         assert_eq!(state.workspace.as_deref(), Some("Show.qlab5"));
         assert_eq!(state.message, None);
@@ -684,8 +713,8 @@ mod tests {
             now,
         );
         assert!(out.is_empty());
-        assert!(s.state().message.unwrap().contains("isn't open"));
-        assert_eq!(s.state().workspaces, vec!["Other.qlab5"]);
+        assert!(s.state(now).message.unwrap().contains("isn't open"));
+        assert_eq!(s.state(now).workspaces, vec!["Other.qlab5"]);
 
         let out = s.handle(
             &reply(
@@ -734,13 +763,24 @@ mod tests {
             ),
             now,
         );
-        let video = s.state().video.unwrap();
+        let video = s.state(now).video.unwrap();
         assert_eq!((video.number.as_str(), video.remaining), ("5", 20.0));
 
-        // Anything active: polls come at the fast rate from the next one on.
+        // Anything active: polls come at the fast rate from the next one on,
+        // with `runningCues` to see pauses.
         let next = s.next_poll;
-        s.tick(next);
+        assert_eq!(
+            addrs(&s.tick(next)),
+            vec![
+                "/workspace/W/runningOrPausedCues",
+                "/workspace/W/runningCues"
+            ]
+        );
         assert_eq!(s.next_poll, next + POLL_ACTIVE);
+
+        // Gone from `runningCues`: paused, so read it again.
+        let out = s.handle(&reply("/workspace/W/runningCues", "ok", json!([])), next);
+        assert_eq!(addrs(&out), vec!["/workspace/W/cue_id/v/valuesForKeys"]);
     }
 
     #[test]
@@ -763,14 +803,14 @@ mod tests {
             ),
             now,
         );
-        assert!(s.state().video.is_some());
+        assert!(s.state(now).video.is_some());
 
         // QLab 5.3+ answers some queries with an error when nothing is active.
         s.handle(
             &reply("/workspace/W/runningOrPausedCues", "error", Value::Null),
             now,
         );
-        assert!(s.state().video.is_none(), "a stale cue must not linger");
+        assert!(s.state(now).video.is_none(), "a stale cue must not linger");
     }
 
     #[test]
@@ -785,7 +825,7 @@ mod tests {
             ),
             now,
         );
-        assert_eq!(s.state().next.unwrap().name, "Interval");
+        assert_eq!(s.state(now).next.unwrap().name, "Interval");
         s.handle(
             &reply(
                 "/workspace/W/cue/playhead/valuesForKeys",
@@ -794,7 +834,7 @@ mod tests {
             ),
             now,
         );
-        assert!(s.state().next.is_none());
+        assert!(s.state(now).next.is_none());
     }
 
     #[test]
@@ -804,7 +844,45 @@ mod tests {
         s.tick(now);
         let later = now + Duration::from_millis(50);
         s.handle(&osc("/update/workspace/W/cue_id/v", vec![]), later);
-        assert_eq!(s.wake_at(), later);
+        assert_eq!(s.wake_at(later), later);
+    }
+
+    #[test]
+    fn test_running_cue_is_read_once_then_counts_on_the_clock() {
+        let now = Instant::now();
+        let mut s = connected(now);
+        let list = || {
+            reply(
+                "/workspace/W/runningOrPausedCues",
+                "ok",
+                json!([{ "uniqueID": "v", "type": "Video", "number": "5", "listName": "Film" }]),
+            )
+        };
+        assert_eq!(s.handle(&list(), now).len(), 1);
+        s.handle(
+            &reply(
+                "/workspace/W/cue_id/v/valuesForKeys",
+                "ok",
+                json!({ "uniqueID": "v", "duration": 40.0, "percentActionElapsed": 0.4875 }),
+            ),
+            now,
+        );
+        // 20.5 s left: the views next change number half a second from now.
+        let soon = now + FRAME;
+        assert_eq!(s.wake_at(now), soon.min(s.next_poll).min(s.next_playhead));
+        let tick = s.cues.next_second(soon).unwrap();
+        assert!(tick > now + Duration::from_millis(500) && tick < now + Duration::from_millis(505));
+
+        // Later polls don't ask again until the sync period is up...
+        let later = now + Duration::from_secs(1);
+        assert!(s.handle(&list(), later).is_empty());
+        assert!((s.state(later).video.unwrap().remaining - 19.5).abs() < 1e-6);
+        // ...unless QLab says the cue changed (paused, say).
+        s.handle(&osc("/update/workspace/W/cue_id/v", vec![]), later);
+        assert_eq!(
+            addrs(&s.handle(&list(), later)),
+            vec!["/workspace/W/cue_id/v/valuesForKeys"]
+        );
     }
 
     #[test]
@@ -897,7 +975,13 @@ mod tests {
         assert!(state.connected);
         assert_eq!(state.workspace.as_deref(), Some("Show"));
         let video = state.video.unwrap();
-        assert_eq!((video.name.as_str(), video.remaining), ("Film", 45.0));
+        assert_eq!(video.name, "Film");
+        // 45 s at the reading, counted down on our clock since.
+        assert!(
+            (44.0..=45.0).contains(&video.remaining),
+            "{}",
+            video.remaining
+        );
         stop.send(true).unwrap();
     }
 
@@ -921,7 +1005,7 @@ mod tests {
                 "/workspace/X/go"
             ]
         );
-        let report = s.state().slide_trigger.unwrap();
+        let report = s.state(now).slide_trigger.unwrap();
         assert_eq!((report.slide, report.error), (4, None));
     }
 
@@ -930,7 +1014,7 @@ mod tests {
         let now = Instant::now();
         let mut s = Session::new(key("", ""), now);
         assert!(s.fire(trigger(2, "/go")).is_empty());
-        assert!(s.state().slide_trigger.unwrap().error.is_some());
+        assert!(s.state(now).slide_trigger.unwrap().error.is_some());
     }
 
     #[test]
@@ -940,7 +1024,7 @@ mod tests {
         s.fire(trigger(3, "/go"));
         s.handle(&reply("/workspace/W/go", "denied", Value::Null), now);
         assert!(s.ended.is_none());
-        let error = s.state().slide_trigger.unwrap().error.unwrap();
+        let error = s.state(now).slide_trigger.unwrap().error.unwrap();
         assert!(error.contains("denied"), "{}", error);
     }
 

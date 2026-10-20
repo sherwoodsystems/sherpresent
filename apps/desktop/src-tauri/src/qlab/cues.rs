@@ -3,13 +3,22 @@
 //! and hidden cue numbers, and picks the cue that ends last per kind, sticking
 //! with it until another ends clearly later.
 //!
+//! Time left comes from a [`Clock`] per cue, not straight from the replies:
+//! one reading starts it, it runs on our own clock, and a reading every
+//! [`SYNC_EVERY`] corrects it only if it has drifted [`RESYNC_DRIFT`]. Shown
+//! straight, readings land whenever a reply does and the seconds stutter.
+//! A cue is read again at once when it starts or stops elapsing (paused,
+//! resumed), seen by comparing QLab's `runningCues` with what we last read.
+//!
 //! Logs (target `sherpresent_lib::qlab::cues`) at `info` whenever the active
 //! list, a cue's playback shape or a shown cue changes, with the reason a cue
 //! doesn't count; every reply at `trace`.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use serde_json::Value;
+use tokio::time::Instant;
 
 use super::{Countdown, CueLabel};
 
@@ -50,13 +59,96 @@ pub(super) const CUE_KEYS: &[&str] = &[
 /// still lists it (a video holding its last frame stays active).
 const FINISHED: f64 = 0.999;
 
-/// An active audio or video cue, and what QLab last said about its playback
-/// (`None` until its first `valuesForKeys` reply).
+/// How often each active cue's time is read from QLab to check its clock.
+pub(super) const SYNC_EVERY: Duration = Duration::from_secs(2);
+
+/// After asking for a cue's values, how long a `runningCues` reply that
+/// disagrees with them waits before asking again.
+const RECHECK_AFTER: Duration = Duration::from_millis(300);
+
+/// A clock this far from QLab's reading is reset to it; anything closer is
+/// reply latency, and correcting it would make the seconds stutter.
+const RESYNC_DRIFT: f64 = 0.25;
+
+/// Longest time left a clock holds (115 days): keeps an absurd duration from
+/// overflowing an `Instant`.
+const MAX_LEFT: f64 = 1e7;
+
+/// A cue's count-down, run locally between readings.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Clock {
+    Running { ends_at: Instant },
+    Paused { left: f64 },
+}
+
+impl Clock {
+    fn start(p: &Playback, now: Instant) -> Clock {
+        let left = p.remaining().min(MAX_LEFT);
+        if p.paused {
+            Clock::Paused { left }
+        } else {
+            Clock::Running {
+                ends_at: now + Duration::from_secs_f64(left),
+            }
+        }
+    }
+
+    fn left(&self, now: Instant) -> f64 {
+        match *self {
+            Clock::Running { ends_at } => ends_at.saturating_duration_since(now).as_secs_f64(),
+            Clock::Paused { left } => left,
+        }
+    }
+}
+
+/// An active audio or video cue.
 #[derive(Debug, Clone, PartialEq)]
 struct ActiveCue {
     kind: Kind,
     label: CueLabel,
-    playback: Option<Playback>,
+    /// The last `valuesForKeys` reply; `None` until the first
+    reading: Option<Reading>,
+    /// When its values were last asked for; `None` to ask at the next poll
+    asked: Option<Instant>,
+}
+
+impl ActiveCue {
+    /// Take a `valuesForKeys` reply received at `now`.
+    fn read(&mut self, p: Playback, now: Instant) {
+        let clock = match &self.reading {
+            // Still on time: keep it, so the seconds keep a steady beat.
+            Some(r) if r.on_time(&p, now) => r.clock,
+            Some(r) => {
+                if let (Clock::Running { .. }, false) = (r.clock, p.paused) {
+                    log::debug!(
+                        "QLab cue {:?}: clock {:+.2}s off, reset",
+                        self.label,
+                        r.clock.left(now) - p.remaining()
+                    );
+                }
+                Clock::start(&p, now)
+            }
+            None => Clock::start(&p, now),
+        };
+        self.reading = Some(Reading { playback: p, clock });
+    }
+}
+
+/// What QLab last said about a cue's playback, and the clock it set.
+#[derive(Debug, Clone, PartialEq)]
+struct Reading {
+    playback: Playback,
+    clock: Clock,
+}
+
+impl Reading {
+    /// The clock agrees with a new reading `p` closely enough to keep.
+    fn on_time(&self, p: &Playback, now: Instant) -> bool {
+        matches!(self.clock, Clock::Running { .. })
+            && !p.paused
+            && self.playback.duration == p.duration
+            && (self.clock.left(now) - p.remaining()).abs() <= RESYNC_DRIFT
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,6 +291,9 @@ fn summarize(cues: &HashMap<String, ActiveCue>) -> String {
 /// a second.
 const SWITCH_MARGIN: f64 = 1.0;
 
+/// How long after a second turns over to publish it: never early.
+const TICK_LATE: Duration = Duration::from_millis(2);
+
 /// The active cues being followed, by unique ID, and which one per kind is
 /// shown.
 #[derive(Debug, Default)]
@@ -214,8 +309,9 @@ pub(super) struct ActiveCues {
 
 impl ActiveCues {
     /// Replace the set with a `runningOrPausedCues` reply, keeping what's
-    /// known about cues still running. Returns the IDs to ask about.
-    pub(super) fn set_running(&mut self, data: &Value) -> Vec<String> {
+    /// known about cues still running. Returns the IDs to ask about: new
+    /// cues, and those not read for [`SYNC_EVERY`].
+    pub(super) fn set_running(&mut self, data: &Value, now: Instant) -> Vec<String> {
         let media = active_media(data);
         let mut next = HashMap::with_capacity(media.len());
         for (id, kind, label) in media {
@@ -230,13 +326,14 @@ impl ActiveCues {
                 Some(k) if label.number.is_empty() && label.name.is_empty() => k.label.clone(),
                 _ => label,
             };
-            let playback = known.and_then(|c| c.playback);
+            let (reading, asked) = known.map(|c| (c.reading, c.asked)).unwrap_or_default();
             next.insert(
                 id,
                 ActiveCue {
                     kind,
                     label,
-                    playback,
+                    reading,
+                    asked,
                 },
             );
         }
@@ -246,18 +343,69 @@ impl ActiveCues {
             self.last_summary = summary;
         }
         self.cues = next;
-        self.reselect();
-        self.cues.keys().cloned().collect()
+        self.reselect(now);
+        self.due(now)
+    }
+
+    /// Compare a `runningCues` reply (cues whose time is elapsing) with what
+    /// each cue last read: one that has paused or resumed since is read
+    /// again. Returns the IDs to ask about.
+    pub(super) fn set_elapsing(&mut self, data: &Value, now: Instant) -> Vec<String> {
+        let elapsing: HashSet<String> = active_media(data).into_iter().map(|(id, ..)| id).collect();
+        for (id, cue) in &mut self.cues {
+            // Only clocks matter: a loaded or finished cue isn't elapsing
+            // either way.
+            let Some(r) = cue
+                .reading
+                .as_ref()
+                .filter(|r| r.playback.skip_reason().is_none())
+            else {
+                continue;
+            };
+            let was = r.playback.running && !r.playback.paused;
+            // Just asked: the answer may not reflect the change yet.
+            let just_asked = cue.asked.is_some_and(|t| now < t + RECHECK_AFTER);
+            if was != elapsing.contains(id) && !just_asked {
+                log::debug!(
+                    "QLab cue {:?} {}",
+                    cue.label,
+                    if was { "paused" } else { "resumed" }
+                );
+                cue.asked = None;
+            }
+        }
+        self.due(now)
+    }
+
+    /// QLab says the cue changed: read it at the next poll rather than
+    /// waiting out [`SYNC_EVERY`].
+    pub(super) fn resync(&mut self, id: &str) {
+        if let Some(cue) = self.cues.get_mut(id) {
+            cue.asked = None;
+        }
+    }
+
+    /// The cues to ask for values now: never asked, marked for a resync, or
+    /// not asked for [`SYNC_EVERY`]. Marks them asked.
+    fn due(&mut self, now: Instant) -> Vec<String> {
+        self.cues
+            .iter_mut()
+            .filter(|(_, c)| c.asked.is_none_or(|t| now >= t + SYNC_EVERY))
+            .map(|(id, c)| {
+                c.asked = Some(now);
+                id.clone()
+            })
+            .collect()
     }
 
     /// Apply a cue's `valuesForKeys` reply. A late reply for a cue that has
     /// since stopped is dropped rather than bringing it back.
-    pub(super) fn set_values(&mut self, data: &Value) {
+    pub(super) fn set_values(&mut self, data: &Value, now: Instant) {
         let id = str_field(data, "uniqueID");
         if let Some(cue) = self.cues.get_mut(&id) {
             if let Some(p) = playback(data) {
                 log::trace!("QLab cue {:?}: {:?}", cue.label, p);
-                if cue.playback.as_ref().map(Playback::shape) != Some(p.shape()) {
+                if cue.reading.as_ref().map(|r| r.playback.shape()) != Some(p.shape()) {
                     log::info!(
                         "QLab {:?} cue {} \"{}\": {:.1}s of {:.1}s left, paused={} running={} looping={} holdLastFrame={} -> {}",
                         cue.kind,
@@ -272,7 +420,7 @@ impl ActiveCues {
                         p.skip_reason().map_or("counts".to_string(), |r| format!("not counted: {}", r)),
                     );
                 }
-                cue.playback = Some(p);
+                cue.read(p, now);
             } else {
                 log::info!("QLab cue {:?} reply has no duration: {}", cue.label, data);
             }
@@ -281,24 +429,26 @@ impl ActiveCues {
                 cue.label = fresh;
             }
         }
-        self.reselect();
+        self.reselect(now);
     }
 
-    pub(super) fn set_hidden(&mut self, hidden: &[String]) {
+    pub(super) fn set_hidden(&mut self, hidden: &[String], now: Instant) {
         self.hidden = hidden.iter().map(|n| n.trim().to_string()).collect();
-        self.reselect();
+        self.reselect(now);
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.cues.is_empty()
     }
 
-    /// The cues of `kind` that count: linear, still playing, not hidden.
-    fn linear(&self, kind: Kind) -> impl Iterator<Item = (&String, &ActiveCue, &Playback)> {
+    /// The cues of `kind` that count, with their time left: linear, still
+    /// playing (by QLab and by the clock), not hidden.
+    fn linear(&self, kind: Kind, now: Instant) -> impl Iterator<Item = (&String, &ActiveCue, f64)> {
         self.cues.iter().filter_map(move |(id, c)| {
-            let p = c.playback.as_ref()?;
-            (c.kind == kind && p.skip_reason().is_none() && !self.is_hidden(c))
-                .then_some((id, c, p))
+            let r = c.reading.as_ref()?;
+            let left = r.clock.left(now);
+            let counts = r.playback.skip_reason().is_none() && left > 0.0;
+            (c.kind == kind && counts && !self.is_hidden(c)).then_some((id, c, left))
         })
     }
 
@@ -315,22 +465,18 @@ impl ActiveCues {
 
     /// Pick the cue each kind shows: the one that ends last, but the current
     /// one stays until another ends [`SWITCH_MARGIN`] later or it stops.
-    fn reselect(&mut self) {
+    pub(super) fn reselect(&mut self, now: Instant) {
         for kind in [Kind::Video, Kind::Audio] {
             // Ties go to the lower ID so the pick never depends on map order.
             let best = self
-                .linear(kind)
-                .max_by(|a, b| {
-                    a.2.remaining()
-                        .total_cmp(&b.2.remaining())
-                        .then_with(|| b.0.cmp(a.0))
-                })
-                .map(|(id, _, p)| (id.clone(), p.remaining()));
+                .linear(kind, now)
+                .max_by(|a, b| a.2.total_cmp(&b.2).then_with(|| b.0.cmp(a.0)))
+                .map(|(id, _, left)| (id.clone(), left));
             let current = self.shown_mut(kind).clone();
             let current_left = current
                 .as_ref()
-                .and_then(|id| self.linear(kind).find(|(i, ..)| *i == id))
-                .map(|(.., p)| p.remaining());
+                .and_then(|id| self.linear(kind, now).find(|(i, ..)| *i == id))
+                .map(|(.., left)| left);
             let next = match (best, current_left) {
                 (Some((_, best_left)), Some(left)) if best_left < left + SWITCH_MARGIN => {
                     current.clone()
@@ -352,20 +498,52 @@ impl ActiveCues {
         }
     }
 
-    pub(super) fn countdown(&self, kind: Kind) -> Option<Countdown> {
+    fn shown(&self, kind: Kind, now: Instant) -> Option<(&ActiveCue, f64)> {
         let shown = match kind {
             Kind::Video => self.shown_video.as_ref(),
             Kind::Audio => self.shown_audio.as_ref(),
         }?;
-        let (_, cue, p) = self.linear(kind).find(|(id, ..)| *id == shown)?;
+        self.linear(kind, now)
+            .find(|(id, ..)| *id == shown)
+            .map(|(_, cue, left)| (cue, left))
+    }
+
+    /// What `kind` shows at `now`, its time left read off the cue's clock.
+    pub(super) fn countdown(&self, kind: Kind, now: Instant) -> Option<Countdown> {
+        let (cue, left) = self.shown(kind, now)?;
+        let p = &cue.reading.as_ref()?.playback;
         Some(Countdown {
             number: cue.label.number.clone(),
             name: cue.label.name.clone(),
-            remaining: p.remaining(),
+            remaining: left,
             duration: p.duration,
             paused: p.paused,
-            others: self.linear(kind).count().saturating_sub(1) as u32,
+            others: self.linear(kind, now).count().saturating_sub(1) as u32,
         })
+    }
+
+    /// When a shown count-down's seconds next change, just after the moment,
+    /// so the views tick on the second. `None` while nothing counts down.
+    pub(super) fn next_second(&self, now: Instant) -> Option<Instant> {
+        [Kind::Video, Kind::Audio]
+            .into_iter()
+            .filter_map(|kind| self.shown(kind, now))
+            .filter(|(cue, _)| {
+                matches!(
+                    cue.reading,
+                    Some(Reading {
+                        clock: Clock::Running { .. },
+                        ..
+                    })
+                )
+            })
+            .map(|(_, left)| {
+                // The views round up from 1 ms before (`formatTime`), so the
+                // number changes as `left - 0.001` passes a whole second.
+                let shown = left - 0.001;
+                now + Duration::from_secs_f64((shown - shown.floor()).max(0.0)) + TICK_LATE
+            })
+            .min()
     }
 }
 
@@ -373,6 +551,17 @@ impl ActiveCues {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::OnceLock;
+
+    /// One moment for a whole test, so clocks read exactly what was set.
+    fn t0() -> Instant {
+        static T0: OnceLock<Instant> = OnceLock::new();
+        *T0.get_or_init(Instant::now)
+    }
+
+    fn secs(s: f64) -> Instant {
+        t0() + Duration::from_secs_f64(s)
+    }
 
     fn values(id: &str, duration: f64, elapsed: f64) -> Value {
         json!({
@@ -404,12 +593,15 @@ mod tests {
     #[test]
     fn test_loops_are_ignored_and_last_to_end_wins() {
         let mut cues = ActiveCues::default();
-        cues.set_running(&json!([
-            { "uniqueID": "bg", "type": "Video", "number": "1", "listName": "Background" },
-            { "uniqueID": "short", "type": "Video", "number": "2", "listName": "Sting" },
-            { "uniqueID": "long", "type": "Video", "number": "3", "listName": "Film" },
-            { "uniqueID": "twice", "type": "Video", "number": "4", "listName": "Twice" },
-        ]));
+        cues.set_running(
+            &json!([
+                { "uniqueID": "bg", "type": "Video", "number": "1", "listName": "Background" },
+                { "uniqueID": "short", "type": "Video", "number": "2", "listName": "Sting" },
+                { "uniqueID": "long", "type": "Video", "number": "3", "listName": "Film" },
+                { "uniqueID": "twice", "type": "Video", "number": "4", "listName": "Twice" },
+            ]),
+            t0(),
+        );
         let mut bg = values("bg", 600.0, 0.0);
         bg["infiniteLoop"] = json!(true);
         let mut twice = values("twice", 300.0, 0.0);
@@ -420,38 +612,38 @@ mod tests {
             values("short", 10.0, 0.5),
             values("long", 100.0, 0.25),
         ] {
-            cues.set_values(&v);
+            cues.set_values(&v, t0());
         }
 
-        let c = cues.countdown(Kind::Video).unwrap();
+        let c = cues.countdown(Kind::Video, t0()).unwrap();
         assert_eq!(c.number, "long");
         assert_eq!(c.remaining, 75.0);
         assert_eq!(c.others, 1, "the sting, not the loops");
-        assert!(cues.countdown(Kind::Audio).is_none());
+        assert!(cues.countdown(Kind::Audio, t0()).is_none());
     }
 
     #[test]
     fn test_only_loops_running_means_no_countdown() {
         let mut cues = ActiveCues::default();
-        cues.set_running(&json!([{ "uniqueID": "bg", "type": "Audio" }]));
+        cues.set_running(&json!([{ "uniqueID": "bg", "type": "Audio" }]), t0());
         let mut bg = values("bg", 60.0, 0.1);
         bg["infiniteLoop"] = json!(true);
-        cues.set_values(&bg);
-        assert!(cues.countdown(Kind::Audio).is_none());
+        cues.set_values(&bg, t0());
+        assert!(cues.countdown(Kind::Audio, t0()).is_none());
     }
 
     #[test]
     fn test_stopped_cue_reply_is_dropped_and_playback_kept_across_polls() {
         let mut cues = ActiveCues::default();
         let running = json!([{ "uniqueID": "a", "type": "Audio" }]);
-        cues.set_running(&running);
-        cues.set_values(&values("a", 20.0, 0.5));
+        cues.set_running(&running, t0());
+        cues.set_values(&values("a", 20.0, 0.5), t0());
         // The next poll still lists it: what we know survives until the reply.
-        cues.set_running(&running);
-        assert_eq!(cues.countdown(Kind::Audio).unwrap().remaining, 10.0);
+        cues.set_running(&running, t0());
+        assert_eq!(cues.countdown(Kind::Audio, t0()).unwrap().remaining, 10.0);
 
-        cues.set_running(&json!([]));
-        cues.set_values(&values("a", 20.0, 0.6));
+        cues.set_running(&json!([]), t0());
+        cues.set_values(&values("a", 20.0, 0.6), t0());
         assert!(cues.is_empty(), "late reply must not resurrect the cue");
     }
 
@@ -459,79 +651,88 @@ mod tests {
     fn test_near_ties_do_not_swap_the_shown_cue() {
         // One film on two outputs: their times leapfrog as replies arrive.
         let mut cues = ActiveCues::default();
-        cues.set_running(&json!([
-            { "uniqueID": "a", "type": "Video" },
-            { "uniqueID": "b", "type": "Video" },
-        ]));
-        cues.set_values(&values("a", 100.0, 0.500));
-        cues.set_values(&values("b", 100.0, 0.501));
-        let first = cues.countdown(Kind::Video).unwrap().number;
+        cues.set_running(
+            &json!([
+                { "uniqueID": "a", "type": "Video" },
+                { "uniqueID": "b", "type": "Video" },
+            ]),
+            t0(),
+        );
+        cues.set_values(&values("a", 100.0, 0.500), t0());
+        cues.set_values(&values("b", 100.0, 0.501), t0());
+        let first = cues.countdown(Kind::Video, t0()).unwrap().number;
         for i in 0..20 {
             let (lead, lag) = if i % 2 == 0 { ("a", "b") } else { ("b", "a") };
-            cues.set_values(&values(lead, 100.0, 0.502 + i as f64 * 0.001));
-            cues.set_values(&values(lag, 100.0, 0.503 + i as f64 * 0.001));
-            assert_eq!(cues.countdown(Kind::Video).unwrap().number, first);
+            cues.set_values(&values(lead, 100.0, 0.502 + i as f64 * 0.001), t0());
+            cues.set_values(&values(lag, 100.0, 0.503 + i as f64 * 0.001), t0());
+            assert_eq!(cues.countdown(Kind::Video, t0()).unwrap().number, first);
         }
     }
 
     #[test]
     fn test_switches_when_another_cue_ends_clearly_later_or_shown_one_stops() {
         let mut cues = ActiveCues::default();
-        cues.set_running(&json!([{ "uniqueID": "a", "type": "Video" }]));
-        cues.set_values(&values("a", 30.0, 0.0));
-        cues.set_running(&json!([
-            { "uniqueID": "a", "type": "Video" },
-            { "uniqueID": "b", "type": "Video" },
-        ]));
-        cues.set_values(&values("b", 120.0, 0.0));
-        assert_eq!(cues.countdown(Kind::Video).unwrap().number, "b");
+        cues.set_running(&json!([{ "uniqueID": "a", "type": "Video" }]), t0());
+        cues.set_values(&values("a", 30.0, 0.0), t0());
+        cues.set_running(
+            &json!([
+                { "uniqueID": "a", "type": "Video" },
+                { "uniqueID": "b", "type": "Video" },
+            ]),
+            t0(),
+        );
+        cues.set_values(&values("b", 120.0, 0.0), t0());
+        assert_eq!(cues.countdown(Kind::Video, t0()).unwrap().number, "b");
 
-        cues.set_running(&json!([{ "uniqueID": "a", "type": "Video" }]));
-        assert_eq!(cues.countdown(Kind::Video).unwrap().number, "a");
+        cues.set_running(&json!([{ "uniqueID": "a", "type": "Video" }]), t0());
+        assert_eq!(cues.countdown(Kind::Video, t0()).unwrap().number, "a");
     }
 
     #[test]
     fn test_hidden_cue_numbers_are_never_counted() {
         let mut cues = ActiveCues::default();
-        cues.set_running(&json!([
-            { "uniqueID": "a", "type": "Video" },
-            { "uniqueID": "b", "type": "Video" },
-        ]));
-        cues.set_values(&values("a", 300.0, 0.0));
-        cues.set_values(&values("b", 60.0, 0.0));
-        cues.set_hidden(&[" a ".to_string()]);
-        let c = cues.countdown(Kind::Video).unwrap();
+        cues.set_running(
+            &json!([
+                { "uniqueID": "a", "type": "Video" },
+                { "uniqueID": "b", "type": "Video" },
+            ]),
+            t0(),
+        );
+        cues.set_values(&values("a", 300.0, 0.0), t0());
+        cues.set_values(&values("b", 60.0, 0.0), t0());
+        cues.set_hidden(&[" a ".to_string()], t0());
+        let c = cues.countdown(Kind::Video, t0()).unwrap();
         assert_eq!((c.number.as_str(), c.others), ("b", 0));
 
-        cues.set_hidden(&["a".to_string(), "b".to_string()]);
-        assert!(cues.countdown(Kind::Video).is_none());
-        cues.set_hidden(&[]);
-        assert_eq!(cues.countdown(Kind::Video).unwrap().number, "a");
+        cues.set_hidden(&["a".to_string(), "b".to_string()], t0());
+        assert!(cues.countdown(Kind::Video, t0()).is_none());
+        cues.set_hidden(&[], t0());
+        assert_eq!(cues.countdown(Kind::Video, t0()).unwrap().number, "a");
     }
 
     #[test]
     fn test_finished_cue_holding_its_last_frame_is_not_counted() {
         let mut cues = ActiveCues::default();
-        cues.set_running(&json!([{ "uniqueID": "v", "type": "Video" }]));
+        cues.set_running(&json!([{ "uniqueID": "v", "type": "Video" }]), t0());
         let mut held = values("v", 30.0, 1.0);
         held["holdLastFrame"] = json!(true);
-        cues.set_values(&held);
-        assert!(cues.countdown(Kind::Video).is_none());
+        cues.set_values(&held, t0());
+        assert!(cues.countdown(Kind::Video, t0()).is_none());
     }
 
     #[test]
     fn test_cue_listed_active_but_not_playing_is_not_counted() {
         let mut cues = ActiveCues::default();
-        cues.set_running(&json!([{ "uniqueID": "v", "type": "Video" }]));
+        cues.set_running(&json!([{ "uniqueID": "v", "type": "Video" }]), t0());
         let mut loaded = values("v", 3.4, 0.0);
         loaded["isRunning"] = json!(false);
-        cues.set_values(&loaded);
-        assert!(cues.countdown(Kind::Video).is_none());
+        cues.set_values(&loaded, t0());
+        assert!(cues.countdown(Kind::Video, t0()).is_none());
 
         // Paused still counts (it shows PAUSED), and so does playing.
         loaded["isPaused"] = json!(true);
-        cues.set_values(&loaded);
-        assert!(cues.countdown(Kind::Video).is_some());
+        cues.set_values(&loaded, t0());
+        assert!(cues.countdown(Kind::Video, t0()).is_some());
     }
 
     #[test]
@@ -543,11 +744,122 @@ mod tests {
             { "uniqueID": "v", "type": "Video" },
         ]);
         let mut cues = ActiveCues::default();
-        cues.set_running(&listed_twice);
-        cues.set_values(&values("v", 100.0, 0.4));
+        cues.set_running(&listed_twice, t0());
+        cues.set_values(&values("v", 100.0, 0.4), t0());
         for _ in 0..3 {
-            cues.set_running(&listed_twice);
-            assert_eq!(cues.countdown(Kind::Video).unwrap().remaining, 60.0);
+            cues.set_running(&listed_twice, t0());
+            assert_eq!(cues.countdown(Kind::Video, t0()).unwrap().remaining, 60.0);
+        }
+    }
+
+    fn one_audio(duration: f64, elapsed: f64) -> ActiveCues {
+        let mut cues = ActiveCues::default();
+        cues.set_running(&json!([{ "uniqueID": "a", "type": "Audio" }]), t0());
+        cues.set_values(&values("a", duration, elapsed), t0());
+        cues
+    }
+
+    fn left(cues: &ActiveCues, at: Instant) -> Option<f64> {
+        cues.countdown(Kind::Audio, at).map(|c| c.remaining)
+    }
+
+    fn close(a: Option<f64>, b: f64) -> bool {
+        a.is_some_and(|a| (a - b).abs() < 1e-6)
+    }
+
+    #[test]
+    fn test_clock_counts_down_between_readings() {
+        let cues = one_audio(20.0, 0.5);
+        assert!(close(left(&cues, secs(0.0)), 10.0));
+        assert!(close(left(&cues, secs(1.5)), 8.5));
+        assert!(close(left(&cues, secs(9.75)), 0.25));
+    }
+
+    #[test]
+    fn test_reading_close_to_the_clock_leaves_it_alone() {
+        let mut cues = one_audio(20.0, 0.5);
+        // 2 s later QLab says 8.1 s left (reply latency): keep the beat.
+        cues.set_values(&values("a", 20.0, 0.595), secs(2.0));
+        assert!(close(left(&cues, secs(2.0)), 8.0));
+        // Then 7 s: someone scrubbed the cue. Follow QLab.
+        cues.set_values(&values("a", 20.0, 0.65), secs(2.0));
+        assert!(close(left(&cues, secs(2.0)), 7.0));
+    }
+
+    #[test]
+    fn test_pause_stops_the_clock_and_resume_restarts_it() {
+        let mut cues = one_audio(20.0, 0.5);
+        let mut paused = values("a", 20.0, 0.55);
+        paused["isPaused"] = json!(true);
+        cues.set_values(&paused, secs(1.0));
+        assert!(close(left(&cues, secs(1.0)), 9.0));
+        assert!(close(left(&cues, secs(30.0)), 9.0));
+        assert!(cues.next_second(secs(30.0)).is_none(), "nothing to tick");
+
+        cues.set_values(&values("a", 20.0, 0.55), secs(30.0));
+        assert!(close(left(&cues, secs(31.0)), 8.0));
+    }
+
+    #[test]
+    fn test_cue_drops_out_when_its_clock_runs_out() {
+        let mut cues = one_audio(10.0, 0.0);
+        cues.reselect(secs(10.0));
+        assert!(cues.countdown(Kind::Audio, secs(10.0)).is_none());
+    }
+
+    #[test]
+    fn test_values_asked_every_sync_period_or_when_qlab_says_it_changed() {
+        let running = json!([{ "uniqueID": "a", "type": "Audio" }]);
+        let mut cues = ActiveCues::default();
+        assert_eq!(cues.set_running(&running, secs(0.0)), vec!["a"]);
+        assert!(cues.set_running(&running, secs(1.0)).is_empty());
+        assert_eq!(cues.set_running(&running, secs(2.0)), vec!["a"]);
+        cues.resync("a");
+        assert_eq!(cues.set_running(&running, secs(2.1)), vec!["a"]);
+    }
+
+    #[test]
+    fn test_next_second_is_just_after_the_shown_number_changes() {
+        let cues = one_audio(100.0, 0.7995); // 20.05 s left
+        let at = cues.next_second(t0()).unwrap();
+        let ms = (at - t0()).as_secs_f64() * 1000.0;
+        assert!((50.0..=53.0).contains(&ms), "{}", ms);
+        // Shown as the views round it (`formatTime`): 21 before, 20 by then.
+        let shown = |l: f64| (l - 0.001).ceil() as i64;
+        assert_eq!(shown(left(&cues, t0()).unwrap()), 21);
+        assert_eq!(shown(left(&cues, at).unwrap()), 20);
+    }
+
+    #[test]
+    fn test_cue_leaving_or_rejoining_running_cues_is_read_again() {
+        let audio = json!([{ "uniqueID": "a", "type": "Audio" }]);
+        let nothing = json!([]);
+        let mut cues = one_audio(20.0, 0.5);
+        // Still elapsing, or too soon after the last ask: nothing to do.
+        assert!(cues.set_elapsing(&audio, secs(0.5)).is_empty());
+        assert!(cues.set_elapsing(&nothing, secs(0.1)).is_empty());
+        // Paused: it left `runningCues`.
+        assert_eq!(cues.set_elapsing(&nothing, secs(0.5)), vec!["a"]);
+        let mut paused = values("a", 20.0, 0.525);
+        paused["isPaused"] = json!(true);
+        cues.set_values(&paused, secs(0.6));
+        assert!(cues.set_elapsing(&nothing, secs(1.0)).is_empty());
+        // Resumed.
+        assert_eq!(cues.set_elapsing(&audio, secs(1.0)), vec!["a"]);
+    }
+
+    #[test]
+    fn test_cues_that_do_not_count_are_not_rechecked() {
+        let mut cues = ActiveCues::default();
+        cues.set_running(&json!([{ "uniqueID": "v", "type": "Video" }]), t0());
+        let mut loaded = values("v", 3.4, 0.0);
+        loaded["isRunning"] = json!(false);
+        cues.set_values(&loaded, t0());
+        let mut held = values("v", 30.0, 1.0);
+        held["isRunning"] = json!(true);
+        for reading in [loaded, held] {
+            cues.set_values(&reading, t0());
+            assert!(cues.set_elapsing(&json!([]), secs(1.0)).is_empty());
         }
     }
 }
