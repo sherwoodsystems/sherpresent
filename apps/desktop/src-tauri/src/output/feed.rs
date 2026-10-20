@@ -16,6 +16,7 @@ use crate::adapters::LiveStatus;
 use crate::captions::{settings_message, CaptionSinks};
 use crate::ontime::TimerState;
 use crate::osc::{ScrollDirection, StateManager};
+use crate::qlab::QLabState;
 
 pub type FeedStream = Pin<Box<dyn Stream<Item = String> + Send>>;
 
@@ -52,6 +53,20 @@ pub fn captions(sinks: CaptionSinks) -> Feed {
 /// only exists so EOF can stop it.
 pub fn none() -> Feed {
     Arc::new(|| Box::pin(tokio_stream::pending()))
+}
+
+/// QLab: the `/api/qlab/ws` messages, `{"type":"qlab","payload":QLabState}`.
+pub fn qlab(state: watch::Receiver<QLabState>) -> Feed {
+    Arc::new(move || {
+        let mut rx = state.clone();
+        let opening = qlab_message(&rx.borrow_and_update());
+        let updates = WatchStream::from_changes(rx).map(|s| qlab_message(&s));
+        Box::pin(tokio_stream::iter([opening]).chain(updates))
+    })
+}
+
+pub fn qlab_message(state: &QLabState) -> String {
+    message("qlab", state)
 }
 
 /// Where the notes output's data comes from: the channels the stage view's
@@ -177,6 +192,18 @@ mod tests {
         let scroll = next(&mut feed).await;
         assert_eq!(scroll["type"], "scroll");
         assert_eq!(scroll["payload"]["direction"], "page");
+    }
+
+    #[tokio::test]
+    async fn test_qlab_feed_opens_with_state_then_follows() {
+        let (tx, rx) = watch::channel(QLabState::default());
+        let mut feed = qlab(rx)();
+        let opening = next(&mut feed).await;
+        assert_eq!(opening["type"], "qlab");
+        assert_eq!(opening["payload"]["connected"], false);
+
+        tx.send_modify(|s| s.workspace = Some("Show".into()));
+        assert_eq!(next(&mut feed).await["payload"]["workspace"], "Show");
     }
 
     #[tokio::test]

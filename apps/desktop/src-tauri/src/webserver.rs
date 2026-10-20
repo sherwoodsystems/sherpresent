@@ -14,6 +14,9 @@ use crate::config::WebServerConfig;
 use crate::osc::latency::CommandSource;
 use crate::osc::state_manager::StateManager;
 use crate::osc::ScrollDirection;
+use crate::output::feed::NotesSources;
+use crate::output::OutputSources;
+use crate::qlab::QLabState;
 use crate::util::LockExt;
 
 /// Handle for a running web server. Holds JoinHandles to keep tasks alive.
@@ -36,18 +39,28 @@ struct WebServerState {
     state_manager: Arc<StateManager>,
     /// Live caption fan-out and overlay styling for the /captions overlay
     captions: CaptionSinks,
+    /// The QLab count-out, for the /qlab page
+    qlab: tokio::sync::watch::Receiver<QLabState>,
 }
 
 /// Start the web server on the given port. Returns a handle to stop it later.
+/// Its pages read the same sources as the native outputs.
 pub async fn start(
     config: WebServerConfig,
-    notes_cache: Arc<Mutex<HashMap<i32, String>>>,
-    status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
-    notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
-    scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
-    state_manager: Arc<StateManager>,
-    captions: CaptionSinks,
+    sources: OutputSources,
 ) -> Result<WebServerHandle, String> {
+    let OutputSources {
+        captions,
+        notes:
+            NotesSources {
+                notes: notes_cache,
+                notes_broadcast,
+                status_broadcast,
+                scroll_broadcast,
+                state_manager,
+            },
+        qlab,
+    } = sources;
     let state = WebServerState {
         notes_cache,
         status_broadcast,
@@ -58,6 +71,7 @@ pub async fn start(
         font_size: config.font_size,
         state_manager,
         captions,
+        qlab,
     };
 
     let app = Router::new()
@@ -69,6 +83,9 @@ pub async fn start(
         // receive slide/notes traffic it would only discard.
         .route("/captions", get(captions_page_handler))
         .route("/api/captions/ws", get(captions_ws_handler))
+        // The QLab count-out: same messages as the Syphon QLab output.
+        .route("/qlab", get(qlab_page_handler))
+        .route("/api/qlab/ws", get(qlab_ws_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", config.port);
@@ -395,6 +412,46 @@ async fn handle_captions_ws(
     }
 
     log::info!("Caption overlay disconnected");
+}
+
+const QLAB_HTML: &str = include_str!("../assets/qlab.html");
+
+async fn qlab_page_handler() -> Html<&'static str> {
+    Html(QLAB_HTML)
+}
+
+async fn qlab_ws_handler(
+    ws: WebSocketUpgrade,
+    AxumState(state): AxumState<WebServerState>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_qlab_ws(socket, state.qlab))
+}
+
+/// The current state, then every change. Receive-only, like the overlay.
+async fn handle_qlab_ws(mut socket: WebSocket, mut rx: tokio::sync::watch::Receiver<QLabState>) {
+    let opening = crate::output::feed::qlab_message(&rx.borrow_and_update());
+    if socket.send(Message::Text(opening.into())).await.is_err() {
+        return;
+    }
+    loop {
+        tokio::select! {
+            changed = rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let msg = crate::output::feed::qlab_message(&rx.borrow_and_update());
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 /// Basic HTML attribute escaping to prevent injection via user-configured values

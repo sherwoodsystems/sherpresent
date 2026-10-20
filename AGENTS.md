@@ -100,6 +100,8 @@ page (`output/feed.rs`) so they match it line for line:
   ScreenCaptureKit while a show runs. It's fed nothing and holds the last slide
   between shows. Needs Screen Recording permission. Its `capture` state
   (`waiting|capturing|denied`) becomes the output's status message.
+- **qlab** (`qlab.syphon`): the QLab count-out, same picture as the `/qlab`
+  page (see QLab Count-out below).
 
 `Outputs::reconcile` starts/stops/renames them on startup and every
 `save_config`; they run independently of the caption engine and the
@@ -107,7 +109,7 @@ presentation so receivers stay wired up between talks. Status is pushed as
 `outputs-status`.
 
 - `output/syphon.rs` drives `sherpresent-output`
-  (`apps/desktop/sidecars/caption-output-macos/`, `--content captions|notes|slideshow`):
+  (`apps/desktop/sidecars/caption-output-macos/`, `--content captions|notes|slideshow|qlab`):
   Core Text render onto a 1920x1080 IOSurface, published via a vendored, source-built
   Syphon (`Sources/Syphon/VENDORED.md` — one patch, shaders compiled at
   runtime so no Xcode is needed). macOS 13+, Apple Silicon.
@@ -156,6 +158,41 @@ rewriting words the audience is reading.
 - Linux builds need `libasound2-dev` for cpal's ALSA backend.
 - macOS needs `NSMicrophoneUsageDescription` (`src-tauri/Info.plist`) and the
   `com.apple.security.device.audio-input` entitlement for signed builds.
+
+## QLab Count-out
+
+Time left on QLab's running video and audio cues, for operators in shows
+with many active cues.
+
+**Scope**: `apps/desktop/src-tauri/src/qlab/`
+
+- `client.rs` - OSC over TCP (SLIP, port 53000): `/workspaces` →
+  `/workspace/{id}/connect {passcode}` → `updates 1`, then polls
+  `runningOrPausedCues` (100 ms while active, 500 ms idle, immediately on a
+  `/update/.../cue_id/` push) and each audio/video cue's `valuesForKeys`.
+  `Session` is the protocol with no I/O, so tests feed it QLab replies.
+- `cues.rs` - which cue each kind shows: ignores loops (`infiniteLoop`,
+  `playCount > 1`), cues without a duration and `hiddenCues`; picks the one
+  ending last and sticks with it unless another ends `SWITCH_MARGIN` later
+  (replies arrive per cue, so near-ties would otherwise swap every poll).
+  A cue QLab lists as active but neither running nor paused (loaded) doesn't
+  count, nor does one at 100% (a video holding its last frame stays active),
+  and an error reply to the poll clears the list rather than keeping it.
+  Logs at `info` why each cue does or doesn't count; `trace` for every reply:
+  `RUST_LOG=info,sherpresent_lib::qlab=trace bun tauri dev`.
+- `slip.rs` - SLIP framing.
+- `mod.rs` - `QLabState` and the `QLab` hub in `AppState`: reconciled on
+  startup and every save (restart on host/port/passcode/workspace; hidden cues
+  apply live), pushed as `qlab-state`.
+
+Views read the same `QLabState`: the QLab tab (`routes/qlab/`), the `/qlab`
+page (`assets/qlab.html`, socket `/api/qlab/ws`) and the Syphon `qlab`
+content (`QLabContent.swift`). The page and the helper share one 1920x1080
+layout; keep their numbers in step. Time is rounded up everywhere
+(`lib/qlab.ts`, `QLabContent.formatTime`).
+
+QLab 5.3+ errors on `/cue/active/valuesForKeys` when nothing is active and
+answers multi-cue selectors with one reply per cue, hence the two-step poll.
 
 ## Bridge
 

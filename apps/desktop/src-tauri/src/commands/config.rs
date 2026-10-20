@@ -25,6 +25,9 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
         config.adapter_config.clone(),
     );
 
+    // Follow QLab at the configured host (no-op if unchanged).
+    state.qlab.reconcile(&config.qlab);
+
     // Start/stop/rename native outputs to match; unchanged ones are untouched.
     let sources = state.output_sources();
     state.outputs.locked().reconcile(&app, &sources, &config);
@@ -37,4 +40,10 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
 #[tauri::command]
 pub fn get_outputs_status(state: tauri::State<'_, AppState>) -> crate::output::OutputsStatus {
     state.outputs.locked().status()
+}
+
+/// The QLab count-out as it stands. Changes are also pushed as `qlab-state`.
+#[tauri::command]
+pub fn get_qlab_state(state: tauri::State<'_, AppState>) -> crate::qlab::QLabState {
+    state.qlab.current()
 }

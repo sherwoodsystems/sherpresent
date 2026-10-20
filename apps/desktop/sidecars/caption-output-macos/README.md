@@ -12,6 +12,8 @@ protocol is the seam for NDI or others later.
   ScreenCaptureKit (`SlideshowCapture`) and scaled into the 1920×1080 frame.
   Captured only while a show runs; between shows nothing is published, so
   receivers hold the last slide. Presenter View is never captured.
+- `qlab`: the QLab count-out on an opaque frame (`QLabContent`), the same
+  layout as the app's `/qlab` page.
 
 Driven by `apps/desktop/src-tauri/src/output/syphon.rs`; one process per
 output.
@@ -26,7 +28,7 @@ bun run macos:sidecar   # builds both helpers into src-tauri/binaries/
 Command Line Tools are enough — no Xcode. Syphon is vendored as source
 (`Sources/Syphon/VENDORED.md`).
 
-## Protocol (version 4)
+## Protocol (version 5)
 
 - **stdin**: NDJSON, EOF = graceful stop. For `captions`, exactly the
   messages the web overlay's `/api/captions/ws` socket carries: `settings`
@@ -34,6 +36,7 @@ Command Line Tools are enough — no Xcode. Syphon is vendored as source
   silence timeout fired). For `notes`, the stage view's `/api/ws` messages
   (`{"type":"status"|"notes","payload":…}`) plus
   `{"type":"timer","payload":{connected,current,playback,title}|null}`.
+  For `qlab`, the `/api/qlab/ws` messages (`{"type":"qlab","payload":…}`).
   For `slideshow`, nothing (stdin only carries EOF).
 - **stdout**: NDJSON — `ready` (with sink list), `sinks` (whenever a
   receiver connects or disconnects), `error` (`fatal` decides whether Rust

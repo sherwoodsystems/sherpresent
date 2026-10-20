@@ -10,12 +10,14 @@ import Foundation
 ///     `scroll`), plus
 ///     `timer` from the app's Ontime client.
 ///   - `slideshow`: nothing; it finds PowerPoint's window itself.
+///   - `qlab`: the `/qlab` page's messages, `{"type":"qlab","payload":…}`
+///     with the app's QLab count-out state.
 ///   EOF = graceful stop.
 /// - **stdout**: NDJSON — `ready`, `sinks`, `error`, and for `slideshow`
 ///   `capture` (`waiting|capturing|denied`) whenever that changes.
 /// - **stderr**: plain-text logs.
 enum WireProtocol {
-    static let version = 4
+    static let version = 5
 }
 
 // MARK: - Inbound
@@ -185,6 +187,54 @@ enum NotesMessage {
         default:
             return .unknown
         }
+    }
+}
+
+// MARK: - Inbound, QLab
+
+/// Rust's `qlab::QLabState`, the fields the picture uses.
+struct QLabPayload: Decodable, Equatable {
+    var configured: Bool
+    var connected: Bool
+    var message: String?
+    var video: QLabCountdown?
+    var audio: QLabCountdown?
+    /// The cue at the playhead
+    var next: QLabCue?
+}
+
+/// Rust's `qlab::Countdown`.
+struct QLabCountdown: Decodable, Equatable {
+    var number: String
+    var name: String
+    /// Seconds left
+    var remaining: Double
+    /// Seconds in all
+    var duration: Double
+    var paused: Bool
+    /// Other linear cues of the same kind, ending sooner
+    var others: Int
+}
+
+/// Rust's `qlab::CueLabel`.
+struct QLabCue: Decodable, Equatable {
+    var number: String
+    var name: String
+}
+
+enum QLabMessage {
+    private struct Envelope: Decodable {
+        var type: String
+        var payload: QLabPayload?
+    }
+
+    /// The state in a `qlab` line; nil for anything else. Never fatal.
+    static func parse(_ line: String) -> QLabPayload? {
+        guard let data = line.data(using: .utf8),
+            let env = try? JSONDecoder().decode(Envelope.self, from: data),
+            env.type == "qlab"
+        else { return nil }
+        return env.payload
     }
 }
 

@@ -4,7 +4,7 @@
 //!
 //! ## Protocol (version 2)
 //!
-//! - **args**: `--content captions|notes|slideshow` picks what the helper
+//! - **args**: `--content captions|notes|slideshow|qlab` picks what the helper
 //!   draws (or, for `slideshow`, captures).
 //! - **stdin**: NDJSON from the output's [`Feed`]. EOF = graceful stop.
 //! - **stdout**: NDJSON — `ready`, `sinks` (receiver connect/disconnect),
@@ -41,7 +41,7 @@ pub const HELPER_NAME: &str = "sherpresent-output";
 /// Overrides helper discovery (development, and tests with a scripted fake).
 const HELPER_ENV: &str = "SHERPRESENT_OUTPUT_BIN";
 
-const PROTOCOL_VERSION: u32 = 4;
+const PROTOCOL_VERSION: u32 = 5;
 
 /// The helper's deployment target. Syphon itself goes back much further; 13 is
 /// just the floor for the Swift concurrency the helper uses.
@@ -410,7 +410,7 @@ mod tests {
             build_args("captions", "Stage Left", Some(CaptionText::Both)),
             [
                 "--protocol",
-                "4",
+                "5",
                 "--content",
                 "captions",
                 "--sink",

@@ -6,6 +6,7 @@ use crate::osc::state_manager::StateSinks;
 use crate::osc::{LatencyStore, OscServer, OscServerHandle, ScrollDirection, StateManager};
 use crate::output::feed::NotesSources;
 use crate::output::{OutputSources, Outputs};
+use crate::qlab::QLab;
 use crate::util::LockExt;
 use sherpresent_core::DiscoveryService;
 use std::collections::HashMap;
@@ -67,6 +68,9 @@ pub struct AppState {
 
     /// Native video outputs (Syphon captions and notes), reconciled against config
     pub outputs: Mutex<Outputs>,
+
+    /// QLab count-out client and its latest state, reconciled against config
+    pub qlab: QLab,
 }
 
 impl AppState {
@@ -95,16 +99,7 @@ impl AppState {
         if self.web_server_handle.locked().is_some() {
             return Err("Web server is already running".to_string());
         }
-        let handle = crate::webserver::start(
-            config,
-            self.notes_cache.clone(),
-            self.status_broadcast.clone(),
-            self.notes_broadcast.clone(),
-            self.scroll_broadcast.clone(),
-            self.state_manager.clone(),
-            self.captions.clone(),
-        )
-        .await?;
+        let handle = crate::webserver::start(config, self.output_sources()).await?;
         *self.web_server_handle.locked() = Some(handle);
         Ok(())
     }
@@ -134,6 +129,7 @@ impl AppState {
                 scroll_broadcast: self.scroll_broadcast.clone(),
                 state_manager: self.state_manager.clone(),
             },
+            qlab: self.qlab.subscribe(),
         }
     }
 }
@@ -157,6 +153,7 @@ impl Default for AppState {
             caption_engine: Mutex::new(None),
             captions: CaptionSinks::default(),
             outputs: Mutex::new(Outputs::default()),
+            qlab: QLab::default(),
         }
     }
 }

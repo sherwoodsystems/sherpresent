@@ -9,7 +9,7 @@ struct Args {
     /// another value here plus another `FrameSink`.
     var sinks: [String] = ["syphon"]
     var serverName = "SherPresent Captions"
-    /// What to draw: `captions` or `notes` (see `makeContent`), or
+    /// What to draw: `captions`, `notes` or `qlab` (see `makeContent`), or
     /// `slideshow` to capture PowerPoint's show window (`SlideshowCapture`).
     var content = "captions"
     /// Captions only: which language(s) to show. The web overlay's `?text=`.

@@ -10,6 +10,8 @@
 //!   view's `/api/ws` messages plus [`crate::ontime`].
 //! - **slideshow**: PowerPoint's slide show window, captured by the helper
 //!   itself (ScreenCaptureKit) while a show runs. Fed nothing.
+//! - **qlab**: the QLab count-out, fed the `/qlab` page's messages
+//!   ([`crate::qlab::QLabState`]).
 //!
 //! What each is fed lives in [`feed`]; adding a sink (NDI, say) means a new
 //! sink on the helper side plus a sibling of [`syphon`] here.
@@ -31,9 +33,11 @@ use tokio::sync::watch;
 
 use crate::captions::CaptionSinks;
 use crate::config::{
-    AppConfig, CaptionOutputsConfig, CaptionSyphonConfig, SyphonOutputConfig, WebServerConfig,
+    AppConfig, CaptionOutputsConfig, CaptionSyphonConfig, QLabConfig, SyphonOutputConfig,
+    WebServerConfig,
 };
 use crate::ontime::{self, TimerState};
+use crate::qlab::QLabState;
 use feed::NotesSources;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
@@ -78,6 +82,7 @@ pub struct OutputsStatus {
     pub captions2: OutputStatus,
     pub notes: OutputStatus,
     pub slideshow: OutputStatus,
+    pub qlab: OutputStatus,
 }
 
 impl Default for OutputsStatus {
@@ -92,6 +97,7 @@ impl Default for OutputsStatus {
                 supported,
                 &WebServerConfig::default().slideshow_syphon.server_name,
             ),
+            qlab: OutputStatus::stopped(supported, &QLabConfig::default().syphon.server_name),
         }
     }
 }
@@ -104,6 +110,7 @@ pub type StatusReporter = Arc<dyn Fn(OutputStatus) + Send + Sync>;
 pub struct OutputSources {
     pub captions: CaptionSinks,
     pub notes: NotesSources,
+    pub qlab: watch::Receiver<QLabState>,
 }
 
 /// A running output, and the settings it was started with.
@@ -129,6 +136,7 @@ pub struct Outputs {
     captions2: Option<Running<CaptionSyphonConfig>>,
     notes: Option<Running<NotesKey>>,
     slideshow: Option<Running<SyphonOutputConfig>>,
+    qlab: Option<Running<SyphonOutputConfig>>,
     status: Arc<Mutex<OutputsStatus>>,
 }
 
@@ -198,6 +206,28 @@ impl Outputs {
                     None,
                     name,
                     feed::none(),
+                    shutdown,
+                    report,
+                ));
+            },
+        );
+
+        let qlab = &cfg.qlab.syphon;
+        let state = sources.qlab.clone();
+        let report = self.reporter(app, |all| &mut all.qlab);
+        reconcile_slot(
+            &mut self.qlab,
+            qlab.enabled.then(|| qlab.clone()),
+            &qlab.server_name,
+            report,
+            |key, path, shutdown, report| {
+                let name = key.server_name.clone();
+                tauri::async_runtime::spawn(syphon::run(
+                    path,
+                    "qlab",
+                    None,
+                    name,
+                    feed::qlab(state),
                     shutdown,
                     report,
                 ));

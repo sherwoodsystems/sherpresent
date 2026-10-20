@@ -197,6 +197,58 @@ impl Default for WebServerConfig {
     }
 }
 
+// =============================================================================
+// QLAB CONFIG
+// =============================================================================
+
+/// QLab count-out: follows a QLab workspace over OSC and shows the time left
+/// on its running, non-looping video and audio cues.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QLabConfig {
+    /// QLab machine's IP or hostname. Empty = off.
+    #[serde(default)]
+    pub host: String,
+    /// QLab's OSC port (TCP; default 53000)
+    #[serde(default = "default_qlab_port")]
+    pub port: u16,
+    /// The workspace's OSC passcode, if it has one
+    #[serde(default)]
+    pub passcode: String,
+    /// Workspace name or unique ID. Empty = the first open workspace.
+    #[serde(default)]
+    pub workspace: String,
+    /// Cue numbers never counted out, even when they run linearly
+    #[serde(rename = "hiddenCues", default)]
+    pub hidden_cues: Vec<String>,
+    /// The count-out as a Syphon source
+    #[serde(default = "default_qlab_syphon")]
+    pub syphon: SyphonOutputConfig,
+}
+
+fn default_qlab_port() -> u16 {
+    53000
+}
+
+fn default_qlab_syphon() -> SyphonOutputConfig {
+    SyphonOutputConfig {
+        enabled: false,
+        server_name: "SherPresent QLab".to_string(),
+    }
+}
+
+impl Default for QLabConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: default_qlab_port(),
+            passcode: String::new(),
+            workspace: String::new(),
+            hidden_cues: Vec::new(),
+            syphon: default_qlab_syphon(),
+        }
+    }
+}
+
 /// API keys for live caption providers.
 ///
 /// Stored in plaintext alongside the rest of the config. Fine for a
@@ -463,6 +515,9 @@ pub struct AppConfig {
     /// Live caption / translation settings
     #[serde(default)]
     pub captions: CaptionsConfig,
+    /// QLab count-out settings
+    #[serde(default)]
+    pub qlab: QLabConfig,
 }
 
 impl Default for AppConfig {
@@ -482,6 +537,7 @@ impl Default for AppConfig {
             adapter_config: AdapterConfig::default(),
             web_server: WebServerConfig::default(),
             captions: CaptionsConfig::default(),
+            qlab: QLabConfig::default(),
         }
     }
 }

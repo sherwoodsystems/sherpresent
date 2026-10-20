@@ -12,7 +12,7 @@ import Foundation
 /// back to the top after the last screenful, and every slide change starting
 /// at the top again.
 @MainActor
-final class NotesContent: FrameContent {
+final class NotesContent: FrameContent, TextDrawing {
     private var status = SlideStatus()
     private var notes: [Int: String] = [:]
     private var timer: TimerPayload?
@@ -326,81 +326,5 @@ final class NotesContent: FrameContent {
     private func placeholder(_ text: String, in area: CGRect, _ ctx: CGContext) {
         let l = label(text, font(48, italic: true), rgb(0x555555), maxWidth: area.width)
         draw(l, x: area.midX - l.width / 2, midY: area.midY, in: ctx)
-    }
-
-    /// A capsule label, like the stage view's badges.
-    private func pill(
-        _ text: String, size: CGFloat, fill: CGColor, text color: CGColor,
-        right: CGFloat? = nil, centerX: CGFloat? = nil, midY: CGFloat, in ctx: CGContext
-    ) {
-        let l = label(text, font(size, bold: true), color)
-        let boxW = l.width + 1.8 * size
-        let boxH = 1.8 * size
-        let x = right.map { $0 - boxW } ?? (centerX ?? 0) - boxW / 2
-        ctx.setFillColor(fill)
-        ctx.addPath(
-            CGPath(
-                roundedRect: CGRect(x: x, y: midY - boxH / 2, width: boxW, height: boxH),
-                cornerWidth: boxH / 2, cornerHeight: boxH / 2, transform: nil))
-        ctx.fillPath()
-        draw(l, x: x + 0.9 * size, midY: midY, in: ctx)
-    }
-
-    // MARK: - Text helpers
-
-    /// One line of text, measured.
-    private struct Label {
-        let line: CTLine
-        let width: CGFloat
-        let capHeight: CGFloat
-    }
-
-    /// Cut to `maxWidth` with an ellipsis if it doesn't fit.
-    private func label(_ text: String, _ font: CTFont, _ color: CGColor, maxWidth: CGFloat = .infinity)
-        -> Label
-    {
-        let attrs: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
-        ]
-        var line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
-        if CTLineGetTypographicBounds(line, nil, nil, nil) > maxWidth {
-            let ellipsis = CTLineCreateWithAttributedString(
-                NSAttributedString(string: "…", attributes: attrs))
-            line = CTLineCreateTruncatedLine(line, Double(maxWidth), .end, ellipsis) ?? line
-        }
-        return Label(
-            line: line, width: CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)),
-            capHeight: CTFontGetCapHeight(font))
-    }
-
-    /// Draw with the cap height centred on `midY`, so labels of any case sit
-    /// visually centred in their bar or badge.
-    private func draw(_ l: Label, x: CGFloat, midY: CGFloat, in ctx: CGContext) {
-        ctx.textPosition = CGPoint(x: x.rounded(), y: (midY - l.capHeight / 2).rounded())
-        CTLineDraw(l.line, ctx)
-    }
-
-    private func font(_ size: CGFloat, bold: Bool = false, italic: Bool = false, monoDigits: Bool = false)
-        -> CTFont
-    {
-        var f =
-            CTFontCreateUIFontForLanguage(bold ? .emphasizedSystem : .system, size, nil)
-            ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
-        if italic, let i = CTFontCreateCopyWithSymbolicTraits(f, size, nil, .traitItalic, .traitItalic) {
-            f = i
-        }
-        if monoDigits {
-            // Tabular figures, so a ticking timer or slide counter doesn't
-            // jitter sideways as the digits change.
-            let feature: [String: Any] = [
-                kCTFontFeatureTypeIdentifierKey as String: kNumberSpacingType,
-                kCTFontFeatureSelectorIdentifierKey as String: kMonospacedNumbersSelector,
-            ]
-            let desc = CTFontDescriptorCreateWithAttributes(
-                [kCTFontFeatureSettingsAttribute as String: [feature]] as CFDictionary)
-            f = CTFontCreateCopyWithAttributes(f, size, nil, desc)
-        }
-        return f
     }
 }

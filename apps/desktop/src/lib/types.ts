@@ -189,6 +189,53 @@ export interface OutputsStatus {
   captions2: OutputStatus;
   notes: OutputStatus;
   slideshow: OutputStatus;
+  qlab: OutputStatus;
+}
+
+// =============================================================================
+// QLAB
+// =============================================================================
+
+/** QLab count-out: time left on running, non-looping video and audio cues */
+export interface QLabConfig {
+  /** QLab machine's IP or hostname; empty = off */
+  host: string;
+  /** QLab's OSC port (TCP, default 53000) */
+  port: number;
+  /** The workspace's OSC passcode, if it has one */
+  passcode: string;
+  /** Workspace name or unique ID; empty = the first open workspace */
+  workspace: string;
+  /** Cue numbers never counted out */
+  hiddenCues: string[];
+  /** The count-out as a Syphon source */
+  syphon: SyphonOutputConfig;
+}
+
+/** One cue counting out */
+export interface QLabCountdown {
+  number: string;
+  name: string;
+  /** Seconds left */
+  remaining: number;
+  /** Seconds in all */
+  duration: number;
+  paused: boolean;
+  /** Other linear cues of the same kind, ending sooner */
+  others: number;
+}
+
+/** Payload of `get_qlab_state` and the `qlab-state` event */
+export interface QLabState {
+  configured: boolean;
+  connected: boolean;
+  message: string | null;
+  workspace: string | null;
+  workspaces: string[];
+  video: QLabCountdown | null;
+  audio: QLabCountdown | null;
+  /** The cue at the playhead */
+  next: { number: string; name: string } | null;
 }
 
 export interface CaptionsConfig {
@@ -240,6 +287,8 @@ export interface AppConfig {
   webServer: WebServerConfig;
   /** Live caption / translation settings */
   captions: CaptionsConfig;
+  /** QLab count-out settings */
+  qlab: QLabConfig;
 }
 
 // =============================================================================
@@ -379,6 +428,14 @@ export const defaultConfig: AppConfig = {
       syphon2: { enabled: false, serverName: 'SherPresent Captions (Original)', text: 'source' }
     },
     apiKeys: { gemini: '', openai: '' }
+  },
+  qlab: {
+    host: '',
+    port: 53000,
+    passcode: '',
+    workspace: '',
+    hiddenCues: [],
+    syphon: { enabled: false, serverName: 'SherPresent QLab' }
   }
 };
 

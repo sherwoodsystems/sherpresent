@@ -16,6 +16,8 @@ import {
   type CaptionSegment,
   type CaptionStatus,
   type OutputsStatus,
+  type QLabConfig,
+  type QLabState,
   type AudioDevice,
   defaultConfig
 } from '$lib/types';
@@ -43,6 +45,8 @@ class AppStore {
   captionStatus = $state<CaptionStatus | null>(null);
   /** Native video outputs (Syphon captions and notes); pushed as receivers come and go */
   outputsStatus = $state<OutputsStatus | null>(null);
+  /** QLab count-out; pushed about ten times a second while cues run */
+  qlabState = $state<QLabState | null>(null);
   /** Newest last. The trailing entry may be an interim line still being spoken. */
   captionSegments = $state<CaptionSegment[]>([]);
   audioDevices = $state<AudioDevice[]>([]);
@@ -56,6 +60,7 @@ class AppStore {
   private unlistenCaptionSegment: UnlistenFn | null = null;
   private unlistenCaptionStatus: UnlistenFn | null = null;
   private unlistenOutputsStatus: UnlistenFn | null = null;
+  private unlistenQLabState: UnlistenFn | null = null;
 
   /**
    * PowerPoint for Mac can't jump to a slide during a show from AppleScript
@@ -152,6 +157,16 @@ class AppStore {
       (event) => (this.outputsStatus = event.payload)
     );
 
+    this.unlistenQLabState = await listen<QLabState>(
+      'qlab-state',
+      (event) => (this.qlabState = event.payload)
+    );
+    try {
+      this.qlabState = await invoke<QLabState>('get_qlab_state');
+    } catch (e) {
+      console.error('Failed to read QLab state:', e);
+    }
+
     await this.refreshCaptionStatus();
 
     // Load any existing latency events
@@ -174,6 +189,7 @@ class AppStore {
     this.unlistenCaptionSegment?.();
     this.unlistenCaptionStatus?.();
     this.unlistenOutputsStatus?.();
+    this.unlistenQLabState?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
@@ -381,6 +397,15 @@ class AppStore {
     } catch {
       this.webServerRunning = false;
     }
+  }
+
+  // ===========================================================================
+  // QLAB
+  // ===========================================================================
+
+  updateQLabConfig(qlab: QLabConfig) {
+    this.config = { ...this.config, qlab };
+    this.scheduleConfigSave();
   }
 
   // ===========================================================================

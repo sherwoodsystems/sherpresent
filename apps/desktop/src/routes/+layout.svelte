@@ -33,6 +33,7 @@
     <a href="/captions" class="nav-link" class:active={page.url.pathname === '/captions'}
       >Captions</a
     >
+    <a href="/qlab" class="nav-link" class:active={page.url.pathname === '/qlab'}>QLab</a>
     <a href="/bridges" class="nav-link" class:active={page.url.pathname === '/bridges'}>Bridges</a>
     <a href="/settings" class="nav-link" class:active={page.url.pathname === '/settings'}
       >Settings</a

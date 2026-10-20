@@ -16,6 +16,7 @@ func makeContent(_ kind: String, text: CaptionText = .translated) throws -> Fram
     switch kind {
     case "captions": return CaptionContent(text: text)
     case "notes": return NotesContent()
+    case "qlab": return QLabContent()
     default: throw Args.ParseError.badValue("--content", kind)
     }
 }

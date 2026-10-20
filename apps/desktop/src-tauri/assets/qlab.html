@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QLab Count-out</title>
+    <!--
+      The QLab count-out. Same picture as the Syphon QLab output
+      (QLabContent.swift): a 1920x1080 stage, scaled to fit, laid out with the
+      same numbers. Fed by /api/qlab/ws: {"type":"qlab","payload":QLabState}.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', system-ui, sans-serif;
+        color: #eee;
+      }
+      #stage {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        flex: none;
+        background: #0b0b0c;
+        overflow: hidden;
+        transform-origin: center;
+      }
+      .abs {
+        position: absolute;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      /* Vertically centred on `top`, like the helper's cap-height centring. */
+      .mid {
+        transform: translateY(-50%);
+      }
+      .center {
+        left: 0;
+        right: 0;
+        text-align: center;
+      }
+      .pill {
+        display: inline-block;
+        font-weight: 700;
+        border-radius: 999px;
+        vertical-align: middle;
+      }
+      .time {
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .track {
+        position: absolute;
+        background: #262626;
+        overflow: hidden;
+      }
+      .fill {
+        height: 100%;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <script>
+      const W = 1920;
+      const H = 1080;
+      const COLORS = { video: '#38BDF8', audio: '#FBBF24' };
+      const stage = document.getElementById('stage');
+
+      function fit() {
+        const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+        stage.style.transform = `scale(${scale})`;
+      }
+      window.addEventListener('resize', fit);
+      fit();
+
+      /** Rounded up, so 0:00 shows only when the cue ends. Same as the helper. */
+      function formatTime(seconds) {
+        const total = Math.max(0, Math.ceil(seconds - 0.001));
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = String(total % 60).padStart(2, '0');
+        return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+      }
+
+      function el(tag, cls, style, text) {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (style) e.setAttribute('style', style);
+        if (text !== undefined) e.textContent = text;
+        return e;
+      }
+
+      function pill(text, size, fill, color) {
+        return el(
+          'span',
+          'pill',
+          `font-size:${size}px;padding:${0.4 * size}px ${0.9 * size}px;background:${fill};color:${color}`,
+          text
+        );
+      }
+
+      function cueLabel(cue) {
+        return [cue.number, cue.name].filter(Boolean).join('  ·  ');
+      }
+
+      /**
+       * One count-out in the band from `top` to `top + height`. `big` is the
+       * single-cue layout; two cues get the compact one.
+       */
+      function countdown(kind, cue, top, big) {
+        const color = COLORS[kind];
+        const L = big
+          ? { header: 250, pill: 30, label: 56, time: 540, timeSize: 380, bar: 820, barH: 32, total: 885, totalSize: 40 }
+          : { header: 90, pill: 26, label: 46, time: 285, timeSize: 250, bar: 455, barH: 24, total: 505, totalSize: 34 };
+        const frag = document.createDocumentFragment();
+
+        const header = el('div', 'abs mid center', `top:${top + L.header}px;font-size:${L.label}px;color:#d4d4d4`);
+        header.append(pill(kind.toUpperCase(), L.pill, color, '#000'));
+        header.append(el('span', '', `margin-left:${L.pill}px;vertical-align:middle`, cueLabel(cue)));
+        if (cue.paused) {
+          header.append(el('span', '', `margin-left:${L.pill}px`));
+          header.append(pill('PAUSED', L.pill, '#555', '#ddd'));
+        }
+        if (cue.others > 0) {
+          header.append(
+            el('span', '', `margin-left:${L.pill}px;color:#777;vertical-align:middle;font-size:${0.75 * L.label}px`, `+${cue.others} more`)
+          );
+        }
+        frag.append(header);
+
+        frag.append(
+          el(
+            'div',
+            'abs mid center time',
+            `top:${top + L.time}px;font-size:${L.timeSize}px;color:${cue.paused ? '#777' : color}`,
+            formatTime(cue.remaining)
+          )
+        );
+
+        // Drains as it counts down: the filled part is the time left.
+        const left = cue.duration > 0 ? Math.min(1, Math.max(0, cue.remaining / cue.duration)) : 0;
+        const track = el(
+          'div',
+          'track',
+          `left:160px;width:1600px;top:${top + L.bar - L.barH / 2}px;height:${L.barH}px;border-radius:${L.barH / 2}px`
+        );
+        track.append(el('div', 'fill', `width:${left * 100}%;background:${cue.paused ? '#777' : color}`));
+        frag.append(track);
+
+        frag.append(
+          el(
+            'div',
+            'abs mid time',
+            `top:${top + L.total}px;right:160px;font-size:${L.totalSize}px;color:#777;font-weight:400`,
+            `of ${formatTime(cue.duration)}`
+          )
+        );
+        return frag;
+      }
+
+      function render(s) {
+        stage.replaceChildren();
+        if (!s.connected) {
+          stage.append(el('div', 'abs mid center', 'top:440px;font-size:40px;font-weight:700;color:#666', 'QLab'));
+          const text = s.configured ? s.message || 'Connecting…' : 'Set a QLab host in SherPresent';
+          stage.append(el('div', 'abs mid center', 'top:530px;font-size:52px;color:#888', text));
+          return;
+        }
+
+        const cues = [];
+        if (s.video) cues.push(['video', s.video]);
+        if (s.audio) cues.push(['audio', s.audio]);
+
+        if (cues.length === 1) {
+          stage.append(countdown(cues[0][0], cues[0][1], 0, true));
+        } else if (cues.length === 2) {
+          stage.append(countdown('video', s.video, 0, false));
+          stage.append(el('div', 'abs', `left:0;right:0;top:${H / 2 - 1.5}px;height:3px;background:#222`));
+          stage.append(countdown('audio', s.audio, H / 2, false));
+        } else {
+          stage.append(
+            el('div', 'abs mid center', 'top:430px;font-size:64px;font-style:italic;color:#555', 'Nothing playing')
+          );
+          const strip = el('div', 'abs', `left:0;right:0;top:${H - 220}px;height:220px;background:#151515;border-top:3px solid #2a2a2a`);
+          stage.append(strip);
+          const row = el('div', 'abs mid', `top:${H - 110}px;left:80px;right:80px;font-size:72px;overflow:hidden;text-overflow:ellipsis`);
+          if (s.next) {
+            row.append(pill('NEXT', 30, '#2a2a2a', '#aaa'));
+            if (s.next.number) {
+              row.append(el('span', '', 'margin-left:40px;font-weight:700;color:#fff;vertical-align:middle', s.next.number));
+            }
+            row.append(el('span', '', 'margin-left:32px;color:#ddd;vertical-align:middle', s.next.name));
+          } else {
+            row.append(el('span', '', 'font-size:48px;font-style:italic;color:#555', 'No cue at the playhead'));
+          }
+          stage.append(row);
+        }
+      }
+
+      function connect() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${proto}//${location.host}/api/qlab/ws`);
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'qlab') render(msg.payload);
+          } catch (err) {
+            console.error('[QLab] bad message', err);
+          }
+        };
+        ws.onclose = () => {
+          render({ configured: true, connected: false, message: 'Lost connection to SherPresent' });
+          setTimeout(connect, 2000);
+        };
+      }
+
+      render({ configured: true, connected: false, message: 'Connecting…' });
+      connect();
+    </script>
+  </body>
+</html>

@@ -7,6 +7,7 @@ mod config;
 mod ontime;
 mod osc;
 mod output;
+mod qlab;
 mod sidecar;
 mod state;
 mod util;
@@ -96,6 +97,7 @@ pub fn run() {
             commands::captions::get_captions_url,
             commands::captions::preview_caption_overlay,
             commands::config::get_outputs_status,
+            commands::config::get_qlab_state,
             commands::captions::check_apple_captions_support,
             commands::captions::open_translation_settings,
             // Debug
@@ -134,6 +136,14 @@ pub fn run() {
                 let state = app.state::<AppState>();
                 state.captions.set_overlay(&config.captions);
                 tauri::async_runtime::spawn(captions::run_silence_clear(state.captions.clone()));
+
+                // QLab is followed whenever a host is set: the tab, the web
+                // page and the Syphon output all read the same state.
+                state.qlab.reconcile(&config.qlab);
+                tauri::async_runtime::spawn(qlab::forward_to_frontend(
+                    app.handle().clone(),
+                    state.qlab.subscribe(),
+                ));
 
                 // Native outputs run independently of the caption engine and
                 // the presentation, so a receiver stays wired up between talks.
