@@ -7,7 +7,7 @@ Last updated: 2026-03-16
 | Adapter | Notes Support | Method | Bulk Fetch |
 |---------|--------------|--------|------------|
 | **Keynote (macOS)** | Full | AppleScript `presenter notes of slide i` | Yes — loops all slides |
-| **PowerPoint (Windows)** | Full | COM `Slides(idx).NotesPage.Shapes.Placeholders(2).TextFrame.TextRange.Text` | Yes — iterates all slides |
+| **PowerPoint (Windows)** | Full | COM `NotesPage.Shapes.Placeholders` → body placeholder (`PlaceholderFormat.Type = 2`) → `TextFrame.TextRange.Text` | Yes — iterates all slides |
 | **PowerPoint (macOS)** | **DISABLED** | AppleScript (commented out) | No |
 | **LibreOffice Impress** | Current slide only | TCP Impress Remote Protocol (`slide_notes` message) | No |
 | **Canva** | Full | WebSocket binary frame interception | Yes — batch via `Bp` array |

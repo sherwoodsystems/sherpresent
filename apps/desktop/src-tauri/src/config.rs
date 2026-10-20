@@ -467,10 +467,10 @@ pub struct AppConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
-        // Default to libreoffice on non-macOS platforms, powerpoint on macOS
-        #[cfg(target_os = "macos")]
+        // PowerPoint where it's available (macOS, Windows), LibreOffice elsewhere
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let default_adapter = "powerpoint".to_string();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let default_adapter = "libreoffice".to_string();
 
         Self {

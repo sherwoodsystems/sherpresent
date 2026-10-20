@@ -42,7 +42,8 @@ use windows::{
     core::{Interface, BSTR, GUID, PCWSTR},
     Win32::System::Com::{
         CLSIDFromProgID, CoCreateInstance, CoInitializeEx, IDispatch, CLSCTX_LOCAL_SERVER,
-        COINIT_APARTMENTTHREADED, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPPARAMS,
+        COINIT_APARTMENTTHREADED, DISPATCH_FLAGS, DISPATCH_METHOD, DISPATCH_PROPERTYGET,
+        DISPPARAMS,
     },
     Win32::System::Ole::GetActiveObject,
     Win32::System::Variant::VARIANT,
@@ -125,107 +126,86 @@ impl PowerPointWindowsAdapter {
         }
     }
 
+    /// Invoke `name` on `disp` with `args`, retrying while PowerPoint is busy.
+    ///
+    /// PowerPoint rejects incoming COM calls while it shows a modal dialog or is
+    /// mid-transition (`RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER`).
+    /// Those clear on their own, so a few short retries ride them out instead
+    /// of dropping the poll.
+    fn invoke(
+        disp: &IDispatch,
+        name: &str,
+        flags: DISPATCH_FLAGS,
+        args: &mut [VARIANT],
+    ) -> Result<VARIANT, String> {
+        const RPC_E_CALL_REJECTED: i32 = 0x8001_0001_u32 as i32;
+        const RPC_E_SERVERCALL_RETRYLATER: i32 = 0x8001_010A_u32 as i32;
+        const RETRIES: u32 = 3;
+
+        let dispid = Self::get_dispid(disp, name)?;
+        let params = DISPPARAMS {
+            rgvarg: if args.is_empty() {
+                ptr::null_mut()
+            } else {
+                args.as_mut_ptr()
+            },
+            rgdispidNamedArgs: ptr::null_mut(),
+            cArgs: args.len() as u32,
+            cNamedArgs: 0,
+        };
+
+        let mut attempt = 0;
+        loop {
+            let mut result = VARIANT::default();
+            let outcome = unsafe {
+                disp.Invoke(
+                    dispid,
+                    &GUID::zeroed(),
+                    0, // LOCALE_SYSTEM_DEFAULT
+                    flags,
+                    &params,
+                    Some(&mut result),
+                    None,
+                    None,
+                )
+            };
+            match outcome {
+                Ok(()) => return Ok(result),
+                Err(e)
+                    if attempt < RETRIES
+                        && matches!(
+                            e.code().0,
+                            RPC_E_CALL_REJECTED | RPC_E_SERVERCALL_RETRYLATER
+                        ) =>
+                {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(50 * attempt as u64));
+                }
+                Err(e) => return Err(format!("'{}' failed: {}", name, e)),
+            }
+        }
+    }
+
     /// Get a property from an IDispatch object
     ///
     /// Equivalent to VBA: `obj.PropertyName`
     fn get_property(disp: &IDispatch, name: &str) -> Result<VARIANT, String> {
-        unsafe {
-            let dispid = Self::get_dispid(disp, name)?;
-            let mut result = VARIANT::default();
-            let params = DISPPARAMS {
-                rgvarg: ptr::null_mut(),
-                rgdispidNamedArgs: ptr::null_mut(),
-                cArgs: 0,
-                cNamedArgs: 0,
-            };
-
-            disp.Invoke(
-                dispid,
-                &GUID::zeroed(),
-                0, // LOCALE_SYSTEM_DEFAULT
-                DISPATCH_PROPERTYGET,
-                &params,
-                Some(&mut result),
-                None,
-                None,
-            )
-            .map_err(|e| format!("Failed to get property '{}': {}", name, e))?;
-
-            Ok(result)
-        }
+        Self::invoke(disp, name, DISPATCH_PROPERTYGET, &mut [])
     }
 
-    /// Get an indexed property from a collection
+    /// Get an indexed item from a collection
     ///
-    /// Equivalent to VBA: `collection(index)` or `collection.Item(index)`
-    /// Uses DISPATCH_METHOD because Item is a method in Office collections
+    /// Equivalent to VBA: `collection.Item(index)`. Office's `Item` is a
+    /// method, not a property, so this uses DISPATCH_METHOD.
     fn get_indexed_property(disp: &IDispatch, name: &str, index: i32) -> Result<VARIANT, String> {
-        unsafe {
-            let dispid = Self::get_dispid(disp, name)?;
-            let mut result = VARIANT::default();
-
-            // Create VARIANT for the index argument using the new API
-            let arg = VARIANT::from(index);
-
-            // COM passes arguments in reverse order
-            let mut args = [arg];
-            let params = DISPPARAMS {
-                rgvarg: args.as_mut_ptr(),
-                rgdispidNamedArgs: ptr::null_mut(),
-                cArgs: 1,
-                cNamedArgs: 0,
-            };
-
-            // Use DISPATCH_METHOD for Office Item() calls - they are methods, not properties
-            disp.Invoke(
-                dispid,
-                &GUID::zeroed(),
-                0,
-                DISPATCH_METHOD,
-                &params,
-                Some(&mut result),
-                None,
-                None,
-            )
-            .map_err(|e| {
-                format!(
-                    "Failed to get indexed property '{}[{}]': {}",
-                    name, index, e
-                )
-            })?;
-
-            Ok(result)
-        }
+        Self::invoke(disp, name, DISPATCH_METHOD, &mut [VARIANT::from(index)])
     }
 
     /// Call a method with no arguments
     ///
     /// Equivalent to VBA: `obj.MethodName`
     fn invoke_method(disp: &IDispatch, name: &str) -> Result<VARIANT, String> {
-        unsafe {
-            let dispid = Self::get_dispid(disp, name)?;
-            let mut result = VARIANT::default();
-            let params = DISPPARAMS {
-                rgvarg: ptr::null_mut(),
-                rgdispidNamedArgs: ptr::null_mut(),
-                cArgs: 0,
-                cNamedArgs: 0,
-            };
-
-            disp.Invoke(
-                dispid,
-                &GUID::zeroed(),
-                0,
-                DISPATCH_METHOD,
-                &params,
-                Some(&mut result),
-                None,
-                None,
-            )
-            .map_err(|e| format!("Failed to invoke method '{}': {}", name, e))?;
-
-            Ok(result)
-        }
+        Self::invoke(disp, name, DISPATCH_METHOD, &mut [])
     }
 
     /// Call a method with a single integer argument
@@ -236,32 +216,7 @@ impl PowerPointWindowsAdapter {
         name: &str,
         arg_value: i32,
     ) -> Result<VARIANT, String> {
-        unsafe {
-            let dispid = Self::get_dispid(disp, name)?;
-            let mut result = VARIANT::default();
-            let arg = VARIANT::from(arg_value);
-            let mut args = [arg];
-            let params = DISPPARAMS {
-                rgvarg: args.as_mut_ptr(),
-                rgdispidNamedArgs: ptr::null_mut(),
-                cArgs: 1,
-                cNamedArgs: 0,
-            };
-
-            disp.Invoke(
-                dispid,
-                &GUID::zeroed(),
-                0,
-                DISPATCH_METHOD,
-                &params,
-                Some(&mut result),
-                None,
-                None,
-            )
-            .map_err(|e| format!("Failed to invoke method '{}({}): {}", name, arg_value, e))?;
-
-            Ok(result)
-        }
+        Self::invoke(disp, name, DISPATCH_METHOD, &mut [VARIANT::from(arg_value)])
     }
 
     /// Extract an IDispatch from a VARIANT
@@ -328,6 +283,39 @@ impl PowerPointWindowsAdapter {
     fn get_slides(pres: &IDispatch) -> Result<IDispatch, String> {
         let var = Self::get_property(pres, "Slides")?;
         Self::variant_to_dispatch(&var)
+    }
+
+    /// Speaker notes text of `slide`, trimmed.
+    ///
+    /// The notes live in the notes page's body placeholder. Its position in
+    /// `Placeholders` depends on the notes master (index 2 on the default
+    /// master, but not on customised ones), so find it by type, as the macOS
+    /// adapter does.
+    fn slide_notes(slide: &IDispatch) -> Result<String, String> {
+        const PP_PLACEHOLDER_BODY: i32 = 2;
+
+        let notes_page = Self::variant_to_dispatch(&Self::get_property(slide, "NotesPage")?)?;
+        let shapes = Self::variant_to_dispatch(&Self::get_property(&notes_page, "Shapes")?)?;
+        let placeholders =
+            Self::variant_to_dispatch(&Self::get_property(&shapes, "Placeholders")?)?;
+        let count = Self::variant_to_i32(&Self::get_property(&placeholders, "Count")?)?;
+
+        for i in 1..=count {
+            let shape =
+                Self::variant_to_dispatch(&Self::get_indexed_property(&placeholders, "Item", i)?)?;
+            let format =
+                Self::variant_to_dispatch(&Self::get_property(&shape, "PlaceholderFormat")?)?;
+            if Self::variant_to_i32(&Self::get_property(&format, "Type")?)? != PP_PLACEHOLDER_BODY {
+                continue;
+            }
+            let text_frame = Self::variant_to_dispatch(&Self::get_property(&shape, "TextFrame")?)?;
+            let text_range =
+                Self::variant_to_dispatch(&Self::get_property(&text_frame, "TextRange")?)?;
+            let text = Self::variant_to_string(&Self::get_property(&text_range, "Text")?)?;
+            return Ok(text.trim().to_string());
+        }
+
+        Ok(String::new())
     }
 }
 
@@ -517,6 +505,7 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         Ok(SlideInfo {
             current: new_pos,
             total,
+            transition_duration: None,
         })
     }
 
@@ -526,44 +515,13 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         let app = Self::get_application()?;
         let pres = Self::get_presentation_by_name(&app, name)?;
 
-        // Get current slide index from slideshow view
+        // The slide on screen, straight from the show view
         let window = Self::get_slideshow_window(&pres)?;
         let view = Self::get_slideshow_view(&window)?;
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current_idx = Self::variant_to_i32(&pos_var)?;
+        let slide = Self::variant_to_dispatch(&Self::get_property(&view, "Slide")?)?;
 
-        // Navigate: Slides(idx) → NotesPage → Shapes → Placeholders → Item(2) → TextFrame → TextRange → Text
-        let slides = Self::get_slides(&pres)?;
-        let slide_var = Self::get_indexed_property(&slides, "Item", current_idx)?;
-        let slide = Self::variant_to_dispatch(&slide_var)?;
-
-        let notes_page_var = Self::get_property(&slide, "NotesPage")?;
-        let notes_page = Self::variant_to_dispatch(&notes_page_var)?;
-
-        let shapes_var = Self::get_property(&notes_page, "Shapes")?;
-        let shapes = Self::variant_to_dispatch(&shapes_var)?;
-
-        let placeholders_var = Self::get_property(&shapes, "Placeholders")?;
-        let placeholders = Self::variant_to_dispatch(&placeholders_var)?;
-
-        // Placeholder index 2 is the notes text placeholder
-        let placeholder_var = Self::get_indexed_property(&placeholders, "Item", 2)?;
-        let placeholder = Self::variant_to_dispatch(&placeholder_var)?;
-
-        let text_frame_var = Self::get_property(&placeholder, "TextFrame")?;
-        let text_frame = Self::variant_to_dispatch(&text_frame_var)?;
-
-        let text_range_var = Self::get_property(&text_frame, "TextRange")?;
-        let text_range = Self::variant_to_dispatch(&text_range_var)?;
-
-        let text_var = Self::get_property(&text_range, "Text")?;
-        let text = Self::variant_to_string(&text_var)?;
-
-        if text.trim().is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(text))
-        }
+        let text = Self::slide_notes(&slide)?;
+        Ok((!text.is_empty()).then_some(text))
     }
 
     fn get_all_presenter_notes(
@@ -591,26 +549,7 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
                 Err(_) => continue,
             };
 
-            // Navigate: Slide → NotesPage → Shapes → Placeholders → Item(2) → TextFrame → TextRange → Text
-            let text = (|| -> Result<String, String> {
-                let notes_page_var = Self::get_property(&slide, "NotesPage")?;
-                let notes_page = Self::variant_to_dispatch(&notes_page_var)?;
-                let shapes_var = Self::get_property(&notes_page, "Shapes")?;
-                let shapes = Self::variant_to_dispatch(&shapes_var)?;
-                let placeholders_var = Self::get_property(&shapes, "Placeholders")?;
-                let placeholders = Self::variant_to_dispatch(&placeholders_var)?;
-                let placeholder_var = Self::get_indexed_property(&placeholders, "Item", 2)?;
-                let placeholder = Self::variant_to_dispatch(&placeholder_var)?;
-                let text_frame_var = Self::get_property(&placeholder, "TextFrame")?;
-                let text_frame = Self::variant_to_dispatch(&text_frame_var)?;
-                let text_range_var = Self::get_property(&text_frame, "TextRange")?;
-                let text_range = Self::variant_to_dispatch(&text_range_var)?;
-                let text_var = Self::get_property(&text_range, "Text")?;
-                Self::variant_to_string(&text_var)
-            })();
-
-            if let Ok(text) = text {
-                let text = text.trim().to_string();
+            if let Ok(text) = Self::slide_notes(&slide) {
                 if !text.is_empty() {
                     notes.insert(i, text);
                 }
