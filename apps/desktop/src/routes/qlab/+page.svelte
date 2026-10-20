@@ -26,6 +26,10 @@
     return names;
   });
 
+  // For the prefix hint: what slide 3 would fire.
+  const exampleSlide = 3;
+  const goPrefix = $derived(config.slideCuePrefix.replace(/[\s/]/g, ''));
+
   function update(patch: Partial<QLabConfig>) {
     appStore.updateQLabConfig({ ...config, ...patch });
   }
@@ -127,23 +131,49 @@
 
   <section class="section">
     <h3 class="section-title">On Slide Change</h3>
+    <label class="check-row">
+      <input
+        type="checkbox"
+        checked={config.slideGo}
+        onchange={(e) => update({ slideGo: e.currentTarget.checked })}
+      />
+      <span class="label">GO the matching cue in QLab</span>
+    </label>
     <div class="field">
-      <label class="label" for="qlab-slide-command">OSC to QLab</label>
+      <label class="label" for="qlab-cue-prefix">Cue Number Prefix</label>
+      <input
+        id="qlab-cue-prefix"
+        class="input mono prefix"
+        value={config.slideCuePrefix}
+        placeholder="None"
+        spellcheck="false"
+        disabled={!config.slideGo}
+        onchange={(e) => update({ slideCuePrefix: e.currentTarget.value.replace(/[\s/]/g, '') })}
+      />
+      <span class="hint">
+        Slide {exampleSlide} fires <code>/go/{goPrefix}{exampleSlide}</code>: QLab jumps to cue
+        <strong>{goPrefix}{exampleSlide}</strong> and GOes. Fired the moment the slide changes during
+        a show, not when it starts or ends. A slide with no matching cue does nothing.
+      </span>
+    </div>
+    <div class="field">
+      <label class="label" for="qlab-slide-command">Also Send (optional)</label>
       <textarea
         id="qlab-slide-command"
         class="input mono"
-        rows="3"
+        rows="2"
         value={config.slideCommand}
-        placeholder={'e.g. /go\nor /cue/S{slide}/start'}
+        placeholder={'e.g. /cue/FX{slide}/start'}
         spellcheck="false"
         onchange={(e) => update({ slideCommand: e.currentTarget.value })}></textarea>
       <span class="hint">
-        Sent the moment the slide changes during a show (not when it starts or ends). One message
-        per line, arguments after a space; <code>{'{slide}'}</code> becomes the slide number. Goes to
-        the workspace above over its connection, so the passcode needs control access. Leave empty to
-        turn off.
+        One OSC message per line, arguments after a space (quote one to send it as text);
+        <code>{'{slide}'}</code> becomes the slide number.
       </span>
     </div>
+    <span class="hint">
+      Sent to the workspace above over its connection, so its passcode needs control access.
+    </span>
     {#if live?.slideTrigger}
       {@const t = live.slideTrigger}
       <div class="status-row">
@@ -261,6 +291,17 @@
 
   textarea.input {
     resize: vertical;
+  }
+
+  .prefix {
+    max-width: 8rem;
+  }
+
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
   }
 
   .span {

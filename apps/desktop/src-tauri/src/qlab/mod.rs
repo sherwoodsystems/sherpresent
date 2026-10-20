@@ -89,7 +89,26 @@ pub struct TriggerSlot {
 
 /// A slide-change command is set and there's a QLab to send it to.
 pub fn fires_on_slides(cfg: &QLabConfig) -> bool {
-    !cfg.host.trim().is_empty() && !slide_messages(&cfg.slide_command, 0).is_empty()
+    !cfg.host.trim().is_empty() && !slide_messages(&slide_template(cfg), 0).is_empty()
+}
+
+/// Everything sent on a slide change, as one command for [`slide_messages`]:
+/// the GO of the matching cue, then any custom lines. The cue number goes in
+/// the address (`/go/S7`), where QLab takes it as text; as an argument it
+/// would have to be sent as a string, not a number.
+fn slide_template(cfg: &QLabConfig) -> String {
+    let mut lines = Vec::new();
+    if cfg.slide_go {
+        // An address can't hold spaces or extra path segments.
+        let prefix: String = cfg
+            .slide_cue_prefix
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '/')
+            .collect();
+        lines.push(format!("/go/{}{{slide}}", prefix));
+    }
+    lines.push(cfg.slide_command.clone());
+    lines.join("\n")
 }
 
 impl TriggerSlot {
@@ -106,9 +125,10 @@ impl TriggerSlot {
 }
 
 /// Parse the slide-change command: one message per line, address first, then
-/// arguments (whole numbers are ints, other numbers floats, the rest strings).
-/// `{slide}` becomes the slide number anywhere in a line. Blank lines and
-/// lines starting with `#` are skipped.
+/// arguments (whole numbers are ints, other numbers floats, the rest strings;
+/// quote one to force a string, as QLab wants for cue numbers: `/go "53"`).
+/// `{slide}` becomes the slide number anywhere in a line. Lines that don't
+/// start with `/` (blank, `#` comments) are skipped.
 pub fn slide_messages(command: &str, slide: i32) -> Vec<OscMessage> {
     let slide = slide.to_string();
     command
@@ -116,22 +136,51 @@ pub fn slide_messages(command: &str, slide: i32) -> Vec<OscMessage> {
         .map(|line| line.trim().replace("{slide}", &slide))
         .filter(|line| line.starts_with('/'))
         .map(|line| {
-            let mut parts = line.split_whitespace();
-            let addr = parts.next().unwrap_or_default().to_string();
+            let mut parts = tokens(&line).into_iter();
+            let addr = parts.next().map(|(t, _)| t).unwrap_or_default();
             let args = parts
-                .map(|arg| {
-                    if let Ok(i) = arg.parse() {
+                .map(|(arg, quoted)| {
+                    if quoted {
+                        OscType::String(arg)
+                    } else if let Ok(i) = arg.parse() {
                         OscType::Int(i)
                     } else if let Ok(f) = arg.parse() {
                         OscType::Float(f)
                     } else {
-                        OscType::String(arg.to_string())
+                        OscType::String(arg)
                     }
                 })
                 .collect();
             OscMessage { addr, args }
         })
         .collect()
+}
+
+/// Split on whitespace, keeping `"double quoted"` runs whole. Each token comes
+/// with whether it was quoted.
+fn tokens(line: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut chars = line.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else if c == '"' {
+            chars.next();
+            let text: String = chars.by_ref().take_while(|&c| c != '"').collect();
+            out.push((text, true));
+        } else {
+            let mut text = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() {
+                    break;
+                }
+                text.push(c);
+                chars.next();
+            }
+            out.push((text, false));
+        }
+    }
+    out
 }
 
 /// Which presentation states are slide changes worth firing on: a new slide
@@ -283,7 +332,7 @@ impl QLab {
             changed
         });
 
-        *self.trigger.command.locked() = cfg.slide_command.clone();
+        *self.trigger.command.locked() = slide_template(cfg);
 
         let host = cfg.host.trim();
         let want = (!host.is_empty()).then(|| ClientKey {
@@ -361,6 +410,42 @@ mod tests {
             ]
         );
         assert!(slide_messages("  \n go", 1).is_empty());
+    }
+
+    #[test]
+    fn test_quoted_args_stay_strings() {
+        let msgs = slide_messages(r#"/go "53" "two words" 4"#, 1);
+        assert_eq!(
+            msgs[0].args,
+            vec![
+                OscType::String("53".into()),
+                OscType::String("two words".into()),
+                OscType::Int(4)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_slide_go_uses_the_cue_prefix() {
+        let mut cfg = QLabConfig {
+            host: "10.0.0.5".into(),
+            ..Default::default()
+        };
+        assert!(!fires_on_slides(&cfg)); // off by default
+        cfg.slide_go = true;
+        assert!(fires_on_slides(&cfg));
+        let addrs = |cfg: &QLabConfig| -> Vec<String> {
+            slide_messages(&slide_template(cfg), 7)
+                .into_iter()
+                .map(|m| m.addr)
+                .collect()
+        };
+        assert_eq!(addrs(&cfg), vec!["/go/S7"]);
+        cfg.slide_cue_prefix = " Slide /".into();
+        cfg.slide_command = "/cue/fx{slide}/start".into();
+        assert_eq!(addrs(&cfg), vec!["/go/Slide7", "/cue/fx7/start"]);
+        cfg.slide_cue_prefix = String::new();
+        assert_eq!(addrs(&cfg)[0], "/go/7");
     }
 
     fn showing(slide: i32) -> CachedState {

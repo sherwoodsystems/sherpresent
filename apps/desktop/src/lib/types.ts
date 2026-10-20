@@ -208,8 +208,11 @@ export interface QLabConfig {
   workspace: string;
   /** Cue numbers never counted out */
   hiddenCues: string[];
-  /** OSC fired on every slide change during a show: one message per line,
-   *  `{slide}` replaced by the slide number; empty = off */
+  /** On a slide change during a show, GO the cue numbered prefix + slide (`/go/S7`) */
+  slideGo: boolean;
+  slideCuePrefix: string;
+  /** More OSC sent on a slide change: one message per line, `{slide}`
+   *  replaced by the slide number; empty = none */
   slideCommand: string;
   /** The count-out as a Syphon source */
   syphon: SyphonOutputConfig;
@@ -440,6 +443,8 @@ export const defaultConfig: AppConfig = {
     passcode: '',
     workspace: '',
     hiddenCues: [],
+    slideGo: false,
+    slideCuePrefix: 'S',
     slideCommand: '',
     syphon: { enabled: false, serverName: 'SherPresent QLab' }
   }

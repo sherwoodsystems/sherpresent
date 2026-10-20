@@ -191,10 +191,12 @@ content (`QLabContent.swift`). The page and the helper share one 1920x1080
 layout; keep their numbers in step. Time is rounded up everywhere
 (`lib/qlab.ts`, `QLabContent.formatTime`).
 
-**Slide trigger** (`qlab.slideCommand`): OSC fired on every slide change
-within a show, sent down the same TCP connection (already past the passcode)
-and scoped to its workspace (`/go` → `/workspace/{id}/go`). `{slide}` is
-substituted per line. `fire_on_slide_change` watches the StateManager's
+**Slide trigger**: on every slide change within a show, `slideGo` GOes the
+cue numbered `slideCuePrefix` + slide (`/go/S7`; the cue number goes in the
+address because as an argument QLab needs it as a string), then any custom
+`slideCommand` lines (`{slide}` substituted, `"quoted"` args stay strings).
+Sent down the same TCP connection (already past the passcode) and scoped to
+its workspace (`/go` → `/workspace/{id}/go`). `fire_on_slide_change` watches the StateManager's
 `subscribe()` stream, so commands from any surface fire on the optimistic
 update; while a trigger is set the poller also reads the slide position every
 250 ms (`set_fast_slide_poll`) to catch changes made in the presentation app.
