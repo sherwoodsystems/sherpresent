@@ -58,6 +58,13 @@ pub trait PresentationAdapter: Send + Sync {
     /// Get list of open presentation names
     fn get_open_presentations(&self) -> Result<Vec<String>, String>;
 
+    /// Names of the presentations with a slide show running, for picking the
+    /// presentation automatically. Must not launch the app. Adapters that
+    /// can't tell return none, so nothing is ever picked for them.
+    fn get_presenting_presentations(&self) -> Result<Vec<String>, String> {
+        Ok(vec![])
+    }
+
     /// Get the state of a specific presentation
     fn get_presentation_state(&self, name: &str) -> Result<PresentationState, String>;
 

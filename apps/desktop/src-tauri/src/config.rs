@@ -220,6 +220,10 @@ pub struct QLabConfig {
     /// Cue numbers never counted out, even when they run linearly
     #[serde(rename = "hiddenCues", default)]
     pub hidden_cues: Vec<String>,
+    /// OSC sent to QLab whenever the slide changes during a show: one
+    /// message per line, `{slide}` replaced by the new slide number. Empty = off.
+    #[serde(rename = "slideCommand", default)]
+    pub slide_command: String,
     /// The count-out as a Syphon source
     #[serde(default = "default_qlab_syphon")]
     pub syphon: SyphonOutputConfig,
@@ -244,6 +248,7 @@ impl Default for QLabConfig {
             passcode: String::new(),
             workspace: String::new(),
             hidden_cues: Vec::new(),
+            slide_command: String::new(),
             syphon: default_qlab_syphon(),
         }
     }

@@ -125,6 +125,36 @@
     </div>
   </section>
 
+  <section class="section">
+    <h3 class="section-title">On Slide Change</h3>
+    <div class="field">
+      <label class="label" for="qlab-slide-command">OSC to QLab</label>
+      <textarea
+        id="qlab-slide-command"
+        class="input mono"
+        rows="3"
+        value={config.slideCommand}
+        placeholder={'e.g. /go\nor /cue/S{slide}/start'}
+        spellcheck="false"
+        onchange={(e) => update({ slideCommand: e.currentTarget.value })}></textarea>
+      <span class="hint">
+        Sent the moment the slide changes during a show (not when it starts or ends). One message
+        per line, arguments after a space; <code>{'{slide}'}</code> becomes the slide number. Goes to
+        the workspace above over its connection, so the passcode needs control access. Leave empty to
+        turn off.
+      </span>
+    </div>
+    {#if live?.slideTrigger}
+      {@const t = live.slideTrigger}
+      <div class="status-row">
+        <span class="status-dot" class:ok={!t.error} class:bad={!!t.error}></span>
+        <span class="status-text mono">
+          Slide {t.slide}: {t.error ?? t.sent.join(', ')}
+        </span>
+      </div>
+    {/if}
+  </section>
+
   {#if live?.connected}
     <section class="section">
       <h3 class="section-title">Live</h3>
@@ -227,6 +257,10 @@
 
   .mono {
     font-family: monospace;
+  }
+
+  textarea.input {
+    resize: vertical;
   }
 
   .span {

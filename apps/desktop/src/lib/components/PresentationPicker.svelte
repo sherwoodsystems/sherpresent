@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
 
   interface Props {
@@ -30,6 +31,17 @@
   $effect(() => {
     void adapter; // Track dependency
     refreshPresentations();
+  });
+
+  // The backend can select a presentation by itself (the only running
+  // show), possibly one opened after the list was fetched.
+  $effect(() => {
+    if (
+      selectedPresentation &&
+      !untrack(() => loading || presentations.includes(selectedPresentation))
+    ) {
+      refreshPresentations();
+    }
   });
 </script>
 

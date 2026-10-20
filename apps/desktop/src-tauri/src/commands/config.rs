@@ -1,4 +1,5 @@
 use crate::config::{self, AppConfig};
+use crate::qlab;
 use crate::state::AppState;
 use crate::util::LockExt;
 use tauri::{AppHandle, Manager};
@@ -27,6 +28,9 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
 
     // Follow QLab at the configured host (no-op if unchanged).
     state.qlab.reconcile(&config.qlab);
+    state
+        .state_manager
+        .set_fast_slide_poll(qlab::fires_on_slides(&config.qlab));
 
     // Start/stop/rename native outputs to match; unchanged ones are untouched.
     let sources = state.output_sources();

@@ -140,6 +140,14 @@ pub fn run() {
                 // QLab is followed whenever a host is set: the tab, the web
                 // page and the Syphon output all read the same state.
                 state.qlab.reconcile(&config.qlab);
+                // Slide changes fire the QLab trigger, if one is set.
+                tauri::async_runtime::spawn(qlab::fire_on_slide_change(
+                    state.qlab.slide_trigger(),
+                    state.state_manager.subscribe(),
+                ));
+                state
+                    .state_manager
+                    .set_fast_slide_poll(qlab::fires_on_slides(&config.qlab));
                 tauri::async_runtime::spawn(qlab::forward_to_frontend(
                     app.handle().clone(),
                     state.qlab.subscribe(),

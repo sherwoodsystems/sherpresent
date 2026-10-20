@@ -191,6 +191,17 @@ content (`QLabContent.swift`). The page and the helper share one 1920x1080
 layout; keep their numbers in step. Time is rounded up everywhere
 (`lib/qlab.ts`, `QLabContent.formatTime`).
 
+**Slide trigger** (`qlab.slideCommand`): OSC fired on every slide change
+within a show, sent down the same TCP connection (already past the passcode)
+and scoped to its workspace (`/go` → `/workspace/{id}/go`). `{slide}` is
+substituted per line. `fire_on_slide_change` watches the StateManager's
+`subscribe()` stream, so commands from any surface fire on the optimistic
+update; while a trigger is set the poller also reads the slide position every
+250 ms (`set_fast_slide_poll`) to catch changes made in the presentation app.
+Replies to triggers are matched in `Session::trigger_reply` so a `denied`
+doesn't drop the count-out connection; triggers queued while disconnected are
+dropped, not replayed.
+
 QLab 5.3+ errors on `/cue/active/valuesForKeys` when nothing is active and
 answers multi-cue selectors with one reply per cue, hence the two-step poll.
 

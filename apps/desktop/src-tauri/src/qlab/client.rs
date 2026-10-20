@@ -12,18 +12,22 @@
 //!    active audio or video cue's `valuesForKeys`, and the playhead cue's.
 //!
 //! Every reply is `/reply/{address} {json}` with `status` and `data`.
+//!
+//! Slide-change triggers arrive on a channel and go out the moment they do,
+//! scoped to the connected workspace (`/go` → `/workspace/{id}/go`).
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use rosc::{OscMessage, OscPacket, OscType};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{timeout, Instant};
 
 use super::cues::{self, ActiveCues, Kind, CUE_KEYS};
-use super::{slip, ClientKey, CueLabel, Publisher, QLabState};
+use super::{slip, ClientKey, CueLabel, Publisher, QLabState, SlideTrigger, TriggerReport};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY: Duration = Duration::from_secs(2);
@@ -39,17 +43,21 @@ const WORKSPACES_EVERY: Duration = Duration::from_secs(2);
 /// Polls are answered within milliseconds; this long without a word means
 /// the connection is dead even if TCP hasn't noticed.
 const SILENCE_LIMIT: Duration = Duration::from_secs(5);
+/// Trigger addresses awaiting QLab's reply. QLab answers every TCP message,
+/// so this only caps a misbehaving server.
+const PENDING_TRIGGERS: usize = 32;
 
 /// Follow QLab until `shutdown` flips.
 pub async fn run(
     key: ClientKey,
     out: Publisher,
     mut hidden: watch::Receiver<Vec<String>>,
+    mut triggers: mpsc::UnboundedReceiver<SlideTrigger>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     loop {
         let (message, delay) = tokio::select! {
-            end = connect_and_follow(&key, &out, &mut hidden) => end,
+            end = connect_and_follow(&key, &out, &mut hidden, &mut triggers) => end,
             _ = shutdown.changed() => return,
         };
         log::info!("QLab {}:{}: {}", key.host, key.port, message);
@@ -82,6 +90,7 @@ async fn connect_and_follow(
     key: &ClientKey,
     out: &Publisher,
     hidden: &mut watch::Receiver<Vec<String>>,
+    triggers: &mut mpsc::UnboundedReceiver<SlideTrigger>,
 ) -> (String, Duration) {
     let addr = format!("{}:{}", key.host, key.port);
     let stream = match timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)).await {
@@ -98,6 +107,9 @@ async fn connect_and_follow(
     let mut decoder = slip::Decoder::default();
     let mut buf = vec![0u8; 64 * 1024];
     let mut outgoing = session.start();
+    // Slide changes from while we were away are stale: firing them now would
+    // play cues the show has moved past.
+    while triggers.try_recv().is_ok() {}
 
     loop {
         for msg in outgoing.drain(..) {
@@ -129,6 +141,9 @@ async fn connect_and_follow(
             }
             _ = tokio::time::sleep_until(session.wake_at()) => {
                 outgoing.extend(session.tick(Instant::now()));
+            }
+            Some(trigger) = triggers.recv() => {
+                outgoing.extend(session.fire(trigger));
             }
             Ok(()) = hidden.changed() => {
                 session.set_hidden(&hidden.borrow_and_update());
@@ -191,6 +206,9 @@ pub struct Session {
     next_poll: Instant,
     next_playhead: Instant,
     next_workspaces: Instant,
+    slide_trigger: Option<TriggerReport>,
+    /// Addresses of fired triggers QLab hasn't answered yet
+    pending_triggers: VecDeque<String>,
     /// Set when the connection should end: why, and the retry delay
     pub ended: Option<(String, Duration)>,
 }
@@ -208,6 +226,8 @@ impl Session {
             next_poll: now,
             next_playhead: now,
             next_workspaces: now + WORKSPACES_EVERY,
+            slide_trigger: None,
+            pending_triggers: VecDeque::new(),
             ended: None,
         }
     }
@@ -243,7 +263,66 @@ impl Session {
                 .then(|| self.cues.countdown(Kind::Audio))
                 .flatten(),
             next: connected.then(|| self.next.clone()).flatten(),
+            slide_trigger: self.slide_trigger.clone(),
         }
+    }
+
+    /// The messages to send for a slide change, scoped to the workspace.
+    /// Nothing while not connected: QLab would refuse them.
+    pub fn fire(&mut self, trigger: SlideTrigger) -> Vec<OscMessage> {
+        let Phase::Connected { id, .. } = &self.phase else {
+            log::info!(
+                "QLab trigger for slide {} skipped: not connected",
+                trigger.slide
+            );
+            self.slide_trigger = Some(TriggerReport {
+                slide: trigger.slide,
+                sent: vec![],
+                error: Some("Not connected to QLab".to_string()),
+            });
+            return vec![];
+        };
+        let messages: Vec<OscMessage> = trigger
+            .messages
+            .into_iter()
+            .map(|m| osc(in_workspace(id, &m.addr), m.args))
+            .collect();
+        let sent: Vec<String> = messages.iter().map(|m| m.addr.clone()).collect();
+        log::info!("QLab trigger for slide {}: {:?}", trigger.slide, sent);
+        self.pending_triggers.extend(sent.iter().cloned());
+        while self.pending_triggers.len() > PENDING_TRIGGERS {
+            self.pending_triggers.pop_front();
+        }
+        self.slide_trigger = Some(TriggerReport {
+            slide: trigger.slide,
+            sent,
+            error: None,
+        });
+        messages
+    }
+
+    /// QLab's answer to a fired trigger. A refusal is reported, not treated
+    /// as the follow connection failing: the passcode may allow viewing but
+    /// not control.
+    fn trigger_reply(&mut self, addr: &str, status: &str, data: &Value) -> bool {
+        let Some(i) = self.pending_triggers.iter().position(|a| a == addr) else {
+            return false;
+        };
+        self.pending_triggers.remove(i);
+        if status != "ok" {
+            let why = match status {
+                "denied" => "denied: the passcode doesn't allow control".to_string(),
+                _ if data.is_null() => status.to_string(),
+                _ => format!("{} ({})", status, data),
+            };
+            log::warn!("QLab refused trigger {}: {}", addr, why);
+            if let Some(report) = &mut self.slide_trigger {
+                if report.sent.iter().any(|a| a == addr) {
+                    report.error = Some(format!("{}: {}", addr, why));
+                }
+            }
+        }
+        true
     }
 
     /// When [`tick`](Self::tick) next has something to do.
@@ -318,6 +397,9 @@ impl Session {
         let status = reply.get("status").and_then(Value::as_str).unwrap_or("ok");
         let data = reply.get("data").unwrap_or(&Value::Null);
 
+        if self.trigger_reply(addr, status, data) {
+            return vec![];
+        }
         if status == "denied" {
             self.ended = Some((
                 "QLab refused the connection: check the OSC passcode".to_string(),
@@ -469,6 +551,16 @@ impl Session {
             // A cue started, stopped or changed: look now, not at the next poll.
             self.next_poll = now;
         }
+    }
+}
+
+/// `/go` → `/workspace/{id}/go`, so a trigger reaches the followed workspace
+/// rather than every one open. Addresses already naming a workspace are kept.
+fn in_workspace(id: &str, addr: &str) -> String {
+    if addr.starts_with("/workspace/") {
+        addr.to_string()
+    } else {
+        format!("/workspace/{}{}", id, addr)
     }
 }
 
@@ -794,7 +886,8 @@ mod tests {
             ..key("pw", "")
         };
         let (_hidden, hidden_rx) = watch::channel(Vec::new());
-        tokio::spawn(run(key, out, hidden_rx, stop_rx));
+        let (_triggers, triggers_rx) = mpsc::unbounded_channel();
+        tokio::spawn(run(key, out, hidden_rx, triggers_rx, stop_rx));
 
         let state = timeout(Duration::from_secs(5), rx.wait_for(|s| s.video.is_some()))
             .await
@@ -806,6 +899,49 @@ mod tests {
         let video = state.video.unwrap();
         assert_eq!((video.name.as_str(), video.remaining), ("Film", 45.0));
         stop.send(true).unwrap();
+    }
+
+    fn trigger(slide: i32, command: &str) -> SlideTrigger {
+        SlideTrigger {
+            slide,
+            messages: super::super::slide_messages(command, slide),
+        }
+    }
+
+    #[test]
+    fn test_trigger_is_scoped_to_the_workspace() {
+        let now = Instant::now();
+        let mut s = connected(now);
+        let out = s.fire(trigger(4, "/go\n/cue/S{slide}/start\n/workspace/X/go"));
+        assert_eq!(
+            addrs(&out),
+            vec![
+                "/workspace/W/go",
+                "/workspace/W/cue/S4/start",
+                "/workspace/X/go"
+            ]
+        );
+        let report = s.state().slide_trigger.unwrap();
+        assert_eq!((report.slide, report.error), (4, None));
+    }
+
+    #[test]
+    fn test_trigger_skipped_until_connected() {
+        let now = Instant::now();
+        let mut s = Session::new(key("", ""), now);
+        assert!(s.fire(trigger(2, "/go")).is_empty());
+        assert!(s.state().slide_trigger.unwrap().error.is_some());
+    }
+
+    #[test]
+    fn test_refused_trigger_is_reported_and_keeps_the_connection() {
+        let now = Instant::now();
+        let mut s = connected(now);
+        s.fire(trigger(3, "/go"));
+        s.handle(&reply("/workspace/W/go", "denied", Value::Null), now);
+        assert!(s.ended.is_none());
+        let error = s.state().slide_trigger.unwrap().error.unwrap();
+        assert!(error.contains("denied"), "{}", error);
     }
 
     #[test]

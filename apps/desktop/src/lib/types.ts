@@ -208,6 +208,9 @@ export interface QLabConfig {
   workspace: string;
   /** Cue numbers never counted out */
   hiddenCues: string[];
+  /** OSC fired on every slide change during a show: one message per line,
+   *  `{slide}` replaced by the slide number; empty = off */
+  slideCommand: string;
   /** The count-out as a Syphon source */
   syphon: SyphonOutputConfig;
 }
@@ -236,6 +239,8 @@ export interface QLabState {
   audio: QLabCountdown | null;
   /** The cue at the playhead */
   next: { number: string; name: string } | null;
+  /** The last slide-change command fired */
+  slideTrigger: { slide: number; sent: string[]; error: string | null } | null;
 }
 
 export interface CaptionsConfig {
@@ -435,6 +440,7 @@ export const defaultConfig: AppConfig = {
     passcode: '',
     workspace: '',
     hiddenCues: [],
+    slideCommand: '',
     syphon: { enabled: false, serverName: 'SherPresent QLab' }
   }
 };

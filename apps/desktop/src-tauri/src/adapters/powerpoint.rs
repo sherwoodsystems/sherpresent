@@ -56,6 +56,25 @@ impl PresentationAdapter for PowerPointAdapter {
             .unwrap_or_default())
     }
 
+    fn get_presenting_presentations(&self) -> Result<Vec<String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(vec![]);
+        }
+        // Same presenting test as `get_presentation_state`.
+        let script = r#"tell application "Microsoft PowerPoint"
+                set names to {}
+                repeat with i from 1 to count presentations
+                    try
+                        set pres to presentation i
+                        set pos to current show position of slide show view of slide show window of pres
+                        set end of names to name of pres
+                    end try
+                end repeat
+                return names
+            end tell"#;
+        Ok(parse_names(&run_applescript(script)?))
+    }
+
     fn get_presentation_state(&self, name: &str) -> Result<PresentationState, String> {
         if !is_app_running(APP_NAME) {
             return Ok(PresentationState {

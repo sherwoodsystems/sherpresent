@@ -41,16 +41,21 @@ use serde::{Deserialize, Serialize};
 use tauri::async_runtime::{self, JoinHandle};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, Duration, Instant, MissedTickBehavior};
 
 use super::latency::{self, CommandSource, LatencyStore};
 use crate::adapters::{self, canva::CanvaAdapter, LiveStatus, PresentationAdapter, SlideInfo};
-use crate::config::AdapterConfig;
+use crate::config::{self, AdapterConfig};
 use crate::util::{now_ms, LockExt};
 
 /// Polls are skipped for this long after a command, so they don't compete
 /// with it for the Apple Event channel during active use.
 const COMMAND_QUIET_MS: u64 = 3000;
+
+/// While something acts on slide changes (a QLab trigger), the slide position
+/// alone is read this often between full polls, so a change made in the
+/// presentation app itself is seen within this rather than the poll interval.
+const FAST_SLIDE_POLL_MS: u64 = 250;
 
 pub type NotesCache = HashMap<i32, String>;
 
@@ -194,6 +199,14 @@ pub struct StateManager {
     /// last one's answer is applied: an earlier one would undo the optimistic
     /// state of the presses after it.
     commands_in_flight: AtomicUsize,
+
+    /// The running slide shows the poller last saw (`None` until it looks).
+    /// The presentation is picked only when this changes, so choosing another
+    /// one by hand isn't undone while a show keeps running.
+    last_presenting: Mutex<Option<Vec<String>>>,
+
+    /// Read the slide position every `FAST_SLIDE_POLL_MS` during a show.
+    fast_slide_poll: AtomicBool,
 }
 
 impl StateManager {
@@ -209,6 +222,8 @@ impl StateManager {
             refresh_in_progress: AtomicBool::new(false),
             last_command_at: AtomicU64::new(0),
             commands_in_flight: AtomicUsize::new(0),
+            last_presenting: Mutex::new(None),
+            fast_slide_poll: AtomicBool::new(false),
         }
     }
 
@@ -285,6 +300,10 @@ impl StateManager {
                 return;
             }
             let changed = target.adapter != new.adapter || target.presentation != new.presentation;
+            // A new app, or no presentation: pick the running show afresh.
+            if target.adapter != new.adapter || new.presentation.is_empty() {
+                *self.last_presenting.locked() = None;
+            }
             log::info!(
                 "StateManager: target {}/{:?}",
                 new.adapter,
@@ -612,8 +631,81 @@ impl StateManager {
     }
 
     // =========================================================================
+    // AUTOMATIC SELECTION
+    // =========================================================================
+
+    /// When exactly one slide show is running and it isn't the target, switch
+    /// to it. Checked only while the target isn't presenting and only when the
+    /// set of running shows changes, so it follows the operator starting the
+    /// next talk without overriding a choice made by hand.
+    async fn follow_running_show(self: &Arc<Self>) {
+        if self.state.locked().is_presenting {
+            return;
+        }
+        let adapter = self.adapter_name();
+        let sm = self.clone();
+        let lookup = adapter.clone();
+        let names = async_runtime::spawn_blocking(move || {
+            sm.with_adapter(&lookup, |a| a.get_presenting_presentations())
+                .and_then(|r| r)
+        })
+        .await;
+        let Ok(Ok(names)) = names else {
+            return;
+        };
+        if self.adapter_name() != adapter {
+            return;
+        }
+
+        if !self.saw_presenting(&names) {
+            return;
+        }
+        if let [name] = names.as_slice() {
+            if *name != self.presentation_name() {
+                self.select_presentation(name.clone());
+            }
+        }
+    }
+
+    /// Record the running shows; true if they differ from the last look.
+    fn saw_presenting(&self, names: &[String]) -> bool {
+        let mut last = self.last_presenting.locked();
+        if last.as_deref() == Some(names) {
+            return false;
+        }
+        *last = Some(names.to_vec());
+        true
+    }
+
+    /// Target `name`, save it as the selected presentation and tell the UI.
+    fn select_presentation(self: &Arc<Self>, name: String) {
+        log::info!("StateManager: following the running slide show {:?}", name);
+        let target = self.target.locked().clone();
+        self.set_target(target.adapter, name.clone(), target.adapter_config);
+
+        let Some(app) = self.app_handle.get() else {
+            return;
+        };
+        let saved = config::load_config(app).and_then(|mut cfg| {
+            cfg.presentation_name = name.clone();
+            config::save_config(app, &cfg)
+        });
+        if let Err(e) = saved {
+            log::warn!("Failed to save the selected presentation: {}", e);
+        }
+        let _ = app.emit("presentation-auto-selected", name);
+    }
+
+    // =========================================================================
     // POLLING
     // =========================================================================
+
+    /// Read just the slide position every `FAST_SLIDE_POLL_MS` during a
+    /// show, on top of the full poll. For when something acts on slide
+    /// changes; otherwise the extra Apple Events aren't worth it.
+    pub fn set_fast_slide_poll(&self, on: bool) {
+        self.fast_slide_poll.store(on, Ordering::SeqCst);
+    }
 
     /// Start background polling for external state changes (the presenter's
     /// own keyboard or clicker bypasses us). Runs for the app's lifetime.
@@ -624,17 +716,53 @@ impl StateManager {
         }
         let sm = self.clone();
         *handle = Some(async_runtime::spawn(async move {
-            let mut timer = interval(Duration::from_millis(interval_ms));
+            let full_every = Duration::from_millis(interval_ms);
+            let mut timer = interval(Duration::from_millis(FAST_SLIDE_POLL_MS.min(interval_ms)));
+            timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            let mut last_full: Option<Instant> = None;
             loop {
                 timer.tick().await;
                 let since_command =
                     now_ms().saturating_sub(sm.last_command_at.load(Ordering::SeqCst));
-                if sm.presentation_name().is_empty() || since_command < COMMAND_QUIET_MS {
+                if since_command < COMMAND_QUIET_MS {
                     continue;
                 }
-                sm.refresh().await;
+                if last_full.is_none_or(|at| at.elapsed() >= full_every) {
+                    last_full = Some(Instant::now());
+                    sm.follow_running_show().await;
+                    if !sm.presentation_name().is_empty() {
+                        sm.refresh().await;
+                    }
+                } else if sm.fast_slide_poll.load(Ordering::SeqCst)
+                    && sm.state.locked().is_presenting
+                {
+                    sm.check_slide().await;
+                }
             }
         }));
+    }
+
+    /// Read only the slide position and apply it: one cheap call, where a
+    /// full refresh also reads notes and zoom.
+    async fn check_slide(self: &Arc<Self>) {
+        if self.refresh_in_progress.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let generation = self.generation.load(Ordering::SeqCst);
+        let before = self.state.locked().current_slide;
+        let sm = self.clone();
+        let info = async_runtime::spawn_blocking(move || {
+            sm.with_current_adapter(|a, name| a.get_slide_info(name))
+        })
+        .await;
+        self.refresh_in_progress.store(false, Ordering::SeqCst);
+
+        // An error usually means the show just ended; the full poll sees that.
+        if let Ok(Ok(Ok(info))) = info {
+            if self.commands_in_flight.load(Ordering::SeqCst) == 0 {
+                self.apply_slide_info(generation, before, info);
+            }
+        }
     }
 }
 
@@ -753,6 +881,17 @@ mod tests {
         sm.add_notes([(1, "a".to_string())]);
         assert_eq!(rx.try_recv().unwrap().get(&1).unwrap(), "a");
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_saw_presenting_reports_only_changes() {
+        let sm = StateManager::new(StateSinks::default());
+        let shows = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert!(sm.saw_presenting(&[]));
+        assert!(!sm.saw_presenting(&[]));
+        assert!(sm.saw_presenting(&shows(&["a.pptx"])));
+        assert!(!sm.saw_presenting(&shows(&["a.pptx"])));
+        assert!(sm.saw_presenting(&shows(&["b.pptx"])));
     }
 
     #[test]

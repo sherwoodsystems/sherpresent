@@ -55,6 +55,7 @@ class AppStore {
   private unlistenStatus: UnlistenFn | null = null;
   private unlistenCanvaLog: UnlistenFn | null = null;
   private unlistenNotes: UnlistenFn | null = null;
+  private unlistenAutoSelect: UnlistenFn | null = null;
   private unlistenScanProgress: UnlistenFn | null = null;
   private unlistenLatency: UnlistenFn | null = null;
   private unlistenCaptionSegment: UnlistenFn | null = null;
@@ -97,6 +98,11 @@ class AppStore {
     // update of every slide command, whichever surface sent it.
     this.unlistenStatus = await listen<LiveStatus>('presentation-status', (event) => {
       this.liveStatus = event.payload;
+    });
+
+    // The backend picked the only running slide show (and already saved it).
+    this.unlistenAutoSelect = await listen<string>('presentation-auto-selected', (event) => {
+      this.config = { ...this.config, presentationName: event.payload };
     });
 
     // Notes cache updates (bulk fetch when a show starts, then per slide)
@@ -184,6 +190,7 @@ class AppStore {
     this.unlistenStatus?.();
     this.unlistenCanvaLog?.();
     this.unlistenNotes?.();
+    this.unlistenAutoSelect?.();
     this.unlistenScanProgress?.();
     this.unlistenLatency?.();
     this.unlistenCaptionSegment?.();

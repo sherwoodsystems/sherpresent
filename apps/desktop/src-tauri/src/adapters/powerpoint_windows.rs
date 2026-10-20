@@ -78,35 +78,46 @@ impl PowerPointWindowsAdapter {
         }
     }
 
+    /// The running PowerPoint Application, or `None` if it isn't running.
+    /// Never starts PowerPoint.
+    fn get_running_application() -> Result<Option<IDispatch>, String> {
+        unsafe {
+            let clsid = Self::clsid()?;
+            let mut punk = None;
+            if GetActiveObject(&clsid, None, &mut punk).is_err() {
+                return Ok(None);
+            }
+            punk.map(|unk| {
+                unk.cast::<IDispatch>()
+                    .map_err(|e| format!("Failed to get IDispatch from running instance: {}", e))
+            })
+            .transpose()
+        }
+    }
+
     /// Get IDispatch interface to running PowerPoint Application
     ///
     /// First tries to attach to an existing PowerPoint instance using GetActiveObject.
     /// If no instance is running, creates a new one with CoCreateInstance.
     fn get_application() -> Result<IDispatch, String> {
+        if let Some(app) = Self::get_running_application()? {
+            return Ok(app);
+        }
         unsafe {
-            // Get CLSID from ProgID
-            let prog_id: Vec<u16> = "PowerPoint.Application\0".encode_utf16().collect();
-
-            let clsid = CLSIDFromProgID(PCWSTR(prog_id.as_ptr()))
-                .map_err(|e| format!("PowerPoint not installed or ProgID not found: {}", e))?;
-
-            // Try to get running instance first
-            let mut punk = None;
-            if GetActiveObject(&clsid, None, &mut punk).is_ok() {
-                if let Some(unk) = punk {
-                    return unk.cast::<IDispatch>().map_err(|e| {
-                        format!("Failed to get IDispatch from running instance: {}", e)
-                    });
-                }
-            }
-
             // No running instance, try to create one
             // Note: This will start PowerPoint if not running
-            let app: IDispatch = CoCreateInstance(&clsid, None, CLSCTX_LOCAL_SERVER)
+            let app: IDispatch = CoCreateInstance(&Self::clsid()?, None, CLSCTX_LOCAL_SERVER)
                 .map_err(|e| format!("Failed to create PowerPoint instance: {}", e))?;
 
             Ok(app)
         }
+    }
+
+    /// PowerPoint's CLSID, from its ProgID.
+    fn clsid() -> Result<GUID, String> {
+        let prog_id: Vec<u16> = "PowerPoint.Application\0".encode_utf16().collect();
+        unsafe { CLSIDFromProgID(PCWSTR(prog_id.as_ptr())) }
+            .map_err(|e| format!("PowerPoint not installed or ProgID not found: {}", e))
     }
 
     /// Get DISPID (dispatch identifier) for a property or method name
@@ -343,6 +354,30 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
             let name_var = Self::get_property(&pres, "Name")?;
             let name = Self::variant_to_string(&name_var)?;
             names.push(name);
+        }
+
+        Ok(names)
+    }
+
+    fn get_presenting_presentations(&self) -> Result<Vec<String>, String> {
+        Self::init_com()?;
+
+        // Polled while nothing is presenting, so it must not start PowerPoint.
+        let Some(app) = Self::get_running_application()? else {
+            return Ok(vec![]);
+        };
+
+        let windows = Self::variant_to_dispatch(&Self::get_property(&app, "SlideShowWindows")?)?;
+        let count = Self::variant_to_i32(&Self::get_property(&windows, "Count")?)?;
+
+        let mut names = Vec::new();
+        for i in 1..=count {
+            let window =
+                Self::variant_to_dispatch(&Self::get_indexed_property(&windows, "Item", i)?)?;
+            let pres = Self::variant_to_dispatch(&Self::get_property(&window, "Presentation")?)?;
+            names.push(Self::variant_to_string(&Self::get_property(
+                &pres, "Name",
+            )?)?);
         }
 
         Ok(names)
