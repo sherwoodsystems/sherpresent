@@ -3,6 +3,22 @@
 All notable changes to the SherPresent desktop app. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.3] - 2026-10-21
+
+### Changed
+
+- **No more pause in watching the presentation after a command.** The app
+  used to stop reading the presentation app for a while after each Next,
+  Previous or Go To it sent (3 seconds on macOS, half a second on Windows),
+  so a clicker press in that time was seen late and its QLab cue fired late.
+  Now it keeps reading, and throws away only a read that overlapped a
+  command, since that read might show where the show was before it.
+
+### Fixed
+
+- **Windows:** the regular status check no longer starts PowerPoint when it
+  isn't running.
+
 ## [1.2.2] - 2026-10-21
 
 ### Changed

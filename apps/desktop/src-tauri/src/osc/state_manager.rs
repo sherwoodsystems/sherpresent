@@ -48,15 +48,6 @@ use crate::adapters::{self, canva::CanvaAdapter, LiveStatus, PresentationAdapter
 use crate::config::{self, AdapterConfig};
 use crate::util::{now_ms, LockExt};
 
-/// Polls are skipped for this long after a command, so they don't compete
-/// with it for the Apple Event channel during active use. COM calls on
-/// Windows don't queue behind each other that way, so a clicker press soon
-/// after a command from the app is still seen quickly there.
-#[cfg(not(windows))]
-const COMMAND_QUIET_MS: u64 = 3000;
-#[cfg(windows)]
-const COMMAND_QUIET_MS: u64 = 500;
-
 /// While something acts on slide changes (a QLab trigger), the slide position
 /// alone is read this often between full polls, so a change made in the
 /// presentation app itself is seen within this rather than the poll interval.
@@ -258,11 +249,14 @@ pub struct StateManager {
 
     polling_handle: Mutex<Option<JoinHandle<()>>>,
 
-    /// Prevents overlapping refreshes.
-    refresh_in_progress: AtomicBool,
+    /// One read of the presentation app at a time (see `read_app`).
+    read_in_progress: AtomicBool,
 
-    /// Unix ms of the last slide command; polling pauses for a while after it.
-    last_command_at: AtomicU64,
+    /// Bumped when a navigation command starts and when it finishes. A read
+    /// of the presentation app is applied only if this didn't change while it
+    /// ran and no command is in flight, so a read that overlapped a command
+    /// (and may predate it) can't undo that command's state.
+    command_epoch: AtomicU64,
 
     /// Navigation commands sent to the adapter but not yet answered. Only the
     /// last one's answer is applied: an earlier one would undo the optimistic
@@ -288,8 +282,8 @@ impl StateManager {
             sinks,
             app_handle: OnceLock::new(),
             polling_handle: Mutex::new(None),
-            refresh_in_progress: AtomicBool::new(false),
-            last_command_at: AtomicU64::new(0),
+            read_in_progress: AtomicBool::new(false),
+            command_epoch: AtomicU64::new(0),
             commands_in_flight: AtomicUsize::new(0),
             last_presenting: Mutex::new(None),
             fast_slide_poll: AtomicBool::new(false),
@@ -565,13 +559,13 @@ impl StateManager {
                 Self::has_state_changed(&old, &state),
             )
         };
-        self.last_command_at.store(now_ms(), Ordering::SeqCst);
         self.publish(&after);
 
         let sm = self.clone();
         let generation = self.generation.load(Ordering::SeqCst);
         let adapter_label = self.adapter_name();
         self.commands_in_flight.fetch_add(1, Ordering::SeqCst);
+        self.command_epoch.fetch_add(1, Ordering::SeqCst);
 
         async_runtime::spawn(async move {
             let started = latency::monotonic_ms();
@@ -595,6 +589,7 @@ impl StateManager {
             // flight: nothing else will say where it went (each build step
             // fires a QLab cue).
             let last = sm.commands_in_flight.fetch_sub(1, Ordering::SeqCst) == 1;
+            sm.command_epoch.fetch_add(1, Ordering::SeqCst);
             match result {
                 Ok(Ok(Ok(info))) if last || !guessed => {
                     sm.apply_slide_info(generation, before, info)
@@ -676,22 +671,53 @@ impl StateManager {
 
     /// Read the full status from the presentation app and apply it.
     async fn refresh(self: &Arc<Self>) {
-        if self.refresh_in_progress.swap(true, Ordering::SeqCst) {
-            return;
+        if let Some(status) = self.read_app(|a, name| a.get_live_status(name)).await {
+            // No presentation, or the read failed: show nothing open.
+            self.apply_status(status.unwrap_or_default());
+        }
+    }
+
+    /// Read only the slide position and apply it: one cheap call, where a
+    /// full refresh also reads notes and zoom.
+    async fn check_slide(self: &Arc<Self>) {
+        let before = self.state.locked().current_slide;
+        // An error usually means the show just ended; the full poll sees that.
+        if let Some(Ok(Ok(info))) = self.read_app(|a, name| a.get_slide_info(name)).await {
+            let generation = self.generation.load(Ordering::SeqCst);
+            self.apply_slide_info(generation, before, info);
+        }
+    }
+
+    /// Run `read` on the current adapter in the background and return its
+    /// answer, or `None` if the answer must not be applied: another read was
+    /// already running, the target changed, or a navigation command
+    /// overlapped the read (its answer may predate the command, and would
+    /// undo the command's state and fire the wrong QLab cue).
+    async fn read_app<T: Send + 'static>(
+        self: &Arc<Self>,
+        read: impl FnOnce(&dyn PresentationAdapter, &str) -> T + Send + 'static,
+    ) -> Option<Result<T, String>> {
+        if self.read_in_progress.swap(true, Ordering::SeqCst) {
+            return None;
         }
         let generation = self.generation.load(Ordering::SeqCst);
+        let epoch = self.command_epoch.load(Ordering::SeqCst);
         let sm = self.clone();
-        let status = async_runtime::spawn_blocking(move || {
-            sm.with_current_adapter(|a, name| a.get_live_status(name))
-                .unwrap_or_default()
-        })
-        .await
-        .unwrap_or_default();
-        self.refresh_in_progress.store(false, Ordering::SeqCst);
+        let result = async_runtime::spawn_blocking(move || sm.with_current_adapter(read))
+            .await
+            .unwrap_or_else(|e| Err(format!("Adapter task panicked: {e:?}")));
+        self.read_in_progress.store(false, Ordering::SeqCst);
 
-        if self.generation.load(Ordering::SeqCst) == generation {
-            self.apply_status(status);
-        }
+        let current =
+            self.generation.load(Ordering::SeqCst) == generation && self.no_command_since(epoch);
+        current.then_some(result)
+    }
+
+    /// Whether no navigation command started, finished or is still running
+    /// since `command_epoch` read `epoch`.
+    fn no_command_since(&self, epoch: u64) -> bool {
+        self.commands_in_flight.load(Ordering::SeqCst) == 0
+            && self.command_epoch.load(Ordering::SeqCst) == epoch
     }
 
     // =========================================================================
@@ -786,9 +812,9 @@ impl StateManager {
             let mut last_full: Option<Instant> = None;
             loop {
                 timer.tick().await;
-                let since_command =
-                    now_ms().saturating_sub(sm.last_command_at.load(Ordering::SeqCst));
-                if since_command < COMMAND_QUIET_MS {
+                // The command's answer says where the show went; a read now
+                // would only be thrown away.
+                if sm.commands_in_flight.load(Ordering::SeqCst) > 0 {
                     continue;
                 }
                 if last_full.is_none_or(|at| at.elapsed() >= full_every) {
@@ -804,29 +830,6 @@ impl StateManager {
                 }
             }
         }));
-    }
-
-    /// Read only the slide position and apply it: one cheap call, where a
-    /// full refresh also reads notes and zoom.
-    async fn check_slide(self: &Arc<Self>) {
-        if self.refresh_in_progress.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let generation = self.generation.load(Ordering::SeqCst);
-        let before = self.state.locked().current_slide;
-        let sm = self.clone();
-        let info = async_runtime::spawn_blocking(move || {
-            sm.with_current_adapter(|a, name| a.get_slide_info(name))
-        })
-        .await;
-        self.refresh_in_progress.store(false, Ordering::SeqCst);
-
-        // An error usually means the show just ended; the full poll sees that.
-        if let Ok(Ok(Ok(info))) = info {
-            if self.commands_in_flight.load(Ordering::SeqCst) == 0 {
-                self.apply_slide_info(generation, before, info);
-            }
-        }
     }
 }
 
@@ -848,6 +851,26 @@ mod tests {
             ..Default::default()
         };
         sm
+    }
+
+    #[test]
+    fn test_read_overlapping_a_command_is_discarded() {
+        let sm = presenting(3, 9);
+        let epoch = sm.command_epoch.load(Ordering::SeqCst);
+        assert!(sm.no_command_since(epoch));
+
+        // A command starts while the read runs: still in flight at the end.
+        sm.commands_in_flight.fetch_add(1, Ordering::SeqCst);
+        sm.command_epoch.fetch_add(1, Ordering::SeqCst);
+        assert!(!sm.no_command_since(epoch));
+
+        // It finishes before the read does: the read may predate it.
+        sm.commands_in_flight.fetch_sub(1, Ordering::SeqCst);
+        sm.command_epoch.fetch_add(1, Ordering::SeqCst);
+        assert!(!sm.no_command_since(epoch));
+
+        // A read started after it is fine.
+        assert!(sm.no_command_since(sm.command_epoch.load(Ordering::SeqCst)));
     }
 
     #[test]

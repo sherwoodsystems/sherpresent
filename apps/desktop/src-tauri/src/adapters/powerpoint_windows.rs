@@ -296,16 +296,34 @@ impl PowerPointWindowsAdapter {
         Self::variant_to_dispatch(&var)
     }
 
+    /// Presentation `name`, starting PowerPoint if it isn't running.
+    fn presentation(name: &str) -> Result<IDispatch, String> {
+        Self::init_com()?;
+        Self::get_presentation_by_name(&Self::get_application()?, name)
+    }
+
+    /// The deck's slide count.
+    fn slide_count(pres: &IDispatch) -> Result<i32, String> {
+        Self::variant_to_i32(&Self::get_property(&Self::get_slides(pres)?, "Count")?)
+    }
+
+    /// The SlideShowView of `pres`, if it is presenting.
+    fn show_view(pres: &IDispatch) -> Result<IDispatch, String> {
+        Self::get_slideshow_view(&Self::get_slideshow_window(pres)?)
+    }
+
     /// The running show of presentation `name`: its SlideShowView, and the
     /// deck's slide count.
     fn show(name: &str) -> Result<(IDispatch, i32), String> {
-        Self::init_com()?;
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-        let slides = Self::get_slides(&pres)?;
-        let total = Self::variant_to_i32(&Self::get_property(&slides, "Count")?)?;
-        let view = Self::get_slideshow_view(&Self::get_slideshow_window(&pres)?)?;
-        Ok((view, total))
+        let pres = Self::presentation(name)?;
+        Ok((Self::show_view(&pres)?, Self::slide_count(&pres)?))
+    }
+
+    /// Speaker notes of the slide on screen, if it has any.
+    fn notes_on_screen(view: &IDispatch) -> Result<Option<String>, String> {
+        let slide = Self::variant_to_dispatch(&Self::get_property(view, "Slide")?)?;
+        let text = Self::slide_notes(&slide)?;
+        Ok((!text.is_empty()).then_some(text))
     }
 
     /// Where the show stands: slide, slide count and builds.
@@ -488,29 +506,14 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
     }
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-
-        // The slide on screen, straight from the show view
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
-        let slide = Self::variant_to_dispatch(&Self::get_property(&view, "Slide")?)?;
-
-        let text = Self::slide_notes(&slide)?;
-        Ok((!text.is_empty()).then_some(text))
+        Self::notes_on_screen(&Self::show_view(&Self::presentation(name)?)?)
     }
 
     fn get_all_presenter_notes(
         &self,
         name: &str,
     ) -> Result<std::collections::HashMap<i32, String>, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-        let slides = Self::get_slides(&pres)?;
+        let slides = Self::get_slides(&Self::presentation(name)?)?;
 
         let count_var = Self::get_property(&slides, "Count")?;
         let count = Self::variant_to_i32(&count_var)?;
@@ -553,66 +556,34 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
     }
 
     fn get_live_status(&self, name: &str) -> LiveStatus {
-        Self::init_com().ok();
-
-        let app = match Self::get_application() {
-            Ok(a) => a,
-            Err(_) => return LiveStatus::default(),
-        };
-
-        let pres = match Self::get_presentation_by_name(&app, name) {
-            Ok(p) => p,
-            Err(_) => return LiveStatus::default(),
-        };
-
-        let window = match Self::get_slideshow_window(&pres) {
-            Ok(w) => w,
-            Err(_) => {
-                return LiveStatus {
-                    is_open: true,
-                    is_presenting: false,
-                    ..Default::default()
-                };
-            }
-        };
-
-        let view = match Self::get_slideshow_view(&window) {
-            Ok(v) => v,
-            Err(_) => {
-                return LiveStatus {
-                    is_open: true,
-                    is_presenting: false,
-                    ..Default::default()
-                };
-            }
-        };
-
-        let slides = Self::get_slides(&pres).ok();
-        let total_slides = slides
-            .as_ref()
-            .and_then(|s| Self::get_property(s, "Count").ok())
-            .and_then(|v| Self::variant_to_i32(&v).ok())
-            .unwrap_or(0);
-
-        let current_slide = Self::get_property(&view, "CurrentShowPosition")
+        // Polled, so it must not start PowerPoint.
+        let pres = Self::init_com()
+            .and_then(|()| Self::get_running_application())
             .ok()
-            .and_then(|v| Self::variant_to_i32(&v).ok())
-            .unwrap_or(0);
+            .flatten()
+            .and_then(|app| Self::get_presentation_by_name(&app, name).ok());
+        let Some(pres) = pres else {
+            return LiveStatus::default();
+        };
+        let Ok(view) = Self::show_view(&pres) else {
+            return LiveStatus {
+                is_open: true,
+                ..Default::default()
+            };
+        };
 
-        // Reported even with no builds (total 0), so the StateManager knows
-        // this slide's builds rather than guessing.
+        // Builds are reported even when there are none (total 0), so the
+        // StateManager knows this slide's builds rather than guessing.
         let builds = Self::builds(&view);
-
-        // Get presenter notes
-        let presenter_notes = self.get_presenter_notes(name).ok().flatten();
-
         LiveStatus {
             is_open: true,
             is_presenting: true,
-            current_slide,
-            total_slides,
+            current_slide: Self::get_property(&view, "CurrentShowPosition")
+                .and_then(|v| Self::variant_to_i32(&v))
+                .unwrap_or(0),
+            total_slides: Self::slide_count(&pres).unwrap_or(0),
             zoom_level: None,
-            presenter_notes,
+            presenter_notes: Self::notes_on_screen(&view).ok().flatten(),
             current_build: builds.map(|b| b.done),
             total_builds: builds.map(|b| b.total),
         }
