@@ -2,6 +2,7 @@ pub mod canva;
 pub mod keynote;
 pub mod libreoffice;
 pub mod powerpoint;
+pub mod powerpoint_events;
 #[cfg(target_os = "windows")]
 pub mod powerpoint_windows;
 pub mod reply;

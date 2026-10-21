@@ -58,6 +58,11 @@ const FAST_SLIDE_POLL_MS: u64 = 250;
 #[cfg(windows)]
 const FAST_SLIDE_POLL_MS: u64 = 100;
 
+/// After an event from the presentation app, the slide is read at once and
+/// again this much later (see `app_event`).
+#[cfg_attr(not(windows), allow(dead_code))]
+const EVENT_RECHECK_MS: u64 = 50;
+
 pub type NotesCache = HashMap<i32, String>;
 
 // =============================================================================
@@ -795,6 +800,25 @@ impl StateManager {
     /// changes; otherwise the extra Apple Events aren't worth it.
     pub fn set_fast_slide_poll(&self, on: bool) {
         self.fast_slide_poll.store(on, Ordering::SeqCst);
+    }
+
+    /// The presentation app says its show changed (PowerPoint's events on
+    /// Windows): read it now instead of at the next poll. Some events fire
+    /// just before the change lands, so read once more shortly after; a read
+    /// that finds nothing new changes nothing.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn app_event(self: &Arc<Self>) {
+        let sm = self.clone();
+        async_runtime::spawn(async move {
+            if !sm.state.locked().is_presenting {
+                // A show starting: the full read picks it up.
+                sm.refresh().await;
+                return;
+            }
+            sm.check_slide().await;
+            tokio::time::sleep(Duration::from_millis(EVENT_RECHECK_MS)).await;
+            sm.check_slide().await;
+        });
     }
 
     /// Start background polling for external state changes (the presenter's

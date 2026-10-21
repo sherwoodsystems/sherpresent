@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "SherPresent"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -27,6 +27,7 @@ dependencies = [
  "tokio-tungstenite",
  "uuid",
  "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

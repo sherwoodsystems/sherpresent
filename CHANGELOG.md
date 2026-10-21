@@ -3,6 +3,18 @@
 All notable changes to the SherPresent desktop app. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.4] - 2026-10-21
+
+### Added
+
+- **Windows:** the app listens to PowerPoint's own slide show events, so a
+  slide or build change made in PowerPoint (a clicker or the keyboard) is
+  read the moment PowerPoint reports it and its QLab cue fires at once. The
+  100 ms check carries on underneath, so nothing is missed if the events
+  don't arrive. A line at the bottom of the Control tab shows, in green,
+  "PowerPoint events being received", or in red, "PowerPoint events not
+  received" and why. Each event is written to the app log.
+
 ## [1.2.3] - 2026-10-21
 
 ### Changed

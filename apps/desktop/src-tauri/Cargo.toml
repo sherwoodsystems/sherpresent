@@ -1,6 +1,6 @@
 [package]
 name = "SherPresent"
-version = "1.2.3"
+version = "1.2.4"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -114,6 +114,9 @@ windows = { version = "0.62", features = [
     "Win32_System_Variant",
     "Win32_System_Com_StructuredStorage",
 ] }
+# windows-core: needed directly by the `#[implement]` / `#[interface]` macros
+# behind the PowerPoint event sink (they expand to `::windows_core` paths)
+windows-core = "0.62"
 
 
 

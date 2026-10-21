@@ -7,6 +7,20 @@
   import NetworkOverview from '$lib/components/NetworkOverview.svelte';
 
   import { appStore } from '$lib/state.svelte';
+  import type { PowerPointEvents } from '$lib/types';
+
+  const eventsDetail: Record<Exclude<PowerPointEvents['state'], 'receiving'>, string> = {
+    no_show: 'no slide show running',
+    listening: 'listening, none yet',
+    failed: ''
+  };
+
+  /** One line on whether PowerPoint's events arrive; polling covers them either way. */
+  function eventsLine(events: PowerPointEvents): string {
+    if (events.state === 'receiving') return 'PowerPoint events being received';
+    const why = events.state === 'failed' ? events.error : eventsDetail[events.state];
+    return `PowerPoint events not received (${why})`;
+  }
 </script>
 
 <main class="container">
@@ -69,6 +83,12 @@
         Quit SherPresent
       </button>
     </section>
+
+    {#if appStore.config.adapter === 'powerpoint' && appStore.powerpointEvents}
+      <p class="events-line" class:ok={appStore.powerpointEvents.state === 'receiving'}>
+        <span class="dot"></span>{eventsLine(appStore.powerpointEvents)}
+      </p>
+    {/if}
   {:else}
     <p class="loading">Loading...</p>
   {/if}
@@ -115,6 +135,28 @@
     text-align: center;
     color: var(--text-muted);
     font-style: italic;
+  }
+
+  .events-line {
+    grid-column: 1 / -1;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: #dc3545;
+  }
+
+  .events-line.ok {
+    color: #198754;
+  }
+
+  .events-line .dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: currentColor;
   }
 
   .quit-section {

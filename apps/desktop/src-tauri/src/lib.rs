@@ -42,6 +42,7 @@ pub fn run() {
             commands::presentation::get_presentation_state,
             commands::presentation::get_slide_info,
             commands::presentation::get_status,
+            commands::presentation::get_powerpoint_events,
             commands::presentation::get_notes_zoom,
             commands::presentation::next_slide,
             commands::presentation::prev_slide,
@@ -127,6 +128,20 @@ pub fn run() {
                     config.adapter_config.clone(),
                 );
                 sm.start_polling(2000);
+
+                // PowerPoint for Windows says when its show moves, so a
+                // clicker press is read at once rather than at the next poll.
+                #[cfg(windows)]
+                {
+                    let active = sm.clone();
+                    let reader = sm.clone();
+                    adapters::powerpoint_events::start(
+                        state.powerpoint_events.clone(),
+                        app.handle().clone(),
+                        move || active.adapter_name() == "powerpoint",
+                        move || reader.app_event(),
+                    );
+                }
             }
 
             // Sync the persisted overlay styling into the live channel the

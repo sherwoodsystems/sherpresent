@@ -80,7 +80,7 @@ impl PowerPointWindowsAdapter {
 
     /// The running PowerPoint Application, or `None` if it isn't running.
     /// Never starts PowerPoint.
-    fn get_running_application() -> Result<Option<IDispatch>, String> {
+    pub(super) fn get_running_application() -> Result<Option<IDispatch>, String> {
         unsafe {
             let clsid = Self::clsid()?;
             let mut punk = None;
@@ -200,7 +200,7 @@ impl PowerPointWindowsAdapter {
     /// Get a property from an IDispatch object
     ///
     /// Equivalent to VBA: `obj.PropertyName`
-    fn get_property(disp: &IDispatch, name: &str) -> Result<VARIANT, String> {
+    pub(super) fn get_property(disp: &IDispatch, name: &str) -> Result<VARIANT, String> {
         Self::invoke(disp, name, DISPATCH_PROPERTYGET, &mut [])
     }
 
@@ -231,12 +231,12 @@ impl PowerPointWindowsAdapter {
     }
 
     /// Extract an IDispatch from a VARIANT
-    fn variant_to_dispatch(var: &VARIANT) -> Result<IDispatch, String> {
+    pub(super) fn variant_to_dispatch(var: &VARIANT) -> Result<IDispatch, String> {
         IDispatch::try_from(var).map_err(|e| format!("Expected IDispatch variant: {}", e))
     }
 
     /// Extract an i32 from a VARIANT
-    fn variant_to_i32(var: &VARIANT) -> Result<i32, String> {
+    pub(super) fn variant_to_i32(var: &VARIANT) -> Result<i32, String> {
         i32::try_from(var).map_err(|e| format!("Expected i32 variant: {}", e))
     }
 

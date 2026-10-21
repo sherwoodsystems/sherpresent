@@ -1,4 +1,5 @@
 use crate::adapters::canva::CanvaAdapter;
+use crate::adapters::powerpoint_events::PowerPointEvents;
 use crate::adapters::LiveStatus;
 use crate::captions::{CaptionEngine, CaptionSinks};
 use crate::config::{CaptionsConfig, OscConfig, WebServerConfig};
@@ -71,6 +72,9 @@ pub struct AppState {
 
     /// QLab count-out client and its latest state, reconciled against config
     pub qlab: QLab,
+
+    /// Whether PowerPoint's slide show events are arriving (Windows only)
+    pub powerpoint_events: Arc<PowerPointEvents>,
 }
 
 impl AppState {
@@ -154,6 +158,7 @@ impl Default for AppState {
             captions: CaptionSinks::default(),
             outputs: Mutex::new(Outputs::default()),
             qlab: QLab::default(),
+            powerpoint_events: Arc::default(),
         }
     }
 }

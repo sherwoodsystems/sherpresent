@@ -211,10 +211,21 @@ only. Sent down the same TCP connection (already past the passcode) and
 scoped to its workspace (`/go` → `/workspace/{id}/go`). `fire_on_slide_change`
 watches the StateManager's `subscribe()` stream (`SlideWatch`), so commands
 from any surface fire on the optimistic update; while a trigger is set the
-poller also reads the slide position every 250 ms (`set_fast_slide_poll`) to
-catch changes made in the presentation app. Replies to triggers are matched
-in `Session::trigger_reply` so a `denied` doesn't drop the count-out
-connection; triggers queued while disconnected are dropped, not replayed.
+poller also reads the slide position every 250 ms (100 ms on Windows,
+`set_fast_slide_poll`) to catch changes made in the presentation app. A read
+that overlaps a navigation command is discarded (`command_epoch`), since it
+may predate the command and would fire the wrong cue. Replies to triggers
+are matched in `Session::trigger_reply` so a `denied` doesn't drop the
+count-out connection; triggers queued while disconnected are dropped, not
+replayed.
+
+**PowerPoint events (Windows)**: `adapters/powerpoint_events.rs` listens to
+PowerPoint's `EApplication` events (IID and DISPIDs from Microsoft KB 309309)
+while a slide show runs, on its own MTA thread, and calls
+`StateManager::app_event` for every event: read the slide now and again 50 ms
+later. Events are a speed-up only; polling continues, so a missed event costs
+time, not correctness. The Control tab shows whether events arrive
+(`powerpoint-events`). Each event is logged at `info` with its DISPID.
 
 **Builds**: only PowerPoint for Windows can read them (`GetClickIndex` /
 `GetClickCount`), and it returns `SlideInfo::builds` with every slide read and

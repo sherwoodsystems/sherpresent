@@ -98,6 +98,13 @@ export type AdapterConfig =
 /** Connection status for network-based adapters */
 export type ConnectionStatus = 'Disconnected' | 'Connecting' | 'Connected' | { Error: string };
 
+/** Whether PowerPoint's slide show events are arriving (PowerPoint for Windows only) */
+export type PowerPointEvents =
+  | { state: 'no_show' }
+  | { state: 'listening' }
+  | { state: 'receiving' }
+  | { state: 'failed'; error: string };
+
 /** LAN web server configuration (notes + timer view for external browsers) */
 export interface WebServerConfig {
   port: number;

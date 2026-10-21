@@ -1,3 +1,4 @@
+use crate::adapters::powerpoint_events::EventsStatus;
 use crate::adapters::{
     get_available_adapters, LiveStatus, PresentationAdapter, PresentationState, SlideInfo,
 };
@@ -54,6 +55,14 @@ pub fn get_slide_info(
 #[tauri::command]
 pub fn get_status(state: tauri::State<AppState>) -> LiveStatus {
     LiveStatus::from(&state.state_manager.get_state())
+}
+
+/// Whether PowerPoint's slide show events are arriving, as last published in
+/// `powerpoint-events` events. `None` where there are no such events (only
+/// PowerPoint for Windows has them).
+#[tauri::command]
+pub fn get_powerpoint_events(state: tauri::State<AppState>) -> Option<EventsStatus> {
+    cfg!(windows).then(|| state.powerpoint_events.status())
 }
 
 #[tauri::command]

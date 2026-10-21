@@ -7,6 +7,7 @@ import {
   type AdapterConfig,
   type NotesCache,
   type ConnectionStatus,
+  type PowerPointEvents,
   type OscConfig,
   type DiscoveryConfig,
   type WebServerConfig,
@@ -47,6 +48,8 @@ class AppStore {
   outputsStatus = $state<OutputsStatus | null>(null);
   /** QLab count-out; pushed about ten times a second while cues run */
   qlabState = $state<QLabState | null>(null);
+  /** PowerPoint's slide show events; null where there are none (only Windows has them) */
+  powerpointEvents = $state<PowerPointEvents | null>(null);
   /** Newest last. The trailing entry may be an interim line still being spoken. */
   captionSegments = $state<CaptionSegment[]>([]);
   audioDevices = $state<AudioDevice[]>([]);
@@ -62,6 +65,7 @@ class AppStore {
   private unlistenCaptionStatus: UnlistenFn | null = null;
   private unlistenOutputsStatus: UnlistenFn | null = null;
   private unlistenQLabState: UnlistenFn | null = null;
+  private unlistenPowerPointEvents: UnlistenFn | null = null;
 
   /**
    * PowerPoint for Mac can't jump to a slide during a show from AppleScript
@@ -173,6 +177,16 @@ class AppStore {
       console.error('Failed to read QLab state:', e);
     }
 
+    this.unlistenPowerPointEvents = await listen<PowerPointEvents>(
+      'powerpoint-events',
+      (event) => (this.powerpointEvents = event.payload)
+    );
+    try {
+      this.powerpointEvents = await invoke<PowerPointEvents | null>('get_powerpoint_events');
+    } catch (e) {
+      console.error('Failed to read PowerPoint events status:', e);
+    }
+
     await this.refreshCaptionStatus();
 
     // Load any existing latency events
@@ -197,6 +211,7 @@ class AppStore {
     this.unlistenCaptionStatus?.();
     this.unlistenOutputsStatus?.();
     this.unlistenQLabState?.();
+    this.unlistenPowerPointEvents?.();
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
