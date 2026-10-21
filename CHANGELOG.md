@@ -3,6 +3,15 @@
 All notable changes to the SherPresent desktop app. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] - 2026-10-21
+
+### Changed
+
+- **Windows:** slide and build changes made in PowerPoint itself (a clicker
+  or the keyboard) are seen within a tenth of a second instead of a quarter,
+  so their QLab cues fire sooner. After a command from SherPresent, the app
+  starts watching PowerPoint again after half a second instead of three.
+
 ## [1.2.1] - 2026-10-21
 
 ### Changed

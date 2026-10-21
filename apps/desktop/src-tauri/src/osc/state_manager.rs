@@ -49,13 +49,23 @@ use crate::config::{self, AdapterConfig};
 use crate::util::{now_ms, LockExt};
 
 /// Polls are skipped for this long after a command, so they don't compete
-/// with it for the Apple Event channel during active use.
+/// with it for the Apple Event channel during active use. COM calls on
+/// Windows don't queue behind each other that way, so a clicker press soon
+/// after a command from the app is still seen quickly there.
+#[cfg(not(windows))]
 const COMMAND_QUIET_MS: u64 = 3000;
+#[cfg(windows)]
+const COMMAND_QUIET_MS: u64 = 500;
 
 /// While something acts on slide changes (a QLab trigger), the slide position
 /// alone is read this often between full polls, so a change made in the
 /// presentation app itself is seen within this rather than the poll interval.
+/// A read is a few AppleScript calls on macOS but only a few milliseconds of
+/// COM calls on Windows, so Windows can afford to look more often.
+#[cfg(not(windows))]
 const FAST_SLIDE_POLL_MS: u64 = 250;
+#[cfg(windows)]
+const FAST_SLIDE_POLL_MS: u64 = 100;
 
 pub type NotesCache = HashMap<i32, String>;
 
