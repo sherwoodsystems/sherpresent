@@ -429,6 +429,7 @@ impl PresentationAdapter for CanvaAdapter {
             current: state.current_page + 1, // Convert 0-indexed to 1-indexed
             total: state.total_pages,
             transition_duration: None,
+            builds: None,
         })
     }
 
@@ -445,6 +446,7 @@ impl PresentationAdapter for CanvaAdapter {
             current: next_page + 1,
             total: self.state.locked().total_pages,
             transition_duration: None,
+            builds: None,
         })
     }
 
@@ -455,6 +457,7 @@ impl PresentationAdapter for CanvaAdapter {
             current: slide,
             total: self.state.locked().total_pages,
             transition_duration: None,
+            builds: None,
         })
     }
 
@@ -469,6 +472,7 @@ impl PresentationAdapter for CanvaAdapter {
                 current: 1,
                 total: self.state.locked().total_pages,
                 transition_duration: None,
+                builds: None,
             });
         }
 
@@ -479,6 +483,7 @@ impl PresentationAdapter for CanvaAdapter {
             current: prev_page + 1,
             total: self.state.locked().total_pages,
             transition_duration: None,
+            builds: None,
         })
     }
 

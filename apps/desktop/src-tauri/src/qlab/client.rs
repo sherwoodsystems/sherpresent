@@ -286,10 +286,10 @@ impl Session {
         let Phase::Connected { id, .. } = &self.phase else {
             log::info!(
                 "QLab trigger for slide {} skipped: not connected",
-                trigger.slide
+                trigger.step
             );
             self.slide_trigger = Some(TriggerReport {
-                slide: trigger.slide,
+                step: trigger.step,
                 sent: vec![],
                 error: Some("Not connected to QLab".to_string()),
             });
@@ -301,13 +301,13 @@ impl Session {
             .map(|m| osc(in_workspace(id, &m.addr), m.args))
             .collect();
         let sent: Vec<String> = messages.iter().map(|m| m.addr.clone()).collect();
-        log::info!("QLab trigger for slide {}: {:?}", trigger.slide, sent);
+        log::info!("QLab trigger for slide {}: {:?}", trigger.step, sent);
         self.pending_triggers.extend(sent.iter().cloned());
         while self.pending_triggers.len() > PENDING_TRIGGERS {
             self.pending_triggers.pop_front();
         }
         self.slide_trigger = Some(TriggerReport {
-            slide: trigger.slide,
+            step: trigger.step,
             sent,
             error: None,
         });
@@ -987,7 +987,7 @@ mod tests {
 
     fn trigger(slide: i32, command: &str) -> SlideTrigger {
         SlideTrigger {
-            slide,
+            step: slide.to_string(),
             messages: super::super::slide_messages(command, slide),
         }
     }
@@ -1006,7 +1006,7 @@ mod tests {
             ]
         );
         let report = s.state(now).slide_trigger.unwrap();
-        assert_eq!((report.slide, report.error), (4, None));
+        assert_eq!((report.step.as_str(), report.error), ("4", None));
     }
 
     #[test]

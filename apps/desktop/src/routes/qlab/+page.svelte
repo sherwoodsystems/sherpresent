@@ -28,7 +28,7 @@
 
   // For the prefix hint: what slide 3 would fire.
   const exampleSlide = 3;
-  const goPrefix = $derived(config.slideCuePrefix.replace(/[\s/]/g, ''));
+  const cuePrefix = $derived(config.slideCuePrefix.replace(/[\s/]/g, ''));
 
   function update(patch: Partial<QLabConfig>) {
     appStore.updateQLabConfig({ ...config, ...patch });
@@ -137,7 +137,7 @@
         checked={config.slideGo}
         onchange={(e) => update({ slideGo: e.currentTarget.checked })}
       />
-      <span class="label">GO the matching cue in QLab</span>
+      <span class="label">Start the matching cue in QLab</span>
     </label>
     <div class="field">
       <label class="label" for="qlab-cue-prefix">Cue Number Prefix</label>
@@ -151,9 +151,13 @@
         onchange={(e) => update({ slideCuePrefix: e.currentTarget.value.replace(/[\s/]/g, '') })}
       />
       <span class="hint">
-        Slide {exampleSlide} fires <code>/go/{goPrefix}{exampleSlide}</code>: QLab jumps to cue
-        <strong>{goPrefix}{exampleSlide}</strong> and GOes. Fired the moment the slide changes during
-        a show, not when it starts or ends. A slide with no matching cue does nothing.
+        Slide {exampleSlide} fires <code>/cue/{cuePrefix}{exampleSlide}/start</code>: QLab starts
+        cue
+        <strong>{cuePrefix}{exampleSlide}</strong> and leaves the playhead where it is. Each build
+        on the slide starts its own cue: <strong>{cuePrefix}{exampleSlide}.1</strong>,
+        <strong>{cuePrefix}{exampleSlide}.2</strong>… (PowerPoint for Windows). Going back starts
+        the cue for wherever it lands. Fired the moment the slide changes during a show, not when it
+        starts or ends. A step with no matching cue does nothing.
       </span>
     </div>
     <div class="field">
@@ -168,7 +172,7 @@
         onchange={(e) => update({ slideCommand: e.currentTarget.value })}></textarea>
       <span class="hint">
         One OSC message per line, arguments after a space (quote one to send it as text);
-        <code>{'{slide}'}</code> becomes the slide number.
+        <code>{'{slide}'}</code> becomes the slide number. Sent on slide changes, not builds.
       </span>
     </div>
     <span class="hint">
@@ -179,7 +183,7 @@
       <div class="status-row">
         <span class="status-dot" class:ok={!t.error} class:bad={!!t.error}></span>
         <span class="status-text mono">
-          Slide {t.slide}: {t.error ?? t.sent.join(', ')}
+          Slide {t.step}: {t.error ?? t.sent.join(', ')}
         </span>
       </div>
     {/if}

@@ -91,6 +91,12 @@ pub struct CachedState {
     /// Total click-triggered build steps on this slide (None/0 = no builds)
     pub total_builds: Option<i32>,
 
+    /// The adapter reports builds (PowerPoint for Windows). Then
+    /// `total_builds: None` means this slide's builds aren't read yet, and
+    /// navigation waits for the app's answer instead of guessing.
+    #[serde(skip)]
+    pub tracks_builds: bool,
+
     /// When this state was last updated (Unix ms, not serialized)
     #[serde(skip)]
     pub last_updated_ms: u64,
@@ -103,6 +109,58 @@ impl CachedState {
             last_updated_ms: now_ms(),
             ..Default::default()
         }
+    }
+
+    /// Where Next will land, applied ahead of the app's answer: the next
+    /// build, or the next slide. False when there's nowhere to go. Left
+    /// alone when this slide's builds aren't read yet: the answer says.
+    fn step_forward(&mut self) -> bool {
+        if !self.tracks_builds {
+            // Builds can't be seen: take Next as a slide change.
+            if self.current_slide >= self.total_slides {
+                return false;
+            }
+            self.current_slide += 1;
+            return true;
+        }
+        match (self.current_build, self.total_builds) {
+            (Some(done), Some(total)) if done < total => self.current_build = Some(done + 1),
+            (Some(_), Some(_)) => {
+                if self.current_slide >= self.total_slides {
+                    return false;
+                }
+                self.enter_slide(self.current_slide + 1);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Where Previous will land: one build back, or the previous slide. A
+    /// previous slide is left to the app's answer, since PowerPoint shows it
+    /// with its builds played.
+    fn step_back(&mut self) -> bool {
+        if !self.tracks_builds {
+            if self.current_slide <= 1 {
+                return false;
+            }
+            self.current_slide -= 1;
+            return true;
+        }
+        match self.current_build {
+            Some(done) if done > 0 => self.current_build = Some(done - 1),
+            Some(_) if self.current_slide <= 1 => return false,
+            _ => {}
+        }
+        true
+    }
+
+    /// Arrive at the start of `slide`: no builds played, how many it has
+    /// unknown until read.
+    fn enter_slide(&mut self, slide: i32) {
+        self.current_slide = slide;
+        self.current_build = self.tracks_builds.then_some(0);
+        self.total_builds = None;
     }
 }
 
@@ -131,6 +189,7 @@ impl From<&LiveStatus> for CachedState {
             zoom_level: status.zoom_level,
             current_build: status.current_build,
             total_builds: status.total_builds,
+            tracks_builds: status.total_builds.is_some(),
             last_updated_ms: now_ms(),
         }
     }
@@ -431,44 +490,22 @@ impl StateManager {
     // COMMANDS (with optimistic updates)
     // =========================================================================
 
-    /// Advance to the next slide (or the next build on this slide).
+    /// Advance to the next build on this slide, or the next slide.
     pub fn next_slide(self: &Arc<Self>, source: CommandSource) {
         self.navigate(
             "next".to_string(),
             source,
-            |state| {
-                let has_remaining_builds = matches!(
-                    (state.current_build, state.total_builds),
-                    (Some(current), Some(total)) if current < total
-                );
-                if state.current_slide >= state.total_slides && !has_remaining_builds {
-                    return false;
-                }
-                // A build step stays on the same slide.
-                if !has_remaining_builds {
-                    state.current_slide += 1;
-                }
-                true
-            },
+            CachedState::step_forward,
             |adapter, name| adapter.next_slide(name),
         );
     }
 
-    /// Go to the previous slide (or back one build on this slide).
+    /// Go back one build on this slide, or to the previous slide.
     pub fn prev_slide(self: &Arc<Self>, source: CommandSource) {
         self.navigate(
             "prev".to_string(),
             source,
-            |state| {
-                let has_fired_builds = state.current_build.is_some_and(|b| b > 0);
-                if state.current_slide <= 1 && !has_fired_builds {
-                    return false;
-                }
-                if !has_fired_builds {
-                    state.current_slide -= 1;
-                }
-                true
-            },
+            CachedState::step_back,
             |adapter, name| adapter.prev_slide(name),
         );
     }
@@ -482,7 +519,7 @@ impl StateManager {
                 if slide < 1 || slide > state.total_slides {
                     return false;
                 }
-                state.current_slide = slide;
+                state.enter_slide(slide);
                 true
             },
             move |adapter, name| adapter.goto_slide(name, slide),
@@ -491,6 +528,8 @@ impl StateManager {
 
     /// Shared body of the navigation commands: apply `optimistic` to the cache
     /// and publish it now, then run `command` on the adapter in the background.
+    /// `optimistic` returns false to refuse the command; it may also leave the
+    /// state alone and let the adapter's answer say where the show went.
     fn navigate(
         self: &Arc<Self>,
         label: String,
@@ -500,17 +539,21 @@ impl StateManager {
             + Send
             + 'static,
     ) {
-        let (before, after) = {
+        let (before, after, guessed) = {
             let mut state = self.state.locked();
             if !state.is_presenting {
                 return;
             }
-            let before = state.current_slide;
+            let old = state.clone();
             if !optimistic(&mut state) {
                 return;
             }
             state.last_updated_ms = now_ms();
-            (before, state.clone())
+            (
+                old.current_slide,
+                state.clone(),
+                Self::has_state_changed(&old, &state),
+            )
         };
         self.last_command_at.store(now_ms(), Ordering::SeqCst);
         self.publish(&after);
@@ -538,9 +581,14 @@ impl StateManager {
                 let _ = app.emit("latency-event", &event);
             }
 
+            // A command that didn't guess is applied even with later ones in
+            // flight: nothing else will say where it went (each build step
+            // fires a QLab cue).
             let last = sm.commands_in_flight.fetch_sub(1, Ordering::SeqCst) == 1;
             match result {
-                Ok(Ok(Ok(info))) if last => sm.apply_slide_info(generation, before, info),
+                Ok(Ok(Ok(info))) if last || !guessed => {
+                    sm.apply_slide_info(generation, before, info)
+                }
                 Ok(Ok(Ok(_))) => {}
                 Ok(Ok(Err(e))) | Ok(Err(e)) => log::warn!("Adapter command failed: {}", e),
                 Err(e) => log::warn!("Adapter task panicked: {:?}", e),
@@ -554,9 +602,15 @@ impl StateManager {
             return;
         }
         let mut new = self.get_state();
-        // Some adapters still report the old slide while a transition plays.
-        // Keep the optimistic number then; the next poll settles it.
-        if !(info.current == before && new.current_slide != before) {
+        if let Some(builds) = info.builds {
+            // The adapter read the slide and its builds together: take both.
+            new.current_slide = info.current;
+            new.current_build = Some(builds.done);
+            new.total_builds = Some(builds.total);
+            new.tracks_builds = true;
+        } else if !(info.current == before && new.current_slide != before) {
+            // Some adapters still report the old slide while a transition
+            // plays. Keep the optimistic number then; the next poll settles it.
             new.current_slide = info.current;
         }
         new.total_slides = info.total;
@@ -841,6 +895,7 @@ mod tests {
                 current: 2,
                 total: 10,
                 transition_duration: Some(1.0),
+                builds: None,
             },
         );
         assert_eq!(sm.get_state().current_slide, 3);
@@ -852,6 +907,7 @@ mod tests {
                 current: 4,
                 total: 10,
                 transition_duration: None,
+                builds: None,
             },
         );
         assert_eq!(sm.get_state().current_slide, 4);
@@ -868,6 +924,7 @@ mod tests {
                 current: 7,
                 total: 10,
                 transition_duration: None,
+                builds: None,
             },
         );
         assert_eq!(sm.get_state().current_slide, 3);
@@ -902,5 +959,86 @@ mod tests {
         new.current_slide = 2;
         sm.replace_state(new);
         assert_eq!(rx.try_recv().unwrap().current_slide, 2);
+    }
+
+    /// Slide `slide` of 10 in a show whose adapter reports builds.
+    fn on_slide(slide: i32, builds: Option<(i32, i32)>) -> CachedState {
+        CachedState {
+            is_open: true,
+            is_presenting: true,
+            current_slide: slide,
+            total_slides: 10,
+            current_build: builds.map(|b| b.0),
+            total_builds: builds.map(|b| b.1),
+            tracks_builds: true,
+            ..Default::default()
+        }
+    }
+
+    fn at(s: &CachedState) -> (i32, Option<i32>, Option<i32>) {
+        (s.current_slide, s.current_build, s.total_builds)
+    }
+
+    #[test]
+    fn test_next_steps_through_known_builds_then_enters_next_slide() {
+        let mut s = on_slide(3, Some((0, 2)));
+        assert!(s.step_forward());
+        assert_eq!(at(&s), (3, Some(1), Some(2)));
+        assert!(s.step_forward());
+        assert_eq!(at(&s), (3, Some(2), Some(2)));
+        assert!(s.step_forward());
+        assert_eq!(at(&s), (4, Some(0), None), "new slide: builds unread");
+        // Unread builds: send Next but wait for PowerPoint's answer.
+        assert!(s.step_forward());
+        assert_eq!(at(&s), (4, Some(0), None));
+    }
+
+    #[test]
+    fn test_next_on_last_slide_plays_its_builds_then_stops() {
+        let mut s = on_slide(10, Some((0, 1)));
+        assert!(s.step_forward());
+        assert_eq!(at(&s), (10, Some(1), Some(1)));
+        assert!(!s.step_forward());
+    }
+
+    #[test]
+    fn test_previous_undoes_builds_then_waits_for_previous_slide() {
+        let mut s = on_slide(3, Some((2, 2)));
+        assert!(s.step_back());
+        assert_eq!(at(&s), (3, Some(1), Some(2)));
+        assert!(s.step_back());
+        assert!(s.step_back(), "onto slide 2: sent, left to the answer");
+        assert_eq!(at(&s), (3, Some(0), Some(2)));
+        let mut first = on_slide(1, Some((0, 0)));
+        assert!(!first.step_back());
+    }
+
+    #[test]
+    fn test_without_build_tracking_next_and_previous_change_slides() {
+        let mut s = presenting(3, 4).get_state();
+        assert!(s.step_forward());
+        assert_eq!(s.current_slide, 4);
+        assert!(!s.step_forward());
+        assert!(s.step_back());
+        assert_eq!(s.current_slide, 3);
+    }
+
+    #[test]
+    fn test_reply_with_builds_sets_slide_and_builds() {
+        let sm = presenting(3, 10);
+        // Optimistically on 3; PowerPoint says Previous landed on 2, built.
+        sm.apply_slide_info(
+            0,
+            3,
+            SlideInfo {
+                current: 2,
+                total: 10,
+                transition_duration: None,
+                builds: Some(adapters::Builds { done: 2, total: 2 }),
+            },
+        );
+        let s = sm.get_state();
+        assert_eq!(at(&s), (2, Some(2), Some(2)));
+        assert!(s.tracks_builds);
     }
 }

@@ -189,7 +189,8 @@ impl OscFeedback {
         ];
 
         // Build/animation step info (only sent when builds exist on this slide)
-        if let (Some(current_build), Some(total_builds)) = (state.current_build, state.total_builds)
+        if let (Some(current_build), Some(total_builds @ 1..)) =
+            (state.current_build, state.total_builds)
         {
             messages.push(OscMessage {
                 addr: "/clicker/slide/build".to_string(),

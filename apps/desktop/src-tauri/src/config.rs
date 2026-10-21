@@ -220,8 +220,8 @@ pub struct QLabConfig {
     /// Cue numbers never counted out, even when they run linearly
     #[serde(rename = "hiddenCues", default)]
     pub hidden_cues: Vec<String>,
-    /// On a slide change during a show, GO the cue numbered prefix + slide
-    /// (`/go/S7` for slide 7)
+    /// On a slide change during a show, start the cue numbered prefix + slide
+    /// without moving the playhead (`/cue/S7/start` for slide 7)
     #[serde(rename = "slideGo", default)]
     pub slide_go: bool,
     #[serde(rename = "slideCuePrefix", default = "default_slide_cue_prefix")]

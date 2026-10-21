@@ -20,6 +20,19 @@ pub struct SlideInfo {
     pub total: i32,
     /// Transition duration in seconds (Keynote only). None for other adapters.
     pub transition_duration: Option<f64>,
+    /// Build position on this slide, for adapters that can read it
+    /// (PowerPoint for Windows); `None` elsewhere.
+    #[serde(default)]
+    pub builds: Option<Builds>,
+}
+
+/// Where a slide's click-triggered builds stand.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Builds {
+    /// Clicks played so far (0 = none yet)
+    pub done: i32,
+    /// Clicks on this slide (0 = no builds)
+    pub total: i32,
 }
 
 /// State of a presentation
@@ -136,6 +149,7 @@ pub trait PresentationAdapter: Send + Sync {
             current: 0,
             total: 0,
             transition_duration: None,
+            builds: None,
         });
 
         let zoom_level = self.get_notes_zoom().ok().flatten();
@@ -435,6 +449,7 @@ mod tests {
                     current: 0,
                     total: 0,
                     transition_duration: None,
+                    builds: None,
                 })
             }
             fn next_slide(&self, _: &str) -> Result<SlideInfo, String> {
@@ -442,6 +457,7 @@ mod tests {
                     current: 0,
                     total: 0,
                     transition_duration: None,
+                    builds: None,
                 })
             }
             fn prev_slide(&self, _: &str) -> Result<SlideInfo, String> {
@@ -449,6 +465,7 @@ mod tests {
                     current: 0,
                     total: 0,
                     transition_duration: None,
+                    builds: None,
                 })
             }
         }

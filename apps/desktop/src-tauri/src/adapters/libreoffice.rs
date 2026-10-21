@@ -337,6 +337,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
             current: state.current_slide + 1,
             total: state.total_slides,
             transition_duration: None,
+            builds: None,
         })
     }
 
@@ -363,6 +364,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
             current: state.current_slide + 1,
             total: state.total_slides,
             transition_duration: None,
+            builds: None,
         })
     }
 
@@ -389,6 +391,7 @@ impl PresentationAdapter for LibreOfficeAdapter {
             current: state.current_slide + 1,
             total: state.total_slides,
             transition_duration: None,
+            builds: None,
         })
     }
 

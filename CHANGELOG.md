@@ -7,9 +7,13 @@ All notable changes to the SherPresent desktop app. Versions follow
 
 ### Added
 
-- **QLab cue on slide change.** On the QLab tab, "GO the matching cue in
-  QLab" makes each slide change during a show GO the QLab cue numbered with a
-  prefix plus the slide number (prefix `S` by default: slide 7 GOes cue `S7`).
+- **QLab cue on slide change.** On the QLab tab, "Start the matching cue in
+  QLab" makes each slide change during a show start the QLab cue numbered
+  with a prefix plus the slide number (prefix `S` by default: slide 7 starts
+  cue `S7`). The playhead stays where the operator left it. On PowerPoint
+  for Windows each build fires too: `S7.1` for the slide's first build,
+  `S7.2` for the next, and going back starts the cue for wherever the show
+  lands.
   Extra OSC can be sent alongside, with `{slide}` replaced by the slide
   number. It goes over the existing QLab connection the moment the slide
   changes; changes made in PowerPoint itself are caught within about a
@@ -27,6 +31,10 @@ All notable changes to the SherPresent desktop app. Versions follow
   checked against QLab every 2 seconds and corrected only if it has drifted.
   Stopping, pausing or resuming a cue still shows within a tenth of a
   second; scrubbing one shows at the next check.
+- **Windows:** build steps are tracked on every slide read, not only every
+  two seconds. Next and Previous no longer guess wrong on slides with
+  builds, which showed the wrong slide and fired the wrong QLab cue, and
+  Next plays the builds on the last slide instead of doing nothing.
 - In custom QLab OSC, a quoted argument (`/go "53"`) is sent as the text
   `53`, as QLab requires for cue numbers.
 

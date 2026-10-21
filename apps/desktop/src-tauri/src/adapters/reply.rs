@@ -25,6 +25,7 @@ pub fn parse_slide_info(reply: &str) -> Result<SlideInfo, String> {
             .first()
             .and_then(|d| d.parse::<f64>().ok())
             .filter(|&d| d > 0.0),
+        builds: None,
     })
 }
 

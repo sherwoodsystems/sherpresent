@@ -64,7 +64,8 @@ pub struct QLabState {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TriggerReport {
-    pub slide: i32,
+    /// The step fired: `3`, or `3.1` for a slide's first build
+    pub step: String,
     /// Addresses sent, as QLab received them
     pub sent: Vec<String>,
     /// Why it wasn't sent, or what QLab answered other than `ok`
@@ -75,54 +76,101 @@ pub struct TriggerReport {
 // SLIDE TRIGGER
 // =============================================================================
 
-/// The messages to fire for one slide change, addressed as the user wrote
-/// them; the client scopes them to its workspace.
+/// The messages to fire for one step of the show, addressed as the user
+/// wrote them; the client scopes them to its workspace.
 #[derive(Debug, Clone)]
 pub struct SlideTrigger {
-    pub slide: i32,
+    /// [`Step::label`], for the report
+    pub step: String,
     pub messages: Vec<OscMessage>,
+}
+
+/// A place in the show worth a cue: a slide, or one of its builds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Step {
+    slide: i32,
+    /// Builds played on the slide (0 = none)
+    build: i32,
+}
+
+impl Step {
+    /// The cue number after the prefix: `3` for the slide, `3.1` for its
+    /// first build, `3.2` for the second.
+    fn label(&self) -> String {
+        match self.build {
+            0 => self.slide.to_string(),
+            build => format!("{}.{}", self.slide, build),
+        }
+    }
+}
+
+/// What to send for each step.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Template {
+    /// Start cue `{prefix}{step}` (`slideGo`)
+    cue_prefix: Option<String>,
+    /// Custom lines (`slideCommand`), sent on slide changes only
+    command: String,
+}
+
+impl Template {
+    fn new(cfg: &QLabConfig) -> Self {
+        // An address can't hold spaces or extra path segments.
+        let prefix = cfg
+            .slide_cue_prefix
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '/')
+            .collect();
+        Self {
+            cue_prefix: cfg.slide_go.then_some(prefix),
+            command: cfg.slide_command.clone(),
+        }
+    }
+
+    /// The messages for arriving at `step`. The cue is started with `start`,
+    /// which plays it without moving the playhead, so the operator's standby
+    /// stays put (`/go/S7` would jump the playhead to it); the cue number goes
+    /// in the address, where QLab takes it as text. Custom lines go only with
+    /// a new slide: they're written per slide (`{slide}`).
+    fn messages(&self, step: Step, new_slide: bool) -> Vec<OscMessage> {
+        let cue = self.cue_prefix.iter().map(|prefix| OscMessage {
+            addr: format!("/cue/{}{}/start", prefix, step.label()),
+            args: vec![],
+        });
+        let custom = if new_slide {
+            slide_messages(&self.command, step.slide)
+        } else {
+            vec![]
+        };
+        cue.chain(custom).collect()
+    }
 }
 
 /// The slide-change command and the running client to send it through.
 #[derive(Default)]
 pub struct TriggerSlot {
-    command: Mutex<String>,
+    template: Mutex<Template>,
     client: Mutex<Option<mpsc::UnboundedSender<SlideTrigger>>>,
 }
 
 /// A slide-change command is set and there's a QLab to send it to.
 pub fn fires_on_slides(cfg: &QLabConfig) -> bool {
-    !cfg.host.trim().is_empty() && !slide_messages(&slide_template(cfg), 0).is_empty()
-}
-
-/// Everything sent on a slide change, as one command for [`slide_messages`]:
-/// the GO of the matching cue, then any custom lines. The cue number goes in
-/// the address (`/go/S7`), where QLab takes it as text; as an argument it
-/// would have to be sent as a string, not a number.
-fn slide_template(cfg: &QLabConfig) -> String {
-    let mut lines = Vec::new();
-    if cfg.slide_go {
-        // An address can't hold spaces or extra path segments.
-        let prefix: String = cfg
-            .slide_cue_prefix
-            .chars()
-            .filter(|c| !c.is_whitespace() && *c != '/')
-            .collect();
-        lines.push(format!("/go/{}{{slide}}", prefix));
-    }
-    lines.push(cfg.slide_command.clone());
-    lines.join("\n")
+    let step = Step { slide: 1, build: 0 };
+    !cfg.host.trim().is_empty() && !Template::new(cfg).messages(step, true).is_empty()
 }
 
 impl TriggerSlot {
-    /// Send the command for `slide` to QLab. Never blocks.
-    pub fn fire(&self, slide: i32) {
-        let messages = slide_messages(&self.command.locked(), slide);
+    /// Send what's due for arriving at `step` to QLab. Never blocks.
+    fn fire(&self, step: Step, new_slide: bool) {
+        let messages = self.template.locked().messages(step, new_slide);
         if messages.is_empty() {
             return;
         }
         if let Some(client) = self.client.locked().as_ref() {
-            let _ = client.send(SlideTrigger { slide, messages });
+            let _ = client.send(SlideTrigger {
+                step: step.label(),
+                messages,
+            });
         }
     }
 }
@@ -186,28 +234,34 @@ fn tokens(line: &str) -> Vec<(String, bool)> {
     out
 }
 
-/// Which presentation states are slide changes worth firing on: a new slide
-/// while a show keeps running. A show starting, ending, or the presentation
-/// being switched isn't one.
+/// Which presentation states are worth firing on: a new slide or build
+/// step while a show keeps running, forwards or back. A show starting,
+/// ending, or the presentation being switched isn't one.
 #[derive(Default)]
 struct SlideWatch {
-    shown: Option<i32>,
+    shown: Option<Step>,
 }
 
 impl SlideWatch {
-    fn see(&mut self, state: &CachedState) -> Option<i32> {
-        let now = Some(state.current_slide).filter(|&s| state.is_presenting && s > 0);
+    /// The step to fire, and whether it's on a new slide.
+    fn see(&mut self, state: &CachedState) -> Option<(Step, bool)> {
+        let now = (state.is_presenting && state.current_slide > 0).then(|| Step {
+            slide: state.current_slide,
+            build: state.current_build.unwrap_or(0).max(0),
+        });
         let before = std::mem::replace(&mut self.shown, now);
         match (before, now) {
-            (Some(before), Some(slide)) if before != slide => Some(slide),
+            (Some(before), Some(step)) if before != step => {
+                Some((step, step.slide != before.slide))
+            }
             _ => None,
         }
     }
 }
 
-/// Fire the slide-change command on every slide change the StateManager
-/// publishes, including its optimistic ones, so a press on any surface
-/// reaches QLab before the presentation app has even moved.
+/// Fire on every slide and build step the StateManager publishes, including
+/// its optimistic ones, so a press on any surface reaches QLab before the
+/// presentation app has even moved.
 pub async fn fire_on_slide_change(
     slot: Arc<TriggerSlot>,
     mut states: broadcast::Receiver<CachedState>,
@@ -216,8 +270,8 @@ pub async fn fire_on_slide_change(
     loop {
         match states.recv().await {
             Ok(state) => {
-                if let Some(slide) = watch.see(&state) {
-                    slot.fire(slide);
+                if let Some((step, new_slide)) = watch.see(&state) {
+                    slot.fire(step, new_slide);
                 }
             }
             Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -335,7 +389,7 @@ impl QLab {
             changed
         });
 
-        *self.trigger.command.locked() = slide_template(cfg);
+        *self.trigger.template.locked() = Template::new(cfg);
 
         let host = cfg.host.trim();
         let want = (!host.is_empty()).then(|| ClientKey {
@@ -428,8 +482,20 @@ mod tests {
         );
     }
 
+    fn step(slide: i32, build: i32) -> Step {
+        Step { slide, build }
+    }
+
+    fn addrs(cfg: &QLabConfig, step: Step, new_slide: bool) -> Vec<String> {
+        Template::new(cfg)
+            .messages(step, new_slide)
+            .into_iter()
+            .map(|m| m.addr)
+            .collect()
+    }
+
     #[test]
-    fn test_slide_go_uses_the_cue_prefix() {
+    fn test_slide_go_starts_the_cue_named_by_prefix_and_step() {
         let mut cfg = QLabConfig {
             host: "10.0.0.5".into(),
             ..Default::default()
@@ -437,25 +503,41 @@ mod tests {
         assert!(!fires_on_slides(&cfg)); // off by default
         cfg.slide_go = true;
         assert!(fires_on_slides(&cfg));
-        let addrs = |cfg: &QLabConfig| -> Vec<String> {
-            slide_messages(&slide_template(cfg), 7)
-                .into_iter()
-                .map(|m| m.addr)
-                .collect()
-        };
-        assert_eq!(addrs(&cfg), vec!["/go/S7"]);
+        assert_eq!(addrs(&cfg, step(7, 0), true), vec!["/cue/S7/start"]);
+        assert_eq!(addrs(&cfg, step(7, 2), false), vec!["/cue/S7.2/start"]);
         cfg.slide_cue_prefix = " Slide /".into();
-        cfg.slide_command = "/cue/fx{slide}/start".into();
-        assert_eq!(addrs(&cfg), vec!["/go/Slide7", "/cue/fx7/start"]);
+        assert_eq!(addrs(&cfg, step(7, 0), true), vec!["/cue/Slide7/start"]);
         cfg.slide_cue_prefix = String::new();
-        assert_eq!(addrs(&cfg)[0], "/go/7");
+        assert_eq!(addrs(&cfg, step(7, 1), false), vec!["/cue/7.1/start"]);
+    }
+
+    #[test]
+    fn test_custom_lines_go_with_new_slides_only() {
+        let mut cfg = QLabConfig {
+            host: "10.0.0.5".into(),
+            slide_command: "/cue/fx{slide}/start".into(),
+            ..Default::default()
+        };
+        assert!(fires_on_slides(&cfg));
+        assert_eq!(addrs(&cfg, step(7, 0), true), vec!["/cue/fx7/start"]);
+        assert!(addrs(&cfg, step(7, 1), false).is_empty());
+        cfg.slide_go = true;
+        assert_eq!(
+            addrs(&cfg, step(8, 2), true),
+            vec!["/cue/S8.2/start", "/cue/fx8/start"]
+        );
     }
 
     fn showing(slide: i32) -> CachedState {
+        building(slide, None)
+    }
+
+    fn building(slide: i32, build: Option<i32>) -> CachedState {
         CachedState {
             is_open: true,
             is_presenting: slide > 0,
             current_slide: slide,
+            current_build: build,
             ..Default::default()
         }
     }
@@ -465,9 +547,25 @@ mod tests {
         let mut w = SlideWatch::default();
         assert_eq!(w.see(&showing(1)), None); // show starts
         assert_eq!(w.see(&showing(1)), None); // zoom, notes...
-        assert_eq!(w.see(&showing(2)), Some(2));
-        assert_eq!(w.see(&showing(1)), Some(1));
+        assert_eq!(w.see(&showing(2)), Some((step(2, 0), true)));
+        assert_eq!(w.see(&showing(1)), Some((step(1, 0), true)));
         assert_eq!(w.see(&showing(0)), None); // show ends
         assert_eq!(w.see(&showing(5)), None); // next show starts
+    }
+
+    #[test]
+    fn test_slide_watch_fires_each_build_forwards_and_back() {
+        let mut w = SlideWatch::default();
+        w.see(&building(2, Some(0)));
+        assert_eq!(w.see(&building(3, Some(0))), Some((step(3, 0), true)));
+        assert_eq!(w.see(&building(3, Some(1))), Some((step(3, 1), false)));
+        assert_eq!(w.see(&building(3, Some(2))), Some((step(3, 2), false)));
+        assert_eq!(w.see(&building(4, Some(0))), Some((step(4, 0), true)));
+        // Back onto slide 3, shown with its builds played.
+        assert_eq!(w.see(&building(3, Some(2))), Some((step(3, 2), true)));
+        assert_eq!(w.see(&building(3, Some(1))), Some((step(3, 1), false)));
+        // Builds unknown and none played read the same: no second cue.
+        assert_eq!(w.see(&building(3, Some(0))), Some((step(3, 0), false)));
+        assert_eq!(w.see(&building(3, None)), None);
     }
 }

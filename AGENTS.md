@@ -201,18 +201,30 @@ content (`QLabContent.swift`). The page and the helper share one 1920x1080
 layout; keep their numbers in step. Time is rounded up everywhere
 (`lib/qlab.ts`, `QLabContent.formatTime`).
 
-**Slide trigger**: on every slide change within a show, `slideGo` GOes the
-cue numbered `slideCuePrefix` + slide (`/go/S7`; the cue number goes in the
-address because as an argument QLab needs it as a string), then any custom
-`slideCommand` lines (`{slide}` substituted, `"quoted"` args stay strings).
-Sent down the same TCP connection (already past the passcode) and scoped to
-its workspace (`/go` → `/workspace/{id}/go`). `fire_on_slide_change` watches the StateManager's
-`subscribe()` stream, so commands from any surface fire on the optimistic
-update; while a trigger is set the poller also reads the slide position every
-250 ms (`set_fast_slide_poll`) to catch changes made in the presentation app.
-Replies to triggers are matched in `Session::trigger_reply` so a `denied`
-doesn't drop the count-out connection; triggers queued while disconnected are
-dropped, not replayed.
+**Slide trigger**: on every slide or build step within a show (forwards or
+back), `slideGo` starts the cue numbered `slideCuePrefix` + step: `S7` for
+the slide, `S7.1`, `S7.2` for its builds (`/cue/S7.1/start`: unlike `/go`
+it doesn't move the playhead; the cue number goes in the address because as
+an argument QLab needs it as a string). Custom `slideCommand` lines
+(`{slide}` substituted, `"quoted"` args stay strings) go with slide changes
+only. Sent down the same TCP connection (already past the passcode) and
+scoped to its workspace (`/go` → `/workspace/{id}/go`). `fire_on_slide_change`
+watches the StateManager's `subscribe()` stream (`SlideWatch`), so commands
+from any surface fire on the optimistic update; while a trigger is set the
+poller also reads the slide position every 250 ms (`set_fast_slide_poll`) to
+catch changes made in the presentation app. Replies to triggers are matched
+in `Session::trigger_reply` so a `denied` doesn't drop the count-out
+connection; triggers queued while disconnected are dropped, not replayed.
+
+**Builds**: only PowerPoint for Windows can read them (`GetClickIndex` /
+`GetClickCount`), and it returns `SlideInfo::builds` with every slide read and
+move, so polls and command answers keep them current.
+`CachedState::tracks_builds` marks such an adapter; then `step_forward`/`step_back` guess a
+build step or slide change only when the slide's builds are known
+(`total_builds: Some`), and otherwise leave the state to the adapter's answer.
+A wrong guess would fire the wrong QLab cue. Navigating onto a new slide
+resets the builds to unknown (`enter_slide`). Other adapters can't see builds:
+Next and Previous are taken as slide changes.
 
 QLab 5.3+ errors on `/cue/active/valuesForKeys` when nothing is active and
 answers multi-cue selectors with one reply per cue, hence the two-step poll.

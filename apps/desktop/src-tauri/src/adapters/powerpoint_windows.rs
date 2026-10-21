@@ -36,7 +36,7 @@
 
 #![cfg(target_os = "windows")]
 
-use super::{LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
+use super::{Builds, LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 
 use windows::{
     core::{Interface, BSTR, GUID, PCWSTR},
@@ -296,6 +296,43 @@ impl PowerPointWindowsAdapter {
         Self::variant_to_dispatch(&var)
     }
 
+    /// The running show of presentation `name`: its SlideShowView, and the
+    /// deck's slide count.
+    fn show(name: &str) -> Result<(IDispatch, i32), String> {
+        Self::init_com()?;
+        let app = Self::get_application()?;
+        let pres = Self::get_presentation_by_name(&app, name)?;
+        let slides = Self::get_slides(&pres)?;
+        let total = Self::variant_to_i32(&Self::get_property(&slides, "Count")?)?;
+        let view = Self::get_slideshow_view(&Self::get_slideshow_window(&pres)?)?;
+        Ok((view, total))
+    }
+
+    /// Where the show stands: slide, slide count and builds.
+    fn position(view: &IDispatch, total: i32) -> Result<SlideInfo, String> {
+        let current = Self::variant_to_i32(&Self::get_property(view, "CurrentShowPosition")?)?;
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+            builds: Self::builds(view),
+        })
+    }
+
+    /// The slide's click-triggered builds: how many have played
+    /// (`GetClickIndex`) of how many (`GetClickCount`).
+    fn builds(view: &IDispatch) -> Option<Builds> {
+        let read = |method: &str| {
+            Self::invoke_method(view, method)
+                .ok()
+                .and_then(|v| Self::variant_to_i32(&v).ok())
+        };
+        Some(Builds {
+            done: read("GetClickIndex")?,
+            total: read("GetClickCount")?,
+        })
+    }
+
     /// Speaker notes text of `slide`, trimmed.
     ///
     /// The notes live in the notes page's body placeholder. Its position in
@@ -417,131 +454,37 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
     }
 
     fn get_slide_info(&self, name: &str) -> Result<SlideInfo, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-
-        // Get slide count
-        let slides = Self::get_slides(&pres)?;
-        let count_var = Self::get_property(&slides, "Count")?;
-        let total = Self::variant_to_i32(&count_var)?;
-
-        // Get current position from slideshow view
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
-
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current = Self::variant_to_i32(&pos_var)?;
-
-        Ok(SlideInfo {
-            current,
-            total,
-            transition_duration: None,
-        })
+        let (view, total) = Self::show(name)?;
+        Self::position(&view, total)
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
-
-        let slides = Self::get_slides(&pres)?;
-        let count_var = Self::get_property(&slides, "Count")?;
-        let total = Self::variant_to_i32(&count_var)?;
-
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current_pos = Self::variant_to_i32(&pos_var)?;
-
-        // Don't go past the last slide
-        if current_pos >= total {
-            return Ok(SlideInfo {
-                current: current_pos,
-                total,
-                transition_duration: None,
-            });
+        let (view, total) = Self::show(name)?;
+        let here = Self::position(&view, total)?;
+        // Next on the last slide's last build would end the show.
+        let builds_left = here.builds.is_some_and(|b| b.done < b.total);
+        if here.current >= total && !builds_left {
+            return Ok(here);
         }
-
-        // Call Next method
         Self::invoke_method(&view, "Next")?;
-
-        // Get new position
-        let new_pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let new_pos = Self::variant_to_i32(&new_pos_var)?;
-
-        Ok(SlideInfo {
-            current: new_pos,
-            total,
-            transition_duration: None,
-        })
+        Self::position(&view, total)
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
-
-        let slides = Self::get_slides(&pres)?;
-        let count_var = Self::get_property(&slides, "Count")?;
-        let total = Self::variant_to_i32(&count_var)?;
-
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current_pos = Self::variant_to_i32(&pos_var)?;
-
-        // Don't go before the first slide
-        if current_pos <= 1 {
-            return Ok(SlideInfo {
-                current: current_pos,
-                total,
-                transition_duration: None,
-            });
+        let (view, total) = Self::show(name)?;
+        let here = Self::position(&view, total)?;
+        let builds_played = here.builds.is_some_and(|b| b.done > 0);
+        if here.current <= 1 && !builds_played {
+            return Ok(here);
         }
-
-        // Call Previous method
         Self::invoke_method(&view, "Previous")?;
-
-        // Get new position
-        let new_pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let new_pos = Self::variant_to_i32(&new_pos_var)?;
-
-        Ok(SlideInfo {
-            current: new_pos,
-            total,
-            transition_duration: None,
-        })
+        Self::position(&view, total)
     }
 
     fn goto_slide(&self, name: &str, slide: i32) -> Result<SlideInfo, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
-
-        let slides = Self::get_slides(&pres)?;
-        let count_var = Self::get_property(&slides, "Count")?;
-        let total = Self::variant_to_i32(&count_var)?;
-
-        // Clamp to valid range
-        let target = slide.clamp(1, total);
-
-        Self::invoke_method_with_int_arg(&view, "GotoSlide", target)?;
-
-        let new_pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let new_pos = Self::variant_to_i32(&new_pos_var)?;
-
-        Ok(SlideInfo {
-            current: new_pos,
-            total,
-            transition_duration: None,
-        })
+        let (view, total) = Self::show(name)?;
+        Self::invoke_method_with_int_arg(&view, "GotoSlide", slide.clamp(1, total))?;
+        Self::position(&view, total)
     }
 
     fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
@@ -656,18 +599,9 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
             .and_then(|v| Self::variant_to_i32(&v).ok())
             .unwrap_or(0);
 
-        // Query build/animation step info
-        let click_index = Self::invoke_method(&view, "GetClickIndex")
-            .ok()
-            .and_then(|v| Self::variant_to_i32(&v).ok());
-        let click_count = Self::invoke_method(&view, "GetClickCount")
-            .ok()
-            .and_then(|v| Self::variant_to_i32(&v).ok());
-
-        let (current_build, total_builds) = match (click_index, click_count) {
-            (Some(idx), Some(cnt)) if cnt > 0 => (Some(idx), Some(cnt)),
-            _ => (None, None),
-        };
+        // Reported even with no builds (total 0), so the StateManager knows
+        // this slide's builds rather than guessing.
+        let builds = Self::builds(&view);
 
         // Get presenter notes
         let presenter_notes = self.get_presenter_notes(name).ok().flatten();
@@ -679,8 +613,8 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
             total_slides,
             zoom_level: None,
             presenter_notes,
-            current_build,
-            total_builds,
+            current_build: builds.map(|b| b.done),
+            total_builds: builds.map(|b| b.total),
         }
     }
 }

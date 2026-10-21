@@ -208,7 +208,7 @@ export interface QLabConfig {
   workspace: string;
   /** Cue numbers never counted out */
   hiddenCues: string[];
-  /** On a slide change during a show, GO the cue numbered prefix + slide (`/go/S7`) */
+  /** On a slide change during a show, start the cue numbered prefix + slide (`/cue/S7/start`) */
   slideGo: boolean;
   slideCuePrefix: string;
   /** More OSC sent on a slide change: one message per line, `{slide}`
@@ -242,8 +242,8 @@ export interface QLabState {
   audio: QLabCountdown | null;
   /** The cue at the playhead */
   next: { number: string; name: string } | null;
-  /** The last slide-change command fired */
-  slideTrigger: { slide: number; sent: string[]; error: string | null } | null;
+  /** The last slide or build step fired: `step` is `3`, or `3.1` for a build */
+  slideTrigger: { step: string; sent: string[]; error: string | null } | null;
 }
 
 export interface CaptionsConfig {
