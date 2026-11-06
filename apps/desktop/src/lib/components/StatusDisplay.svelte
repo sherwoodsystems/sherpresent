@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
+  import Stat from '$lib/components/ui/Stat.svelte';
   import type { LiveStatus } from '../types';
 
   interface Props {
@@ -28,156 +30,97 @@
   const adapterLabel = $derived(adapterLabels[adapter] ?? adapter);
 </script>
 
-<div class="status-display">
-  <h3 class="section-title">Live Status</h3>
-
-  {#if !status}
-    <p class="placeholder">Waiting for status...</p>
-  {:else if !status.is_open}
-    <p class="placeholder">{adapterLabel} is not open — open it to control your presentation</p>
-  {:else if !status.is_presenting}
-    <p class="placeholder">Not presenting</p>
-  {:else}
-    <div class="status-content">
-      <div class="status-row">
-        <div class="status-grid">
-          <div class="status-item">
-            <span class="status-label">Slide</span>
-            <span class="status-value">
-              {status.current_slide} / {status.total_slides}
-            </span>
-            {#if status.total_builds && status.total_builds > 0}
-              <span class="build-indicator">
-                {#each { length: status.total_builds }, i (i)}
-                  <span class="build-dot" class:filled={i < (status.current_build ?? 0)}></span>
-                {/each}
-                <span class="build-count">({status.current_build ?? 0}/{status.total_builds})</span>
-              </span>
-            {/if}
-          </div>
-
-          <div class="status-item">
-            <span class="status-label">Status</span>
-            <span class="status-value presenting"> Presenting </span>
-          </div>
-
-          {#if supportsZoom && status.zoom_level !== null}
-            <div class="status-item">
-              <span class="status-label">Zoom</span>
-              <span class="status-value">{status.zoom_level}%</span>
-            </div>
-          {/if}
-        </div>
-      </div>
-
-      <div class="status-row controls-row">
-        <div class="nav-buttons">
-          <button
-            class="nav-btn"
-            onclick={onprev}
-            disabled={!status.current_slide || status.current_slide <= 1}
-          >
-            ← Prev
-          </button>
-          <button
-            class="nav-btn"
-            onclick={onnext}
-            disabled={!status.current_slide || status.current_slide >= status.total_slides}
-          >
-            Next →
-          </button>
-          <button
-            class="nav-btn"
-            onclick={onpagenotes}
-            title="Next screenful of notes in the stage view and Syphon notes; wraps to the top"
-          >
-            Page Notes ↓
-          </button>
-        </div>
-
-        {#if ongoto}
-          <div class="goto-controls">
-            <input
-              type="number"
-              class="goto-input"
-              min="1"
-              max={status.total_slides}
-              bind:value={gotoValue}
-              placeholder="#"
-              onkeydown={(e) => {
-                if (e.key === 'Enter' && gotoValue) {
-                  ongoto(Number(gotoValue));
-                  gotoValue = '';
-                }
-              }}
-            />
-            <button
-              class="nav-btn"
-              onclick={() => {
-                if (gotoValue) {
-                  ongoto(Number(gotoValue));
-                  gotoValue = '';
-                }
-              }}
-              disabled={!gotoValue}>Go</button
-            >
-          </div>
+{#if !status}
+  <p class="empty">Waiting for status...</p>
+{:else if !status.is_open}
+  <p class="empty">{adapterLabel} is not open — open it to control your presentation</p>
+{:else if !status.is_presenting}
+  <p class="empty">Not presenting</p>
+{:else}
+  <div class="stats">
+    <Stat label="Slide">
+      {status.current_slide} / {status.total_slides}
+      {#snippet below()}
+        {#if status?.total_builds && status.total_builds > 0}
+          <span class="build-indicator">
+            {#each { length: status.total_builds }, i (i)}
+              <span class="build-dot" class:filled={i < (status.current_build ?? 0)}></span>
+            {/each}
+            <span class="build-count">({status.current_build ?? 0}/{status.total_builds})</span>
+          </span>
         {/if}
-      </div>
-    </div>
+      {/snippet}
+    </Stat>
 
-    {#if notes}
-      <div class="presenter-notes">
-        <span class="notes-label">Notes</span>
-        <p class="notes-text">{notes}</p>
+    <Stat label="Status" tone="ok">Presenting</Stat>
+
+    {#if supportsZoom && status.zoom_level !== null}
+      <Stat label="Zoom">{status.zoom_level}%</Stat>
+    {/if}
+  </div>
+
+  <div class="controls">
+    <Button onclick={onprev} disabled={!status.current_slide || status.current_slide <= 1}>
+      ← Prev
+    </Button>
+    <Button
+      onclick={onnext}
+      disabled={!status.current_slide || status.current_slide >= status.total_slides}
+    >
+      Next →
+    </Button>
+    <Button
+      onclick={onpagenotes}
+      title="Next screenful of notes in the stage view and Syphon notes; wraps to the top"
+    >
+      Page Notes ↓
+    </Button>
+
+    {#if ongoto}
+      <div class="goto-controls">
+        <input
+          type="number"
+          class="input goto-input"
+          aria-label="Go to slide"
+          min="1"
+          max={status.total_slides}
+          bind:value={gotoValue}
+          placeholder="#"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && gotoValue) {
+              ongoto(Number(gotoValue));
+              gotoValue = '';
+            }
+          }}
+        />
+        <Button
+          onclick={() => {
+            if (gotoValue) {
+              ongoto(Number(gotoValue));
+              gotoValue = '';
+            }
+          }}
+          disabled={!gotoValue}
+        >
+          Go
+        </Button>
       </div>
     {/if}
+  </div>
+
+  {#if notes}
+    <div class="presenter-notes">
+      <span class="label">Notes</span>
+      <p class="notes-text">{notes}</p>
+    </div>
   {/if}
-</div>
+{/if}
 
 <style>
-  .status-display {
+  .controls {
     display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  .section-title {
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border-subtle);
-    text-align: center;
-  }
-
-  .placeholder {
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    font-style: italic;
-    margin: 0;
-    padding: 1rem 0;
-    text-align: center;
-  }
-
-  .status-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .status-row {
-    display: flex;
+    flex-wrap: wrap;
     justify-content: center;
-  }
-
-  .status-grid {
-    display: flex;
-    gap: 1.5rem;
-  }
-
-  .controls-row {
-    gap: 1rem;
-  }
-
-  .nav-buttons {
-    display: flex;
     gap: 0.5rem;
   }
 
@@ -187,15 +130,9 @@
   }
 
   .goto-input {
-    width: 3rem;
-    padding: 0.5rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: #f5f5f5;
-    color: var(--text);
-    font-size: 0.875rem;
+    width: 3.5rem;
+    padding: 0 0.25rem;
     text-align: center;
-    -moz-appearance: textfield;
     appearance: textfield;
   }
 
@@ -203,56 +140,6 @@
   .goto-input::-webkit-outer-spin-button {
     -webkit-appearance: none;
     margin: 0;
-  }
-
-  .nav-btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: #f5f5f5;
-    color: var(--text);
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      border-color 0.15s;
-  }
-
-  .nav-btn:hover:not(:disabled) {
-    background: #e8e8e8;
-    border-color: var(--border-strong);
-  }
-
-  .nav-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .status-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .status-label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .status-value {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-    min-width: 5ch;
-  }
-
-  .status-value.presenting {
-    color: #34c759;
   }
 
   .build-indicator {
@@ -277,25 +164,16 @@
 
   .build-count {
     font-size: 0.6875rem;
-    color: #999;
+    color: var(--text-muted);
     margin-left: 0.125rem;
   }
 
   .presenter-notes {
-    width: 100%;
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--border-subtle);
-  }
-
-  .notes-label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
   .notes-text {
@@ -304,26 +182,5 @@
     color: var(--text);
     white-space: pre-wrap;
     line-height: 1.4;
-  }
-  @media (prefers-color-scheme: dark) {
-    .status-value.presenting {
-      color: #30d158;
-    }
-
-    .nav-btn {
-      background: #3a3a3a;
-    }
-
-    .nav-btn:hover:not(:disabled) {
-      background: #4a4a4a;
-    }
-
-    .goto-input {
-      background: #3a3a3a;
-    }
-
-    .build-count {
-      color: #777;
-    }
   }
 </style>

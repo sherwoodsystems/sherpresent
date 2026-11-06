@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCueList, formatTime, parseCueList, remainingPercent } from './qlab';
+import { formatCueList, formatTime, listFound, parseCueList, remainingPercent } from './qlab';
 
 // Same cases as QLabContentTests.swift: the tab, the page and Syphon agree.
 describe('formatTime', () => {
@@ -28,5 +28,23 @@ describe('cue list', () => {
     expect(parseCueList(' 12, 14  3.5,,12 ')).toEqual(['12', '14', '3.5']);
     expect(parseCueList('')).toEqual([]);
     expect(formatCueList(['12', '14'])).toBe('12, 14');
+  });
+});
+
+describe('listFound', () => {
+  const show = { host: '10.0.0.7', name: 'Show', id: 'A', version: '5.6.5' };
+  const backup = { ...show, host: '10.0.0.8' };
+
+  it('keeps a workspace missing from the latest scan', () => {
+    expect(listFound([show], [])).toEqual([show]);
+  });
+
+  it('forgets one missing from both scans', () => {
+    expect(listFound([], [])).toEqual([]);
+  });
+
+  it('lists the same workspace once per computer, newest details first', () => {
+    const renamed = { ...show, name: 'Show v2' };
+    expect(listFound([show, backup], [renamed])).toEqual([renamed, backup]);
   });
 });

@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Desktop app: `apps/desktop/`
 - Bridge (single Tauri app; core engine in `src-tauri/src/bridge/`): `apps/bridge/`
 - Shared discovery/OSC core: `crates/sherpresent-core/`
-- Companion module: `apps/companion-module/` (git submodule)
+- Companion module: `apps/companion-module-sherpresent/` (git submodule)
 - Specifications: `spec/`
 - Documentation: `docs/`
 
@@ -70,8 +70,10 @@ $effect(() => { /* side effects */ });
 
 See `spec/osc-protocol.md` for full specification.
 
-- **Receive port**: 9000
-- **Feedback port**: 9001
+- **Port**: 9000. Anything that sends a command gets feedback at its source address
+  until it's quiet for 15 s (clients heartbeat with `/clicker/status`).
+- **Extra feedback destinations** (default `127.0.0.1:9001`): for listen-only devices.
+- **Finding the app**: broadcast `/clicker/discover` to port 9000; it replies `/clicker/here` (name).
 
 | Command | Description |
 |---------|-------------|
@@ -85,6 +87,8 @@ See `spec/osc-protocol.md` for full specification.
 | `/clicker/zoomOut` | Decrease notes zoom |
 | `/clicker/scrollUp`, `/clicker/scrollDown` | Scroll the notes views |
 | `/clicker/notesPage` | Next screenful of notes (stage page + Syphon notes), wraps to top |
+| `/clicker/discover` | Find the app; replies `/clicker/here` (name) to the sender only |
+| `/oscpoint/next`, `/oscpoint/previous` | Next and previous, as sent by the bridge |
 
 **Feedback:** `/clicker/state/presenting`, `/clicker/state/open`, `/clicker/slide/current`,
 `/clicker/slide/total`, `/clicker/zoom/level`, plus `/clicker/slide/build` and
@@ -93,7 +97,7 @@ See `spec/osc-protocol.md` for full specification.
 ### Bridge
 
 USB presentation clicker → OSC bridge. It's a single Tauri app (`apps/bridge/`)
-that speaks OSCPoint's `/oscpoint/...` schema (the desktop app doesn't listen for it);
+that speaks OSCPoint's `/oscpoint/...` schema (the desktop app accepts next and previous);
 the core engine (USB capture, OSC, mDNS discovery, config) lives in-crate under
 `apps/bridge/src-tauri/src/bridge/`.
 

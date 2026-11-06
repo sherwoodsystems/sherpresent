@@ -50,7 +50,7 @@ impl FeedbackDestination {
 // OSC CONFIG
 // =============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OscConfig {
     #[serde(rename = "receivePort")]
     pub receive_port: u16,

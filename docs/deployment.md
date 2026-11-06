@@ -75,9 +75,6 @@ nano ~/.config/systems.sherwood.presenter-bridge/config.json
 sudo systemctl restart sherpresent-bridge
 ```
 
-Or configure remotely from the desktop app's Bridges page, which will connect to the
-bridge's HTTP API on port 8080.
-
 ### Uninstalling
 
 ```bash

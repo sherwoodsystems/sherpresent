@@ -58,8 +58,6 @@ log = "0.4"
 # uuid: Generate unique instance identifiers for channel membership
 uuid = { version = "1", features = ["v4"] }
 
-# reqwest: HTTP client for communicating with bridge REST APIs
-reqwest = { version = "0.12", features = ["json"] }
 
 # env_logger: Simple logger that reads RUST_LOG env var
 #   - Set RUST_LOG=debug for verbose output
@@ -86,7 +84,7 @@ cpal = "0.15"
 rubato = "0.16"
 
 # tokio-tungstenite: WebSocket *client* (axum only provides the server side)
-#   - "native-tls" = reuse the platform TLS stack reqwest already links.
+#   - "native-tls" = use the platform TLS stack.
 #     Deliberately not rustls: that pulls aws-lc-rs, which needs cmake + NASM
 #     on Windows, whereas native-tls uses schannel with no extra build deps.
 #   - Pinned to 0.29 to match the copy axum's `ws` feature already pulls in

@@ -30,80 +30,64 @@
   });
 </script>
 
-<div class="app-selector">
-  <span class="label">Application</span>
-  <div class="toggle-group">
-    {#each visibleAdapters as [id, name] (id)}
-      <button
-        class="toggle-btn"
-        class:active={config.adapter === id}
-        onclick={() => onchange(id as AdapterType)}
-      >
-        {name}
-      </button>
-    {/each}
-  </div>
-  {#if config.adapter === 'libreoffice'}
-    <p class="hint">
-      Enable remote control: Slide Show &gt; Slide Show Settings &gt; Enable remote control. When
-      prompted for a PIN, enter <strong>1234</strong>.
-    </p>
-  {:else if config.adapter === 'canva'}
-    <p class="hint">Start presenting in Canva, then share the remote control link.</p>
-  {/if}
+<div class="toggle-group">
+  {#each visibleAdapters as [id, name] (id)}
+    <button
+      type="button"
+      class="toggle-btn"
+      class:active={config.adapter === id}
+      aria-pressed={config.adapter === id}
+      onclick={() => onchange(id as AdapterType)}
+    >
+      {name}
+    </button>
+  {/each}
 </div>
+{#if config.adapter === 'libreoffice'}
+  <p class="hint tip">
+    Enable remote control: Slide Show &gt; Slide Show Settings &gt; Enable remote control. When
+    prompted for a PIN, enter <strong>1234</strong>.
+  </p>
+{:else if config.adapter === 'canva'}
+  <p class="hint tip">Start presenting in Canva, then share the remote control link.</p>
+{/if}
 
 <style>
-  .app-selector {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .label {
-    font-size: 0.875rem;
-  }
-
+  /* Wide enough for the longest name, so it wraps rather than clips. */
   .toggle-group {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
     gap: 0.5rem;
   }
 
   .toggle-btn {
-    flex: 1;
-    padding: 0.75rem 1rem;
+    height: var(--control-height);
+    padding: 0 0.5rem;
     border: 2px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-control);
     background: var(--input-bg);
+    font: inherit;
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
     color: var(--text);
   }
 
   .toggle-btn:hover {
-    border-color: #aaa;
+    border-color: var(--border-strong);
   }
 
   .toggle-btn.active {
     border-color: var(--accent);
     background: var(--accent);
-    color: white;
+    color: #fff;
   }
 
-  .hint {
-    font-size: 0.75rem;
-    color: #888;
-    margin: 0.5rem 0 0 0;
+  .tip {
+    margin: 0;
     line-height: 1.4;
-  }
-  @media (prefers-color-scheme: dark) {
-    .toggle-btn:hover {
-      border-color: #777;
-    }
-
-    .toggle-btn.active {
-      color: white;
-    }
   }
 </style>

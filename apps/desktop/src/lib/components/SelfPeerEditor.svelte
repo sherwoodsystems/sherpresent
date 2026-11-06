@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import type { DiscoveredPeer } from '../types';
   import { appStore } from '$lib/state.svelte';
 
@@ -43,20 +44,27 @@
     {#if editing}
       <input
         type="text"
-        class="name-input"
+        class="input name-input"
+        aria-label="Name"
         bind:value={nameInput}
         onkeydown={handleKeydown}
         placeholder="Enter name..."
         {@attach (el) => el.focus()}
       />
-      <button class="btn-save" onclick={saveName}>Save</button>
-      <button class="btn-cancel" onclick={cancelEditing}>Cancel</button>
+      <Button variant="primary" size="sm" onclick={saveName}>Save</Button>
+      <Button size="sm" onclick={cancelEditing}>Cancel</Button>
     {:else}
       <span class="self-name">
         {peer.displayName || peer.host}
         <span class="you-badge">(You)</span>
       </span>
-      <button class="btn-edit" onclick={startEditing} title="Rename">
+      <button
+        type="button"
+        class="btn-edit"
+        onclick={startEditing}
+        title="Rename"
+        aria-label="Rename"
+      >
         <svg
           width="14"
           height="14"
@@ -79,9 +87,11 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.625rem 0.75rem;
+    box-sizing: border-box;
+    min-height: var(--control-height);
+    padding: 0.25rem 0.75rem;
     background: var(--info-bg);
-    border-radius: 8px;
+    border-radius: var(--radius-control);
     border: 1px solid var(--info-border);
   }
 
@@ -122,7 +132,7 @@
   .self-address {
     font-size: 0.75rem;
     font-family: monospace;
-    color: var(--text-muted);
+    color: var(--link);
     flex-shrink: 0;
     margin-left: 0.5rem;
   }
@@ -135,89 +145,21 @@
     background: transparent;
     border: none;
     border-radius: 4px;
-    color: #666;
+    color: var(--text-muted);
     cursor: pointer;
     transition: all 0.15s ease;
     flex-shrink: 0;
   }
 
   .btn-edit:hover {
-    background: rgba(0, 0, 0, 0.05);
+    background: var(--hover);
     color: var(--text);
   }
 
   .name-input {
     flex: 1;
     min-width: 100px;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--info-border);
-    border-radius: 4px;
-    background: #fff;
-    outline: none;
-    color: var(--text);
-  }
-
-  .name-input:focus {
-    border-color: var(--link);
-    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
-  }
-
-  .btn-save,
-  .btn-cancel {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    flex-shrink: 0;
-  }
-
-  .btn-save {
-    background: #1a73e8;
-    color: #fff;
-  }
-
-  .btn-save:hover {
-    background: #1557b0;
-  }
-
-  .btn-cancel {
-    background: var(--divider);
-    color: var(--text-secondary);
-  }
-
-  .btn-cancel:hover {
-    background: #d0d0d0;
-  }
-  @media (prefers-color-scheme: dark) {
-    .btn-edit {
-      color: #888;
-    }
-
-    .btn-edit:hover {
-      background: rgba(255, 255, 255, 0.1);
-    }
-
-    .name-input {
-      background: #222;
-    }
-
-    .name-input:focus {
-      box-shadow: 0 0 0 2px rgba(106, 183, 255, 0.2);
-    }
-
-    .btn-save {
-      background: #1a73e8;
-    }
-
-    .btn-save:hover {
-      background: #2a8af8;
-    }
-
-    .btn-cancel:hover {
-      background: #555;
-    }
+    height: var(--control-height-sm);
+    padding: 0 0.5rem;
   }
 </style>

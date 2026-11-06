@@ -39,6 +39,7 @@
 
 use mdns_sd::{IfKind, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::{HashMap, HashSet};
+use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -61,7 +62,7 @@ pub fn get_local_ip() -> Option<String> {
 ///
 /// Read-only: macOS reports `Name.local` while on a network, so the suffix is
 /// dropped for display.
-fn machine_name() -> String {
+pub fn machine_name() -> String {
     let name = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
@@ -84,6 +85,24 @@ fn mdns_host_name(instance_id: &str) -> String {
         .take(8)
         .collect();
     format!("sherpresent-{}.local.", short_id.to_lowercase())
+}
+
+/// The broadcast address of each network this machine is on.
+pub fn get_broadcast_addresses() -> Vec<Ipv4Addr> {
+    match if_addrs::get_if_addrs() {
+        Ok(interfaces) => interfaces
+            .into_iter()
+            .filter(|iface| !iface.is_loopback())
+            .filter_map(|iface| match iface.addr {
+                if_addrs::IfAddr::V4(v4) if !v4.ip.is_link_local() => v4.broadcast,
+                _ => None,
+            })
+            .collect(),
+        Err(e) => {
+            log::warn!("Failed to enumerate network interfaces: {}", e);
+            Vec::new()
+        }
+    }
 }
 
 /// Get all available network interfaces for mDNS.

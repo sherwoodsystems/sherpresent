@@ -37,8 +37,8 @@ Stored in the OS-specific app config directory as `config.json`.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `receivePort` | u16 | 9000 | Port to listen for incoming OSC commands |
-| `feedbackPort` | u16 | 9001 | Legacy single feedback port |
-| `feedbackHost` | string | `"127.0.0.1"` | Legacy single feedback host |
+| `feedbackPort` | u16 | 9001 | Port of an extra feedback destination |
+| `feedbackHost` | string | `"127.0.0.1"` | IP or hostname of an extra feedback destination, for devices that listen without sending |
 | `host` | string | `"0.0.0.0"` | Bind address for receive socket |
 | `feedbackDestinations` | FeedbackDestination[] | `[]` | Additional feedback destinations |
 

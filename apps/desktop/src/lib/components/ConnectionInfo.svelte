@@ -1,10 +1,14 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
+
   interface Props {
     label: string;
     value: string;
+    /** Adds an open button beside Copy */
+    onopen?: () => void;
   }
 
-  let { label, value }: Props = $props();
+  let { label, value, onopen }: Props = $props();
 
   function copy() {
     navigator.clipboard.writeText(value);
@@ -15,61 +19,49 @@
   <span class="connection-label">{label}</span>
   <div class="url-row">
     <code class="connection-address">{value}</code>
-    <button class="copy-btn" onclick={copy}>Copy</button>
+    <div class="actions">
+      <Button size="sm" onclick={copy}>Copy</Button>
+      {#if onopen}
+        <Button size="sm" onclick={onopen}>Open</Button>
+      {/if}
+    </div>
   </div>
 </div>
 
 <style>
   .connection-info {
-    background: var(--info-bg);
-    border: 1px solid var(--info-border);
-    border-radius: 8px;
-    padding: 0.75rem;
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    padding: 0.75rem;
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
+    border-radius: 8px;
   }
 
   .connection-label {
     font-size: 0.75rem;
-    color: var(--link);
     font-weight: 500;
+    color: var(--link);
   }
 
   .url-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: space-between;
     gap: 0.5rem;
   }
 
   .connection-address {
-    font-size: 1.125rem;
+    font-size: 0.95rem;
     font-weight: 600;
     color: var(--info-text);
+    overflow-wrap: anywhere;
   }
 
-  .copy-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.7rem;
-    border: 1px solid #b3d9f7;
-    border-radius: 4px;
-    background: #fff;
-    color: #1a73e8;
-    cursor: pointer;
-  }
-
-  .copy-btn:hover {
-    background: #d0e8fc;
-  }
-  @media (prefers-color-scheme: dark) {
-    .copy-btn {
-      background: #2a5a8c;
-      border-color: #3a6a9c;
-      color: #8fcfff;
-    }
-
-    .copy-btn:hover {
-      background: #3a6a9c;
-    }
+  .actions {
+    display: flex;
+    gap: 0.5rem;
   }
 </style>

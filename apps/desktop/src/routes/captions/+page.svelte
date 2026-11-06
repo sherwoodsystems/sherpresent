@@ -1,4 +1,10 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
+  import Card from '$lib/components/ui/Card.svelte';
+  import Field from '$lib/components/ui/Field.svelte';
+  import Notice from '$lib/components/ui/Notice.svelte';
+  import PageHeader from '$lib/components/ui/PageHeader.svelte';
+  import Stat from '$lib/components/ui/Stat.svelte';
   import { onMount } from 'svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { appStore } from '$lib/state.svelte';
@@ -69,100 +75,89 @@
   async function openOverlay() {
     if (appStore.captionsUrl) await openUrl(appStore.captionsUrl);
   }
+
+  const stateTone = $derived.by(() => {
+    if (engineState === 'running') return 'ok';
+    if (engineState === 'reconnecting' || engineState === 'starting') return 'warn';
+    if (engineState === 'error') return 'bad';
+    return undefined;
+  });
 </script>
 
-<main class="container">
-  <header class="header">
-    <h1>Live Captions</h1>
-  </header>
+<main class="page">
+  <PageHeader title="Live Captions" />
 
-  <section class="section">
+  <Card>
     <div class="control-row">
-      <div class="field grow">
-        <label class="label" for="cap-device">Audio Input</label>
-        <select
-          id="cap-device"
-          class="input"
-          value={captions.inputDevice ?? ''}
-          disabled={appStore.captionsRunning}
-          onchange={(e) => setDevice(e.currentTarget.value)}
-        >
-          <option value="">System default</option>
-          {#each appStore.audioDevices as d (d.name)}
-            <option value={d.name}>
-              {d.name} — {(d.sampleRate / 1000).toFixed(1)} kHz, {d.channels}ch
-            </option>
-          {/each}
-        </select>
+      <div class="grow">
+        <Field label="Audio Input" for="cap-device">
+          <select
+            id="cap-device"
+            class="input"
+            value={captions.inputDevice ?? ''}
+            disabled={appStore.captionsRunning}
+            onchange={(e) => setDevice(e.currentTarget.value)}
+          >
+            <option value="">System default</option>
+            {#each appStore.audioDevices as d (d.name)}
+              <option value={d.name}>
+                {d.name} — {(d.sampleRate / 1000).toFixed(1)} kHz, {d.channels}ch
+              </option>
+            {/each}
+          </select>
+        </Field>
       </div>
 
-      <button
-        class="refresh"
-        onclick={() => appStore.loadAudioDevices()}
-        disabled={appStore.captionsRunning}
-      >
+      <Button onclick={() => appStore.loadAudioDevices()} disabled={appStore.captionsRunning}>
         Rescan
-      </button>
+      </Button>
 
       {#if appStore.captionsRunning}
-        <button class="action stop" onclick={stop} disabled={busy}>Stop</button>
+        <Button variant="danger" onclick={stop} disabled={busy}>Stop</Button>
       {:else}
-        <button class="action start" onclick={start} disabled={busy || !hasKey}>Start</button>
+        <Button variant="success" onclick={start} disabled={busy || !hasKey}>Start</Button>
       {/if}
     </div>
 
     {#if !hasKey}
-      <p class="notice">
+      <Notice>
         No API key for {keyProvider ? API_KEY_LABELS[keyProvider] : ''} — add one in
         <a href="#caption-settings">Caption Settings</a> below first.
-      </p>
+      </Notice>
     {/if}
 
     {#if startError}
-      <p class="notice error">{startError}</p>
+      <Notice tone="error">{startError}</Notice>
     {/if}
     {#if errorMessage}
-      <p class="notice error">{errorMessage}</p>
+      <Notice tone="error">{errorMessage}</Notice>
     {/if}
 
     <div class="stats">
-      <div class="stat">
-        <span class="stat-label">State</span>
-        <span class="stat-value state-{engineState}">{engineState}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Elapsed</span>
-        <span class="stat-value">{elapsedLabel}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Est. Cost</span>
-        <!-- A dollar figure for a local model would be actively misleading. -->
-        <span class="stat-value">{isOnDevice ? 'On-device — free' : `$${estimatedCost}`}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Reconnects</span>
-        <span class="stat-value">{status?.reconnects ?? 0}</span>
-      </div>
+      <Stat label="State" tone={stateTone}><span class="state">{engineState}</span></Stat>
+      <Stat label="Elapsed">{elapsedLabel}</Stat>
+      <!-- A dollar figure for a local model would be actively misleading. -->
+      <Stat label="Est. Cost">{isOnDevice ? 'On-device — free' : `$${estimatedCost}`}</Stat>
+      <Stat label="Reconnects">{status?.reconnects ?? 0}</Stat>
     </div>
-  </section>
+  </Card>
 
   {#if appStore.captionsUrl}
-    <section class="section">
-      <ConnectionInfo label="Overlay available at:" value={appStore.captionsUrl} />
-      <div class="overlay-actions">
-        <button class="secondary" onclick={openOverlay}>Open Overlay</button>
-      </div>
-    </section>
+    <ConnectionInfo
+      label="Overlay available at:"
+      value={appStore.captionsUrl}
+      onopen={openOverlay}
+    />
   {/if}
 
-  <section class="section monitor">
-    <h3 class="section-title">
-      Monitor <span class="lang-tag">
+  <Card title="Monitor">
+    {#snippet aside()}
+      <span class="lang-tag">
         {translates(captions)
           ? captions.targetLanguage
           : `${captions.sourceLanguage} · no translation`}
       </span>
-    </h3>
+    {/snippet}
 
     {#if displayed.length === 0}
       <p class="empty">
@@ -181,52 +176,19 @@
         {/each}
       </ul>
     {/if}
-  </section>
+  </Card>
 
   {#if appStore.configLoaded}
-    <section class="section" id="caption-settings">
+    <div id="caption-settings">
       <CaptionsConfig
         config={appStore.config.captions}
         onchange={(c) => appStore.updateCaptionsConfig(c)}
       />
-    </section>
+    </div>
   {/if}
 </main>
 
 <style>
-  .container {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .header {
-    text-align: center;
-  }
-
-  .header h1 {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #333;
-  }
-
-  .section {
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 1rem;
-    box-shadow: var(--shadow-card);
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  .section-title {
-    color: #333;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
   .lang-tag {
     font-size: 0.7rem;
     font-weight: 500;
@@ -238,136 +200,8 @@
     border-radius: 4px;
   }
 
-  .control-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 0.5rem;
-  }
-
-  .grow {
-    flex: 1;
-    min-width: 0;
-  }
-  .input {
-    border: 2px solid #ddd;
-    background: #fff;
-    width: 100%;
-  }
-
-  .input:disabled {
-    opacity: 0.6;
-  }
-
-  .refresh,
-  .secondary {
-    padding: 0.5rem 0.85rem;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    background: #fff;
-    color: #555;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-
-  .refresh:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .action {
-    padding: 0.5rem 1.25rem;
-    border: none;
-    border-radius: 6px;
-    color: #fff;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .action:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .start {
-    background: #1a9c4a;
-  }
-
-  .stop {
-    background: #d93025;
-  }
-
-  .notice {
-    margin: 0;
-    font-size: 0.8rem;
-    color: #8a6d00;
-    background: #fff8e1;
-    border-radius: 6px;
-    padding: 0.5rem 0.75rem;
-  }
-
-  .notice.error {
-    color: #a3271d;
-    background: #fdecea;
-  }
-
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.5rem;
-  }
-
-  .stat {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    background: #f6f6f6;
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-  }
-
-  .stat-label {
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #888;
-  }
-
-  .stat-value {
-    font-size: 0.95rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    color: #333;
-  }
-
-  .state-running {
-    color: #1a9c4a;
-  }
-
-  .state-reconnecting,
-  .state-starting {
-    color: #b8860b;
-  }
-
-  .state-error {
-    color: #d93025;
-  }
-
-  .overlay-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .monitor {
-    min-height: 12rem;
-  }
-
-  .empty {
-    margin: 0;
-    color: #888;
-    font-style: italic;
-    font-size: 0.875rem;
+  .state {
+    text-transform: capitalize;
   }
 
   .lines {
@@ -386,76 +220,23 @@
     flex-direction: column;
     gap: 0.15rem;
     padding: 0.5rem 0.75rem;
-    background: #f6f6f6;
+    background: var(--subtle);
     border-radius: 8px;
     border-left: 3px solid transparent;
   }
 
   .line.interim {
-    border-left-color: #1a73e8;
+    border-left-color: var(--link);
     opacity: 0.85;
   }
 
   .translated {
     font-size: 0.95rem;
-    color: #222;
+    color: var(--text);
   }
 
   .source {
     font-size: 0.75rem;
-    color: #888;
-  }
-  @media (prefers-color-scheme: dark) {
-    .header h1,
-    .section-title,
-    .stat-value {
-      color: #eee;
-    }
-
-    .empty,
-    .source,
-    .stat-label {
-      color: #777;
-    }
-
-    .input,
-    .refresh,
-    .secondary {
-      background: #333;
-      border-color: #555;
-      color: #eee;
-    }
-
-    .stat,
-    .line {
-      background: #333;
-    }
-
-    .translated {
-      color: #eee;
-    }
-
-    .notice {
-      background: #3a3320;
-      color: #d9a441;
-    }
-
-    .notice.error {
-      background: #3d2320;
-      color: #ef6b5f;
-    }
-
-    .state-running {
-      color: #4ecb71;
-    }
-
-    .state-reconnecting,
-    .state-starting {
-      color: #d9a441;
-    }
-
-    .state-error {
-      color: #ef6b5f;
-    }
+    color: var(--text-muted);
   }
 </style>

@@ -34,7 +34,6 @@
       >Captions</a
     >
     <a href="/qlab" class="nav-link" class:active={page.url.pathname === '/qlab'}>QLab</a>
-    <a href="/bridges" class="nav-link" class:active={page.url.pathname === '/bridges'}>Bridges</a>
     <a href="/settings" class="nav-link" class:active={page.url.pathname === '/settings'}
       >Settings</a
     >
@@ -76,7 +75,7 @@
     text-decoration: none;
     font-size: 0.875rem;
     font-weight: 500;
-    color: #666;
+    color: var(--text-muted);
     border-bottom: 2px solid transparent;
     transition: all 0.15s ease;
   }
@@ -95,7 +94,8 @@
     max-width: 900px;
     margin: 0 auto;
     width: 100%;
-    padding: 1.5rem;
+    /* Room at the bottom so the ? button never sits on the last control. */
+    padding: 1.5rem 1.5rem 4rem;
     box-sizing: border-box;
   }
 
@@ -121,9 +121,9 @@
 
   .help-btn:hover,
   .help-btn.active {
-    background: #f0f0f0;
-    border-color: #ccc;
-    color: #333;
+    background: var(--hover);
+    border-color: var(--border-strong);
+    color: var(--text);
   }
 
   .help-backdrop {
@@ -136,9 +136,9 @@
     bottom: 2.5rem;
     right: 0;
     background: var(--surface);
-    border: 1px solid #ddd;
+    border: 1px solid var(--border-subtle);
     border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-card);
     overflow: hidden;
     min-width: 160px;
   }
@@ -152,7 +152,7 @@
     text-decoration: none;
     border: none;
     background: none;
-    color: #333;
+    color: var(--text);
     cursor: pointer;
     transition: background 0.1s ease;
     font: inherit;
@@ -160,31 +160,6 @@
   }
 
   .help-item:hover {
-    background: #f5f5f5;
-  }
-  @media (prefers-color-scheme: dark) {
-    .nav-link {
-      color: #888;
-    }
-
-    .help-btn:hover,
-    .help-btn.active {
-      background: #444;
-      border-color: #666;
-      color: #eee;
-    }
-
-    .help-popover {
-      border-color: #444;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-
-    .help-item {
-      color: #ccc;
-    }
-
-    .help-item:hover {
-      background: #333;
-    }
+    background: var(--hover);
   }
 </style>

@@ -94,25 +94,33 @@ See the `rpi-osc-bridge/` directory in the parent repository for setup instructi
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18+)
+- [Bun](https://bun.sh/)
 - [Rust](https://rustup.rs/)
 - Platform-specific requirements:
   - **Windows**: Visual Studio C++ Build Tools
   - **macOS**: Xcode Command Line Tools
-  - **Linux**: `libgtk-3-dev`, `libwebkit2gtk-4.0-dev`, `libappindicator3-dev`
+  - **Linux**: `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `libasound2-dev`
 
 ### Running in Development
 
 ```bash
-npm install
-npm run tauri dev
+bun install
+bun tauri dev
+```
+
+On macOS, build the Swift helpers first, or use `macos:dev` to do both. The app won't compile without them:
+
+```bash
+bun run macos:dev
 ```
 
 ### Building for Production
 
 ```bash
-npm run tauri build
+bun tauri build
 ```
+
+On macOS, use `bun run macos:build`, which builds the helpers too.
 
 ## Platform-Specific Notes
 

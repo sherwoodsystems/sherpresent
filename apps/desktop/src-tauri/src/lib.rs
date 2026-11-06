@@ -1,6 +1,5 @@
 mod adapters;
 mod applescript;
-mod bridge;
 mod captions;
 mod commands;
 mod config;
@@ -52,10 +51,6 @@ pub fn run() {
             commands::presentation::start_notes_scan,
             commands::presentation::stop_notes_scan,
             commands::presentation::save_text_file,
-            // OSC Server
-            commands::osc::start_osc_server,
-            commands::osc::stop_osc_server,
-            commands::osc::is_osc_server_running,
             // Canva
             commands::canva::open_canva_remote,
             commands::canva::close_canva_remote,
@@ -68,22 +63,6 @@ pub fn run() {
             commands::discovery::start_discovery,
             commands::discovery::stop_discovery,
             commands::discovery::set_instance_name,
-            // Bridge Remote Config
-            commands::bridge::bridge_get_status,
-            commands::bridge::bridge_get_config,
-            commands::bridge::bridge_save_config,
-            commands::bridge::bridge_get_feedback,
-            commands::bridge::bridge_get_devices,
-            commands::bridge::bridge_get_registered_devices,
-            commands::bridge::bridge_start_registration,
-            commands::bridge::bridge_cancel_registration,
-            commands::bridge::bridge_confirm_registration,
-            commands::bridge::bridge_get_registration_status,
-            commands::bridge::bridge_unregister_device,
-            commands::bridge::bridge_test_device,
-            commands::bridge::bridge_get_logs,
-            commands::bridge::bridge_get_satellite_status,
-            commands::bridge::bridge_shutdown,
             // Web Server
             commands::webserver::start_web_server,
             commands::webserver::is_web_server_running,
@@ -99,6 +78,7 @@ pub fn run() {
             commands::captions::preview_caption_overlay,
             commands::config::get_outputs_status,
             commands::config::get_qlab_state,
+            commands::config::find_qlab_workspaces,
             commands::captions::check_apple_captions_support,
             commands::captions::open_translation_settings,
             // Debug
@@ -179,14 +159,14 @@ pub fn run() {
 
             // Auto-start OSC server
             let app_handle = app.handle().clone();
-            let osc_config = config.osc.clone();
+            let osc_app_config = config.clone();
             tauri::async_runtime::spawn(async move {
                 log::info!(
                     "Auto-starting OSC server on port {}",
-                    osc_config.receive_port
+                    osc_app_config.osc.receive_port
                 );
                 let state = app_handle.state::<AppState>();
-                match state.start_osc_server(osc_config).await {
+                match state.reconcile_osc(&osc_app_config).await {
                     Ok(()) => {
                         let _ = app_handle.emit("osc-server-started", ());
                         log::info!("OSC server auto-started successfully");

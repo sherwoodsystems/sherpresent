@@ -24,6 +24,7 @@
 
 pub mod client;
 mod cues;
+pub mod scan;
 mod slip;
 
 use crate::util::LockExt;

@@ -59,4 +59,4 @@ All components communicate via the OSC protocol. See [spec/osc-protocol.md](../s
 
 ### Operating Modes
 
-- **Direct Mode**: Point-to-point, bridge sends to a single desktop app (ports 9000/9001)
+- **Direct Mode**: Point-to-point, bridge sends to a single desktop app (port 9000)

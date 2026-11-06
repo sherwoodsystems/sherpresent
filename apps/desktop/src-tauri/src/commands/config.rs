@@ -28,6 +28,17 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
 
     // Follow QLab at the configured host (no-op if unchanged).
     state.qlab.reconcile(&config.qlab);
+
+    // Move the OSC server if its settings changed (no-op if unchanged).
+    let osc_app = app.clone();
+    let osc_config = config.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = osc_app.state::<AppState>();
+        if let Err(e) = state.reconcile_osc(&osc_config).await {
+            log::error!("{}", e);
+        }
+    });
+
     state
         .state_manager
         .set_fast_slide_poll(qlab::fires_on_slides(&config.qlab));
@@ -44,6 +55,12 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
 #[tauri::command]
 pub fn get_outputs_status(state: tauri::State<'_, AppState>) -> crate::output::OutputsStatus {
     state.outputs.locked().status()
+}
+
+/// The workspaces open in QLab on this network, for the tab's list.
+#[tauri::command]
+pub async fn find_qlab_workspaces() -> Result<Vec<qlab::scan::FoundWorkspace>, String> {
+    qlab::scan::scan().await
 }
 
 /// The QLab count-out as it stands. Changes are also pushed as `qlab-state`.

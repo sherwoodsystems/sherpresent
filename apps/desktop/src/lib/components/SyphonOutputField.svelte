@@ -1,4 +1,7 @@
 <script lang="ts">
+  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Field from '$lib/components/ui/Field.svelte';
+  import StatusLine from '$lib/components/ui/StatusLine.svelte';
   import type { Snippet } from 'svelte';
   import type { OutputStatus, SyphonOutputConfig } from '../types';
 
@@ -32,23 +35,25 @@
         return 'Stopped';
     }
   });
+
+  const statusTone = $derived.by(() => {
+    if (status?.state === 'error') return 'bad';
+    if (status?.state !== 'running') return 'warn';
+    return status.hasClients ? 'ok' : 'idle';
+  });
 </script>
 
 <div class="config-grid">
-  <div class="field span">
-    <label class="check-row">
-      <input
-        type="checkbox"
-        checked={config.enabled}
-        onchange={(e) => onchange({ ...config, enabled: e.currentTarget.checked })}
-      />
-      <span class="label">{label}</span>
-    </label>
-  </div>
+  <Field span>
+    <Checkbox
+      {label}
+      checked={config.enabled}
+      onchange={(enabled) => onchange({ ...config, enabled })}
+    />
+  </Field>
 
   {#if config.enabled}
-    <div class="field">
-      <label class="label" for="{id}-name">Source Name</label>
+    <Field label="Source Name" for="{id}-name">
       <input
         id="{id}-name"
         class="input"
@@ -56,78 +61,22 @@
         onchange={(e) =>
           onchange({ ...config, serverName: e.currentTarget.value.trim() || defaultName })}
       />
-    </div>
+    </Field>
     {@render children?.()}
     {#if status}
-      <div class="field status-field">
-        <div class="status-row">
-          <span
-            class="status-dot"
-            class:ok={status.state === 'running' && status.hasClients}
-            class:idle={status.state === 'running' && !status.hasClients}
-            class:bad={status.state === 'error'}
-          ></span>
-          <span class="status-text">{summary}</span>
-        </div>
+      <div class="status-field">
+        <StatusLine tone={statusTone}>{summary}</StatusLine>
       </div>
     {/if}
   {/if}
 </div>
 
 <style>
-  .span {
-    grid-column: 1 / -1;
-  }
-
-  .check-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .input {
-    font-family: inherit;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
+  /* Lines up with the input beside it. */
   .status-field {
-    justify-content: flex-end;
-  }
-
-  .status-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.25rem;
-  }
-
-  .status-dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--warning);
-  }
-
-  .status-dot.idle {
-    background: #8e8e93;
-  }
-
-  .status-dot.bad {
-    background: #ff3b30;
-  }
-
-  .status-dot.ok {
-    background: #34c759;
-  }
-
-  .status-text {
-    font-size: 0.75rem;
-    color: #555;
-  }
-  @media (prefers-color-scheme: dark) {
-    .status-text {
-      color: #bbb;
-    }
+    align-self: end;
+    min-height: var(--control-height);
   }
 </style>

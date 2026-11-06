@@ -56,7 +56,7 @@
     font-style: italic;
     margin: 0;
     padding: 0.5rem;
-    background: #f9f9f9;
+    background: var(--subtle);
     border-radius: 6px;
     text-align: center;
   }
@@ -79,6 +79,8 @@
 
   .peer-button,
   .peer-content {
+    box-sizing: border-box;
+    min-height: var(--control-height);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -140,10 +142,6 @@
     color: var(--link);
   }
   @media (prefers-color-scheme: dark) {
-    .no-peers {
-      background: #333;
-    }
-
     .peer-button:hover {
       background: rgba(255, 255, 255, 0.05);
     }

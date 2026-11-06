@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import type { LatencyEvent } from '../types';
 
   interface Props {
@@ -47,7 +48,7 @@
   <div class="header">
     <h3 class="section-title">Command Latency</h3>
     {#if events.length > 0}
-      <button class="clear-btn" onclick={onclear}>Clear</button>
+      <Button size="sm" onclick={onclear}>Clear</Button>
     {/if}
   </div>
 
@@ -105,25 +106,11 @@
     font-size: 1rem;
   }
 
-  .clear-btn {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.75rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    background: var(--input-bg);
-    cursor: pointer;
-    color: var(--text);
-  }
-
-  .clear-btn:hover {
-    background: #f0f0f0;
-  }
-
   .stats-bar {
     display: flex;
     gap: 1rem;
     padding: 0.5rem 0.75rem;
-    background: #f5f5f5;
+    background: var(--subtle);
     border-radius: 6px;
     margin-bottom: 0.75rem;
     font-size: 0.8rem;
@@ -156,14 +143,14 @@
     border-bottom: 2px solid var(--divider);
     font-weight: 600;
     font-size: 0.75rem;
-    color: #666;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
 
   td {
     padding: 0.35rem 0.6rem;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .mono {
@@ -208,26 +195,6 @@
     font-weight: 600;
   }
   @media (prefers-color-scheme: dark) {
-    .clear-btn {
-      border-color: #555;
-    }
-
-    .clear-btn:hover {
-      background: #444;
-    }
-
-    .stats-bar {
-      background: #2a2a2a;
-    }
-
-    th {
-      color: #999;
-    }
-
-    td {
-      border-bottom-color: #333;
-    }
-
     .badge-ui {
       background: #1a3a5c;
       color: #90caf9;

@@ -1,4 +1,9 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
+  import Card from '$lib/components/ui/Card.svelte';
+  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Field from '$lib/components/ui/Field.svelte';
+  import StatusLine from '$lib/components/ui/StatusLine.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { appStore } from '$lib/state.svelte';
   import SyphonOutputField from './SyphonOutputField.svelte';
@@ -198,71 +203,66 @@
   }
 </script>
 
-<div class="captions-config">
-  <h3 class="section-title">Source</h3>
-  <div class="config-grid">
-    <div class="field">
-      <label class="label" for="cap-provider">Provider</label>
-      <select
-        id="cap-provider"
-        class="input"
-        value={config.provider}
-        onchange={(e) => update('provider', e.currentTarget.value as CaptionProviderId)}
-      >
-        {#each providers as p (p.id)}
-          <option value={p.id} disabled={p.id === 'apple' && !!appleDisabledReason}>
-            {p.label}
-          </option>
-        {/each}
-      </select>
-    </div>
+<div class="page">
+  <Card title="Source">
+    <div class="config-grid">
+      <Field label="Provider" for="cap-provider" span>
+        <select
+          id="cap-provider"
+          class="input"
+          value={config.provider}
+          onchange={(e) => update('provider', e.currentTarget.value as CaptionProviderId)}
+        >
+          {#each providers as p (p.id)}
+            <option value={p.id} disabled={p.id === 'apple' && !!appleDisabledReason}>
+              {p.label}
+            </option>
+          {/each}
+        </select>
+      </Field>
 
-    <div class="field">
-      <label class="label" for="cap-source">Spoken Language</label>
-      <select
-        id="cap-source"
-        class="input"
-        value={config.sourceLanguage ?? ''}
-        onchange={(e) => updateSource(e.currentTarget.value)}
-      >
-        {#if config.sourceLanguage === null}
-          <option value="" disabled>Auto-detect</option>
-        {/if}
-        {#each languageOptions(config.sourceLanguage) as l (l.code)}
-          <option value={l.code}>{l.label}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="field">
-      <label class="label" for="cap-target">Captions In</label>
-      <select
-        id="cap-target"
-        class="input"
-        value={translating ? config.targetLanguage : NO_TRANSLATION}
-        onchange={(e) => updateTarget(e.currentTarget.value)}
-      >
-        <option value={NO_TRANSLATION}>Same language (no translation)</option>
-        {#each languageOptions(config.targetLanguage) as l (l.code)}
-          {#if !config.sourceLanguage || !sameLanguage(l.code, config.sourceLanguage)}
-            <option value={l.code}>{l.label}</option>
+      <Field label="Spoken Language" for="cap-source">
+        <select
+          id="cap-source"
+          class="input"
+          value={config.sourceLanguage ?? ''}
+          onchange={(e) => updateSource(e.currentTarget.value)}
+        >
+          {#if config.sourceLanguage === null}
+            <option value="" disabled>Auto-detect</option>
           {/if}
-        {/each}
-      </select>
-    </div>
+          {#each languageOptions(config.sourceLanguage) as l (l.code)}
+            <option value={l.code}>{l.label}</option>
+          {/each}
+        </select>
+      </Field>
 
-    {#if isApple}
-      <div class="field span">
-        {#if probing && !apple}
-          <span class="hint">Checking this Mac…</span>
-        {:else if !apple || !apple.osSupported || !apple.archSupported}
-          <span class="hint warn">
-            {apple?.message ?? appleDisabledReason ?? 'Not available on this machine.'}
-          </span>
-        {:else if config.sourceLanguage}
-          <div class="status-row">
-            <span class="status-dot" class:ok={apple.speechModelInstalled}></span>
-            <span class="status-text">
+      <Field label="Captions In" for="cap-target">
+        <select
+          id="cap-target"
+          class="input"
+          value={translating ? config.targetLanguage : NO_TRANSLATION}
+          onchange={(e) => updateTarget(e.currentTarget.value)}
+        >
+          <option value={NO_TRANSLATION}>Same language (no translation)</option>
+          {#each languageOptions(config.targetLanguage) as l (l.code)}
+            {#if !config.sourceLanguage || !sameLanguage(l.code, config.sourceLanguage)}
+              <option value={l.code}>{l.label}</option>
+            {/if}
+          {/each}
+        </select>
+      </Field>
+
+      {#if isApple}
+        <Field span>
+          {#if probing && !apple}
+            <span class="hint">Checking this Mac…</span>
+          {:else if !apple || !apple.osSupported || !apple.archSupported}
+            <span class="hint warn">
+              {apple?.message ?? appleDisabledReason ?? 'Not available on this machine.'}
+            </span>
+          {:else if config.sourceLanguage}
+            <StatusLine tone={apple.speechModelInstalled ? 'ok' : 'warn'}>
               Speech model:
               {#if !apple.speechLocaleSupported}
                 language not supported
@@ -271,291 +271,197 @@
               {:else}
                 downloads on first start
               {/if}
-            </span>
-          </div>
-          {#if translating}
-            <div class="status-row">
-              <span class="status-dot" class:ok={apple.translationStatus === 'installed'}></span>
-              <span class="status-text">
-                Translation pack:
-                {#if apple.translationStatus === 'installed'}
-                  installed
-                {:else if apple.translationStatus === 'notInstalled'}
-                  not installed
-                {:else}
-                  language pair not supported
+            </StatusLine>
+            {#if translating}
+              <div class="translation-row">
+                <StatusLine tone={apple.translationStatus === 'installed' ? 'ok' : 'warn'}>
+                  Translation pack:
+                  {#if apple.translationStatus === 'installed'}
+                    installed
+                  {:else if apple.translationStatus === 'notInstalled'}
+                    not installed
+                  {:else}
+                    language pair not supported
+                  {/if}
+                </StatusLine>
+                {#if apple.translationStatus === 'notInstalled'}
+                  <Button variant="link" onclick={openTranslationSettings}>Install…</Button>
                 {/if}
-              </span>
-              {#if apple.translationStatus === 'notInstalled'}
-                <button type="button" class="reveal" onclick={openTranslationSettings}>
-                  Install…
-                </button>
-              {/if}
-            </div>
+              </div>
+            {/if}
+            {#if !appleUsable && apple.message}
+              <span class="hint warn">{apple.message}</span>
+            {/if}
           {/if}
-          {#if !appleUsable && apple.message}
-            <span class="hint warn">{apple.message}</span>
-          {/if}
-        {/if}
-      </div>
-    {/if}
+        </Field>
+      {/if}
 
-    {#if keyProvider}
-      <div class="field span">
-        <div class="key-header">
-          <label class="label" for="cap-key">{API_KEY_LABELS[keyProvider]} API Key</label>
-          <button type="button" class="reveal" onclick={() => (showKeys = !showKeys)}>
-            {showKeys ? 'Hide' : 'Show'}
-          </button>
-        </div>
-        <input
-          id="cap-key"
-          type={showKeys ? 'text' : 'password'}
-          class="input mono"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder={keyProvider === 'openai' ? 'sk-…' : 'AIza…'}
-          value={config.apiKeys[keyProvider]}
-          onchange={(e) => updateKey(e.currentTarget.value)}
-        />
-        <span class="hint">Stored unencrypted in config.json</span>
-      </div>
-    {/if}
-  </div>
-
-  <h3 class="section-title">Appearance</h3>
-  <div class="config-grid">
-    {#each overlaySliders as s (s.field)}
-      <div class="field">
-        <div class="slider-header">
-          <label class="label" for="cap-{s.field}">{s.label}</label>
-          <span class="slider-value">{s.format(config[s.field])}</span>
-        </div>
-        <input
-          id="cap-{s.field}"
-          type="range"
-          class="slider"
-          min={s.min}
-          max={s.max}
-          step={s.step}
-          value={config[s.field]}
-          oninput={(e) => live(s.field, e.currentTarget.valueAsNumber)}
-        />
-      </div>
-    {/each}
-
-    {#snippet colourField(field: 'chromaColor' | 'boxColor', label: string, fallback: string)}
-      <div class="field">
-        <label class="label" for="cap-{field}">{label}</label>
-        <div class="colour-row">
+      {#if keyProvider}
+        <Field
+          label="{API_KEY_LABELS[keyProvider]} API Key"
+          for="cap-key"
+          hint="Stored unencrypted in config.json"
+          span
+        >
+          {#snippet aside()}
+            <Button variant="link" onclick={() => (showKeys = !showKeys)}>
+              {showKeys ? 'Hide' : 'Show'}
+            </Button>
+          {/snippet}
           <input
-            id="cap-{field}"
-            type="color"
-            class="swatch"
-            value={config[field].startsWith('#') ? config[field] : fallback}
-            oninput={(e) => live(field, e.currentTarget.value)}
-          />
-          <input
-            type="text"
+            id="cap-key"
+            type={showKeys ? 'text' : 'password'}
             class="input mono"
-            aria-label="{label} hex value"
-            value={config[field]}
-            onchange={(e) => live(field, e.currentTarget.value.trim() || fallback)}
+            autocomplete="off"
+            spellcheck="false"
+            placeholder={keyProvider === 'openai' ? 'sk-…' : 'AIza…'}
+            value={config.apiKeys[keyProvider]}
+            onchange={(e) => updateKey(e.currentTarget.value)}
           />
-        </div>
-      </div>
-    {/snippet}
-
-    {@render colourField('chromaColor', 'Key Colour', '#00B140')}
-    {#if config.background}
-      {@render colourField('boxColor', 'Box Colour', '#000000')}
-    {/if}
-
-    <div class="field span check-group">
-      <label class="check-row">
-        <input
-          type="checkbox"
-          checked={config.shadow}
-          onchange={(e) => live('shadow', e.currentTarget.checked)}
-        />
-        <span class="label">Drop shadow</span>
-      </label>
-      <label class="check-row">
-        <input
-          type="checkbox"
-          checked={config.uppercase}
-          onchange={(e) => live('uppercase', e.currentTarget.checked)}
-        />
-        <span class="label">All caps</span>
-      </label>
-      <label class="check-row">
-        <input
-          type="checkbox"
-          checked={config.background}
-          onchange={(e) => live('background', e.currentTarget.checked)}
-        />
-        <span class="label">Background box</span>
-      </label>
+        </Field>
+      {/if}
     </div>
-  </div>
+  </Card>
+
+  <Card title="Appearance">
+    <div class="config-grid">
+      {#each overlaySliders as s (s.field)}
+        <Field label={s.label} for="cap-{s.field}">
+          {#snippet aside()}
+            <span class="slider-value">{s.format(config[s.field])}</span>
+          {/snippet}
+          <input
+            id="cap-{s.field}"
+            type="range"
+            class="slider"
+            min={s.min}
+            max={s.max}
+            step={s.step}
+            value={config[s.field]}
+            oninput={(e) => live(s.field, e.currentTarget.valueAsNumber)}
+          />
+        </Field>
+      {/each}
+
+      {#snippet colourField(field: 'chromaColor' | 'boxColor', label: string, fallback: string)}
+        <Field {label} for="cap-{field}">
+          <div class="control-row">
+            <input
+              id="cap-{field}"
+              type="color"
+              class="swatch"
+              value={config[field].startsWith('#') ? config[field] : fallback}
+              oninput={(e) => live(field, e.currentTarget.value)}
+            />
+            <input
+              type="text"
+              class="input mono grow"
+              aria-label="{label} hex value"
+              value={config[field]}
+              onchange={(e) => live(field, e.currentTarget.value.trim() || fallback)}
+            />
+          </div>
+        </Field>
+      {/snippet}
+
+      {@render colourField('chromaColor', 'Key Colour', '#00B140')}
+      {#if config.background}
+        {@render colourField('boxColor', 'Box Colour', '#000000')}
+      {/if}
+
+      <div class="check-group">
+        <Checkbox
+          label="Drop shadow"
+          checked={config.shadow}
+          onchange={(checked) => live('shadow', checked)}
+        />
+        <Checkbox
+          label="All caps"
+          checked={config.uppercase}
+          onchange={(checked) => live('uppercase', checked)}
+        />
+        <Checkbox
+          label="Background box"
+          checked={config.background}
+          onchange={(checked) => live('background', checked)}
+        />
+      </div>
+    </div>
+  </Card>
 
   {#if syphonStatus?.supported}
-    <h3 class="section-title">Outputs</h3>
-    {#each syphonOutputs as out (out.key)}
-      {@const cfg = config.outputs[out.key]}
-      <SyphonOutputField
-        id="cap-{out.key}"
-        label={out.label}
-        config={cfg}
-        status={appStore.outputsStatus?.[out.status]}
-        defaultName={defaultConfig.captions.outputs[out.key].serverName}
-        onchange={(syphon) => setOutput(out.key, syphon)}
-      >
-        <div class="field">
-          <label class="label" for="cap-{out.key}-text">Show</label>
-          <select
-            id="cap-{out.key}-text"
-            class="input"
-            value={cfg.text}
-            onchange={(e) => setOutput(out.key, { text: e.currentTarget.value as CaptionText })}
-          >
-            <option value="translated">Translation</option>
-            <option value="source">Original</option>
-            <option value="both">Original + translation</option>
-          </select>
-        </div>
-      </SyphonOutputField>
-    {/each}
+    <Card title="Outputs">
+      {#each syphonOutputs as out (out.key)}
+        {@const cfg = config.outputs[out.key]}
+        <SyphonOutputField
+          id="cap-{out.key}"
+          label={out.label}
+          config={cfg}
+          status={appStore.outputsStatus?.[out.status]}
+          defaultName={defaultConfig.captions.outputs[out.key].serverName}
+          onchange={(syphon) => setOutput(out.key, syphon)}
+        >
+          <Field label="Show" for="cap-{out.key}-text">
+            <select
+              id="cap-{out.key}-text"
+              class="input"
+              value={cfg.text}
+              onchange={(e) => setOutput(out.key, { text: e.currentTarget.value as CaptionText })}
+            >
+              <option value="translated">Translation</option>
+              <option value="source">Original</option>
+              <option value="both">Original + translation</option>
+            </select>
+          </Field>
+        </SyphonOutputField>
+      {/each}
+    </Card>
   {/if}
 </div>
 
 <style>
-  .captions-config {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  .section-title {
-    padding-bottom: 0.25rem;
-  }
-
-  .span {
-    grid-column: 1 / -1;
-  }
-
-  .key-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .reveal {
-    background: none;
-    border: none;
-    padding: 0;
-    font-size: 0.7rem;
-    color: var(--accent);
-    cursor: pointer;
-  }
-
   .hint.warn {
     color: var(--warning);
   }
 
-  .status-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.25rem;
-  }
-
-  .status-dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--warning);
-  }
-
-  .status-dot.ok {
-    background: #34c759;
-  }
-
-  .status-text {
-    font-size: 0.75rem;
-    color: #555;
-  }
-  .input {
-    border: 2px solid #ddd;
-    background: #fff;
-    font-family: inherit;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .mono {
-    font-family: monospace;
-  }
-
-  .colour-row {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-
-  .check-row {
+  .translation-row {
     display: flex;
     align-items: center;
     gap: 0.5rem;
   }
 
   .check-group {
-    flex-direction: row;
+    grid-column: 1 / -1;
+    display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 1.5rem;
-  }
-
-  .slider-header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
   }
 
   .slider-value {
     font-size: 0.75rem;
     font-family: monospace;
     font-variant-numeric: tabular-nums;
-    color: #333;
+    color: var(--text);
   }
 
   .slider {
     width: 100%;
-    accent-color: #007aff;
+    accent-color: var(--accent);
   }
 
   .swatch {
+    flex: none;
+    box-sizing: border-box;
     width: 3rem;
-    height: 2.25rem;
+    height: var(--control-height);
     padding: 2px;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    background: #fff;
-    flex-shrink: 0;
+    border: 2px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--input-bg);
   }
-  @media (prefers-color-scheme: dark) {
-    .status-text {
-      color: #bbb;
-    }
 
-    .slider-value {
-      color: #ddd;
-    }
-
-    .input,
-    .swatch {
-      background: #333;
-      border-color: #555;
-      color: #eee;
-    }
+  .grow {
+    flex: 1;
+    min-width: 0;
   }
 </style>

@@ -1,4 +1,7 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
+  import Field from '$lib/components/ui/Field.svelte';
+  import StatusLine from '$lib/components/ui/StatusLine.svelte';
   import type { AdapterType, AdapterConfig, ConnectionStatus } from '../types';
   import { appStore } from '$lib/state.svelte';
 
@@ -51,145 +54,71 @@
     return '';
   });
 
-  let statusColor = $derived.by(() => {
-    if (connectionStatus === 'Connected') return '#34c759';
-    if (connectionStatus === 'Connecting') return '#ff9500';
-    if (connectionStatus === 'Disconnected') return '#888';
-    return '#ff3b30';
+  let statusTone = $derived.by((): 'ok' | 'warn' | 'idle' | 'bad' => {
+    if (connectionStatus === 'Connected') return 'ok';
+    if (connectionStatus === 'Connecting') return 'warn';
+    if (connectionStatus === 'Disconnected') return 'idle';
+    return 'bad';
   });
 </script>
 
 {#if adapter === 'libreoffice'}
-  <div class="adapter-config">
-    <span class="label">LibreOffice Connection</span>
-    <div class="row">
-      <div class="field">
-        <label class="field-label" for="lo-host">Host</label>
-        <input
-          id="lo-host"
-          type="text"
-          class="input"
-          bind:value={loHost}
-          onblur={updateLibreOffice}
-          placeholder="127.0.0.1"
-        />
-      </div>
-      <div class="field field-small">
-        <label class="field-label" for="lo-port">Port</label>
-        <input
-          id="lo-port"
-          type="number"
-          class="input"
-          bind:value={loPort}
-          onblur={updateLibreOffice}
-          min="1"
-          max="65535"
-        />
-      </div>
-    </div>
-    <p class="hint">
-      Default: 127.0.0.1:1599. Change host to connect to a remote LibreOffice instance.
-    </p>
-  </div>
-{:else if adapter === 'canva'}
-  <div class="adapter-config">
-    <label class="label" for="canva-url">Canva Remote Control</label>
-    <div class="row">
+  <div class="config-grid">
+    <Field label="Host" for="lo-host">
       <input
-        id="canva-url"
+        id="lo-host"
         type="text"
-        class="input"
-        bind:value={canvaUrl}
-        placeholder="Paste Canva remote control URL..."
-        style="flex: 1"
+        class="input mono"
+        bind:value={loHost}
+        onblur={updateLibreOffice}
+        placeholder="127.0.0.1"
       />
-    </div>
-    <div class="row" style="gap: 0.5rem; align-items: center;">
-      {#if connectionStatus === 'Connected'}
-        <button class="btn btn-disconnect" onclick={disconnectCanva}>Disconnect</button>
-      {:else}
-        <button class="btn btn-connect" onclick={connectCanva} disabled={!canvaUrl.trim()}
-          >Connect</button
-        >
-      {/if}
-      <span class="status" style="color: {statusColor}">{statusText}</span>
-    </div>
-    <p class="hint">
-      In Canva, start presenting, then share the remote control link and paste it here.
-    </p>
+    </Field>
+    <Field label="Port" for="lo-port">
+      <input
+        id="lo-port"
+        type="number"
+        class="input mono"
+        bind:value={loPort}
+        onblur={updateLibreOffice}
+        min="1"
+        max="65535"
+      />
+    </Field>
   </div>
+  <p class="hint tip">
+    Default: 127.0.0.1:1599. Change host to connect to a remote LibreOffice instance.
+  </p>
+{:else if adapter === 'canva'}
+  <input
+    type="text"
+    class="input"
+    aria-label="Canva remote control URL"
+    bind:value={canvaUrl}
+    placeholder="Paste Canva remote control URL..."
+  />
+  <div class="connect-row">
+    {#if connectionStatus === 'Connected'}
+      <Button variant="danger" onclick={disconnectCanva}>Disconnect</Button>
+    {:else}
+      <Button variant="primary" onclick={connectCanva} disabled={!canvaUrl.trim()}>Connect</Button>
+    {/if}
+    <StatusLine tone={statusTone}>{statusText}</StatusLine>
+  </div>
+  <p class="hint tip">
+    In Canva, start presenting, then share the remote control link and paste it here.
+  </p>
 {/if}
 
 <style>
-  .adapter-config {
+  .connect-row {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .label {
-    font-size: 0.875rem;
-  }
-
-  .row {
-    display: flex;
+    align-items: center;
     gap: 0.75rem;
   }
-  .field {
-    flex: 1;
-  }
 
-  .field-small {
-    flex: 0 0 80px;
-  }
-
-  .field-label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-  .input {
-    padding: 0.5rem;
-    border: 1px solid var(--border);
-  }
-
-  .btn {
-    padding: 0.5rem 1rem;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: opacity 0.2s;
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-connect {
-    background: var(--accent);
-    color: white;
-  }
-
-  .btn-disconnect {
-    background: #ff3b30;
-    color: white;
-  }
-
-  .status {
-    font-size: 0.8rem;
-    font-weight: 500;
-  }
-
-  .hint {
-    font-size: 0.75rem;
-    color: #888;
-    margin: 0.25rem 0 0 0;
+  .tip {
+    margin: 0;
     line-height: 1.4;
-  }
-  @media (prefers-color-scheme: dark) {
-    .btn-disconnect {
-      background: #ff453a;
-    }
   }
 </style>

@@ -28,6 +28,12 @@ Specialized knowledge areas for this codebase.
 - `lib/components/` - UI components
 - `lib/types.ts` - TypeScript interfaces
 
+**Shared UI**: `lib/components/ui/` holds `Button`, `Card`, `Field`, `Checkbox`,
+`StatusLine`, `Notice`, `Stat` and `PageHeader`; `app.css` holds the tokens and
+the `.input` style. Inputs and buttons share `--control-height`, so anything side
+by side lines up. Use these and `var(--token)` colours rather than scoped copies
+or `prefers-color-scheme` blocks.
+
 **Tauri calls**:
 ```typescript
 import { invoke } from '@tauri-apps/api/core';
@@ -191,6 +197,11 @@ with many active cues.
   Logs at `info` why each cue does or doesn't count; `trace` for every reply:
   `RUST_LOG=info,sherpresent_lib::qlab=trace bun tauri dev`.
 - `slip.rs` - SLIP framing.
+- `scan.rs` - the tab's live list of open workspaces: broadcasts `/workspaces`
+  over UDP to port 53000 (QLab answers it without a passcode) and collects
+  replies on 53001, which is where QLab sends them regardless of the source
+  port. The tab calls it every 2.5 s while open; the port is held only during
+  a scan. Doesn't cross VLANs: type the host there.
 - `mod.rs` - `QLabState` and the `QLab` hub in `AppState`: reconciled on
   startup and every save (restart on host/port/passcode/workspace; hidden cues
   apply live), pushed as `qlab-state`.

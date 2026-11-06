@@ -2,7 +2,7 @@ use crate::adapters::canva::CanvaAdapter;
 use crate::adapters::powerpoint_events::PowerPointEvents;
 use crate::adapters::LiveStatus;
 use crate::captions::{CaptionEngine, CaptionSinks};
-use crate::config::{CaptionsConfig, OscConfig, WebServerConfig};
+use crate::config::{AppConfig, CaptionsConfig, OscConfig, WebServerConfig};
 use crate::osc::state_manager::StateSinks;
 use crate::osc::{LatencyStore, OscServer, OscServerHandle, ScrollDirection, StateManager};
 use crate::output::feed::NotesSources;
@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex};
 /// - `Mutex` for exclusive access to mutable data
 /// - `Arc` for shared ownership across tasks
 pub struct AppState {
-    /// Handle to the running OSC server (if any)
-    pub osc_server: Mutex<Option<OscServerHandle>>,
+    /// The running OSC server (if any). An async lock: reconciling holds it
+    /// while the old server stops, so overlapping saves can't race for the port.
+    pub osc_server: tokio::sync::Mutex<Option<RunningOsc>>,
 
     /// Owner of presentation state and the only poller. Every control surface
     /// (UI, OSC, web) sends commands through it.
@@ -77,6 +78,13 @@ pub struct AppState {
     pub powerpoint_events: Arc<PowerPointEvents>,
 }
 
+/// The OSC server and what it was started with.
+pub struct RunningOsc {
+    config: OscConfig,
+    name: String,
+    handle: OscServerHandle,
+}
+
 impl AppState {
     /// Start the caption engine. Shared by the Start button and auto-start.
     pub fn start_captions(
@@ -108,17 +116,36 @@ impl AppState {
         Ok(())
     }
 
-    /// Start the OSC server. Shared by the Start button and auto-start.
-    pub async fn start_osc_server(&self, config: OscConfig) -> Result<(), String> {
-        if self.osc_server.locked().is_some() {
-            return Err("OSC server is already running".to_string());
+    /// Run the OSC server as configured, restarting it only if its settings
+    /// changed. Called on startup and on every config save.
+    pub async fn reconcile_osc(&self, config: &AppConfig) -> Result<(), String> {
+        let name = config
+            .discovery
+            .display_name
+            .clone()
+            .unwrap_or_else(sherpresent_core::machine_name);
+
+        let mut slot = self.osc_server.lock().await;
+        if let Some(running) = slot.as_ref() {
+            if running.config == config.osc && running.name == name {
+                return Ok(());
+            }
         }
-        let handle = OscServer::new(config, self.state_manager.clone())
+        if let Some(running) = slot.take() {
+            running.handle.stop().await;
+        }
+
+        let handle = OscServer::new(config.osc.clone(), self.state_manager.clone())
             .with_scroll_broadcast(self.scroll_broadcast.clone())
+            .with_name(name.clone())
             .start()
             .await
             .map_err(|e| format!("Failed to start OSC server: {}", e))?;
-        *self.osc_server.locked() = Some(handle);
+        *slot = Some(RunningOsc {
+            config: config.osc.clone(),
+            name,
+            handle,
+        });
         Ok(())
     }
 
@@ -143,7 +170,7 @@ impl Default for AppState {
     fn default() -> Self {
         let sinks = StateSinks::default();
         Self {
-            osc_server: Mutex::new(None),
+            osc_server: tokio::sync::Mutex::new(None),
             state_manager: Arc::new(StateManager::new(sinks.clone())),
             discovery_service: Mutex::new(None),
             canva_adapter: sinks.canva_adapter,
@@ -160,5 +187,56 @@ impl Default for AppState {
             qlab: QLab::default(),
             powerpoint_events: Arc::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rosc::{encoder, OscMessage, OscPacket};
+    use std::time::Duration;
+    use tokio::net::UdpSocket;
+
+    async fn free_port() -> u16 {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.local_addr().unwrap().port()
+    }
+
+    /// Whether an OSC server answers `/clicker/status` on this port.
+    async fn answers(port: u16) -> bool {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.connect(("127.0.0.1", port)).await.unwrap();
+        let packet = OscPacket::Message(OscMessage {
+            addr: "/clicker/status".to_string(),
+            args: vec![],
+        });
+        let _ = socket.send(&encoder::encode(&packet).unwrap()).await;
+        let mut buf = [0u8; 256];
+        matches!(
+            tokio::time::timeout(Duration::from_millis(500), socket.recv(&mut buf)).await,
+            Ok(Ok(_))
+        )
+    }
+
+    #[tokio::test]
+    async fn changing_the_osc_port_moves_the_server_without_a_restart() {
+        let state = AppState::default();
+        let mut config = AppConfig::default();
+        config.osc.host = "127.0.0.1".to_string();
+
+        let first = free_port().await;
+        config.osc.receive_port = first;
+        state.reconcile_osc(&config).await.unwrap();
+        assert!(answers(first).await);
+
+        // An unrelated save leaves it running.
+        state.reconcile_osc(&config).await.unwrap();
+        assert!(answers(first).await);
+
+        let second = free_port().await;
+        config.osc.receive_port = second;
+        state.reconcile_osc(&config).await.unwrap();
+        assert!(answers(second).await);
+        assert!(!answers(first).await);
     }
 }

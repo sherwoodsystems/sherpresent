@@ -13,5 +13,6 @@
 pub mod mdns_service;
 
 pub use mdns_service::{
-    get_local_ip, get_network_interfaces, DiscoveredPeer, DiscoveryService, NetworkInterface,
+    get_broadcast_addresses, get_local_ip, get_network_interfaces, machine_name, DiscoveredPeer,
+    DiscoveryService, NetworkInterface,
 };

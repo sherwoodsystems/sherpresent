@@ -1,15 +1,60 @@
 <script lang="ts">
+  import Card from '$lib/components/ui/Card.svelte';
+  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Field from '$lib/components/ui/Field.svelte';
+  import Notice from '$lib/components/ui/Notice.svelte';
+  import PageHeader from '$lib/components/ui/PageHeader.svelte';
+  import StatusLine from '$lib/components/ui/StatusLine.svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { appStore } from '$lib/state.svelte';
   import ConnectionInfo from '$lib/components/ConnectionInfo.svelte';
   import SyphonOutputField from '$lib/components/SyphonOutputField.svelte';
-  import { formatCueList, formatTime, parseCueList, remainingPercent } from '$lib/qlab';
-  import type { QLabConfig } from '$lib/types';
+  import { formatCueList, formatTime, listFound, parseCueList, remainingPercent } from '$lib/qlab';
+  import type { FoundQLabWorkspace, QLabConfig } from '$lib/types';
 
   const config = $derived(appStore.config.qlab);
   const live = $derived(appStore.qlabState);
   const syphonStatus = $derived(appStore.outputsStatus?.qlab);
   const pageUrl = $derived(appStore.webServerUrl ? `${appStore.webServerUrl}/qlab` : '');
+
+  const SCAN_EVERY_MS = 2500;
+  let lastScan = $state<FoundQLabWorkspace[]>([]);
+  let found = $state<FoundQLabWorkspace[]>([]);
+  let scanError = $state<string | null>(null);
+
+  // Scans only while this tab is open.
+  $effect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function scan() {
+      try {
+        const latest = await invoke<FoundQLabWorkspace[]>('find_qlab_workspaces');
+        if (stopped) return;
+        found = listFound(lastScan, latest);
+        lastScan = latest;
+        scanError = null;
+      } catch (e) {
+        if (stopped) return;
+        scanError = String(e);
+      }
+      timer = setTimeout(scan, SCAN_EVERY_MS);
+    }
+    scan();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  });
+
+  function isSelected(w: FoundQLabWorkspace) {
+    return config.host === w.host && config.workspace === w.name;
+  }
+
+  const connectionTone = $derived.by(() => {
+    if (!config.host.trim()) return 'idle';
+    return live?.connected ? 'ok' : 'bad';
+  });
 
   const statusText = $derived.by(() => {
     if (!config.host.trim()) return 'Not configured — enter the QLab machine’s IP';
@@ -42,20 +87,41 @@
   );
 </script>
 
-<main class="container">
-  <header class="header">
-    <h1>QLab Count-out</h1>
-    <p class="subtitle">
-      Time left on running video and audio cues. Looping cues are ignored, so backgrounds don't hide
-      the real count.
-    </p>
-  </header>
+<main class="page">
+  <PageHeader
+    title="QLab Count-out"
+    subtitle="Time left on running video and audio cues. Looping cues are ignored, so backgrounds don't hide the real count."
+  />
 
-  <section class="section">
-    <h3 class="section-title">Connection</h3>
+  <Card title="Connection">
+    <Field label="Open on this network">
+      <div class="found">
+        {#each found as w (`${w.host} ${w.id}`)}
+          <button
+            type="button"
+            class="found-row"
+            class:selected={isSelected(w)}
+            aria-pressed={isSelected(w)}
+            onclick={() => update({ host: w.host, workspace: w.name })}
+          >
+            <span class="found-name">{isSelected(w) ? '✓ ' : ''}{w.name}</span>
+            <span class="found-where">
+              {w.host === '127.0.0.1' ? 'This computer' : w.host} · QLab {w.version}
+            </span>
+          </button>
+        {:else}
+          <span class="hint">
+            {scanError ?? 'Looking for QLab… On another VLAN or subnet, enter its IP below.'}
+          </span>
+        {/each}
+      </div>
+    </Field>
     <div class="config-grid">
-      <div class="field">
-        <label class="label" for="qlab-host">QLab Host</label>
+      <Field
+        label="QLab Host"
+        for="qlab-host"
+        hint="IP of the Mac running QLab; leave empty to turn off"
+      >
         <input
           id="qlab-host"
           class="input mono"
@@ -63,10 +129,8 @@
           placeholder="e.g. 192.168.1.20"
           onchange={(e) => update({ host: e.currentTarget.value.trim() })}
         />
-        <span class="hint">IP of the Mac running QLab; leave empty to turn off</span>
-      </div>
-      <div class="field">
-        <label class="label" for="qlab-port">OSC Port</label>
+      </Field>
+      <Field label="OSC Port" for="qlab-port" hint="TCP; QLab's default is 53000">
         <input
           id="qlab-port"
           type="number"
@@ -76,10 +140,12 @@
           max="65535"
           onchange={(e) => update({ port: parseInt(e.currentTarget.value) || 53000 })}
         />
-        <span class="hint">TCP; QLab's default is 53000</span>
-      </div>
-      <div class="field">
-        <label class="label" for="qlab-passcode">OSC Passcode</label>
+      </Field>
+      <Field
+        label="OSC Passcode"
+        for="qlab-passcode"
+        hint="Workspace Settings → Network → passcode, if set"
+      >
         <input
           id="qlab-passcode"
           type="password"
@@ -89,10 +155,8 @@
           autocomplete="off"
           onchange={(e) => update({ passcode: e.currentTarget.value })}
         />
-        <span class="hint">Workspace Settings → Network → passcode, if set</span>
-      </div>
-      <div class="field">
-        <label class="label" for="qlab-workspace">Workspace</label>
+      </Field>
+      <Field label="Workspace" for="qlab-workspace">
         <select
           id="qlab-workspace"
           class="input"
@@ -104,9 +168,13 @@
             <option value={name}>{name}</option>
           {/each}
         </select>
-      </div>
-      <div class="field span">
-        <label class="label" for="qlab-hidden">Hide Cues</label>
+      </Field>
+      <Field
+        label="Hide Cues"
+        for="qlab-hidden"
+        hint="Cue numbers never counted out, separated by commas or spaces"
+        span
+      >
         <input
           id="qlab-hidden"
           class="input mono"
@@ -114,33 +182,19 @@
           placeholder="e.g. 12, 14, 3.5"
           onchange={(e) => update({ hiddenCues: parseCueList(e.currentTarget.value) })}
         />
-        <span class="hint">Cue numbers never counted out, separated by commas or spaces</span>
-      </div>
+      </Field>
     </div>
 
-    <div class="status-row">
-      <span
-        class="status-dot"
-        class:ok={live?.connected}
-        class:idle={!config.host.trim()}
-        class:bad={!!config.host.trim() && !live?.connected}
-      ></span>
-      <span class="status-text">{statusText}</span>
-    </div>
-  </section>
+    <StatusLine tone={connectionTone}>{statusText}</StatusLine>
+  </Card>
 
-  <section class="section">
-    <h3 class="section-title">On Slide Change</h3>
-    <label class="check-row">
-      <input
-        type="checkbox"
-        checked={config.slideGo}
-        onchange={(e) => update({ slideGo: e.currentTarget.checked })}
-      />
-      <span class="label">Start the matching cue in QLab</span>
-    </label>
-    <div class="field">
-      <label class="label" for="qlab-cue-prefix">Cue Number Prefix</label>
+  <Card title="On Slide Change">
+    <Checkbox
+      label="Start the matching cue in QLab"
+      checked={config.slideGo}
+      onchange={(slideGo) => update({ slideGo })}
+    />
+    <Field label="Cue Number Prefix" for="qlab-cue-prefix">
       <input
         id="qlab-cue-prefix"
         class="input mono prefix"
@@ -159,9 +213,8 @@
         the cue for wherever it lands. Fired the moment the slide changes during a show, not when it
         starts or ends. A step with no matching cue does nothing.
       </span>
-    </div>
-    <div class="field">
-      <label class="label" for="qlab-slide-command">Also Send (optional)</label>
+    </Field>
+    <Field label="Also Send (optional)" for="qlab-slide-command">
       <textarea
         id="qlab-slide-command"
         class="input mono"
@@ -174,24 +227,20 @@
         One OSC message per line, arguments after a space (quote one to send it as text);
         <code>{'{slide}'}</code> becomes the slide number. Sent on slide changes, not builds.
       </span>
-    </div>
+    </Field>
     <span class="hint">
       Sent to the workspace above over its connection, so its passcode needs control access.
     </span>
     {#if live?.slideTrigger}
       {@const t = live.slideTrigger}
-      <div class="status-row">
-        <span class="status-dot" class:ok={!t.error} class:bad={!!t.error}></span>
-        <span class="status-text mono">
-          Slide {t.step}: {t.error ?? t.sent.join(', ')}
-        </span>
-      </div>
+      <StatusLine tone={t.error ? 'bad' : 'ok'} mono>
+        Slide {t.step}: {t.error ?? t.sent.join(', ')}
+      </StatusLine>
     {/if}
-  </section>
+  </Card>
 
   {#if live?.connected}
-    <section class="section">
-      <h3 class="section-title">Live</h3>
+    <Card title="Live">
       {#if counts.length === 0}
         <p class="empty">Nothing playing</p>
         <div class="next">
@@ -220,22 +269,22 @@
           </div>
         {/each}
       {/if}
-    </section>
+    </Card>
   {/if}
 
-  <section class="section">
-    <h3 class="section-title">Outputs</h3>
+  <Card title="Outputs">
     {#if pageUrl}
-      <ConnectionInfo label="Count-out page available at:" value={pageUrl} />
-      <div>
-        <button class="secondary" onclick={() => openUrl(pageUrl)}>Open Count-out Page</button>
-      </div>
+      <ConnectionInfo
+        label="Count-out page available at:"
+        value={pageUrl}
+        onopen={() => openUrl(pageUrl)}
+      />
     {:else}
-      <p class="notice">
+      <Notice>
         The web server isn't running, so the count-out page isn't available. Port
         {appStore.config.webServer.port} may be in use by another app — change it under Settings → Stage
         View Server and restart SherPresent.
-      </p>
+      </Notice>
     {/if}
     {#if syphonStatus?.supported && appStore.configLoaded}
       <SyphonOutputField
@@ -248,126 +297,53 @@
       />
       <span class="hint">The same picture as the page, as a 1920×1080 source</span>
     {/if}
-  </section>
+  </Card>
 </main>
 
 <style>
-  .container {
+  .found {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.35rem;
   }
 
-  .header {
-    text-align: center;
-  }
-
-  .header h1 {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 700;
-  }
-
-  .subtitle {
-    margin: 0.25rem 0 0;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-
-  .section {
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 1rem;
-    box-shadow: var(--shadow-card);
+  .found-row {
     display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 0.75rem;
+    padding: 0.5rem 0.75rem;
+    font: inherit;
+    font-size: 0.875rem;
+    text-align: left;
+    color: var(--info-text);
+    background: var(--info-bg);
+    border: 2px solid var(--info-border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
   }
 
-  .input {
-    width: 100%;
-    box-sizing: border-box;
+  .found-row:hover,
+  .found-row:focus-visible,
+  .found-row.selected {
+    border-color: var(--accent);
+    outline: none;
   }
 
-  .mono {
-    font-family: monospace;
+  .found-name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
   }
 
-  textarea.input {
-    resize: vertical;
+  .found-where {
+    font-size: 0.75rem;
+    opacity: 0.8;
   }
 
   .prefix {
     max-width: 8rem;
-  }
-
-  .check-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-  }
-
-  .span {
-    grid-column: 1 / -1;
-  }
-
-  .status-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .status-dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--warning);
-  }
-
-  .status-dot.ok {
-    background: #34c759;
-  }
-
-  .status-dot.idle {
-    background: #8e8e93;
-  }
-
-  .status-dot.bad {
-    background: #ff3b30;
-  }
-
-  .status-text {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-  }
-
-  .secondary {
-    padding: 0.5rem 0.85rem;
-    border: 2px solid var(--border);
-    border-radius: 6px;
-    background: var(--input-bg);
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-
-  .notice {
-    margin: 0;
-    font-size: 0.8rem;
-    color: #8a6d00;
-    background: #fff8e1;
-    border-radius: 6px;
-    padding: 0.5rem 0.75rem;
-  }
-
-  .empty {
-    margin: 0;
-    text-align: center;
-    font-style: italic;
-    color: var(--text-muted);
   }
 
   .next {

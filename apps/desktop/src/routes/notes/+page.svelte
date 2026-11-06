@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
+  import PageHeader from '$lib/components/ui/PageHeader.svelte';
   import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { openUrl } from '@tauri-apps/plugin-opener';
@@ -83,177 +85,87 @@
   });
 </script>
 
-<main class="container" bind:this={scrollContainer}>
-  <header class="header">
-    <div class="header-row">
-      <div class="header-title">
-        <h1>Notes Outline</h1>
-        {#if totalSlides > 0}
-          <p class="subtitle">{notesCount} of {totalSlides} slides have notes</p>
-        {:else}
-          <p class="subtitle">No presentation active</p>
-        {/if}
+<main class="notes-page" bind:this={scrollContainer}>
+  <PageHeader
+    title="Notes Outline"
+    subtitle={totalSlides > 0
+      ? `${notesCount} of ${totalSlides} slides have notes`
+      : 'No presentation active'}
+  >
+    {#snippet actions()}
+      {#if notesCount > 0}
+        <Button onclick={exportMarkdown} title="Export notes as Markdown">Export</Button>
+      {/if}
+      {#if notesViewUrl}
+        <Button onclick={openNotesView} title="Open notes webview">{notesViewUrl} ↗</Button>
+      {/if}
+      {#if isScanning}
+        <Button variant="danger" onclick={() => appStore.stopNotesScan()}>Cancel</Button>
+      {:else if needsScan}
+        <Button variant="primary" onclick={() => appStore.startNotesScan()}>Scan All Slides</Button>
+      {:else}
+        <Button onclick={() => appStore.fetchAllNotes()}>Refresh</Button>
+      {/if}
+    {/snippet}
+  </PageHeader>
+
+  {#if scanProgress}
+    <div class="scan-progress">
+      <div class="progress-bar">
+        <div
+          class="progress-fill"
+          style="width: {scanProgress.total > 0
+            ? (scanProgress.current / scanProgress.total) * 100
+            : 0}%"
+        ></div>
       </div>
-      <div class="header-actions">
-        {#if notesCount > 0}
-          <button class="refresh-btn" onclick={exportMarkdown} title="Export notes as Markdown">
-            Export
-          </button>
+      <span class="hint">
+        {#if scanProgress.status === 'scanning'}
+          Scanning slide {scanProgress.current} of {scanProgress.total}...
+        {:else if scanProgress.status === 'complete'}
+          Scan complete
+        {:else if scanProgress.status === 'cancelled'}
+          Scan cancelled
         {/if}
-        {#if notesViewUrl}
-          <button class="refresh-btn" onclick={openNotesView} title="Open notes webview">
-            {notesViewUrl} ↗
-          </button>
-        {/if}
-        {#if isScanning}
-          <button class="cancel-btn" onclick={() => appStore.stopNotesScan()}>Cancel</button>
-        {:else if needsScan}
-          <button class="scan-btn" onclick={() => appStore.startNotesScan()}>Scan All Slides</button
-          >
-        {:else}
-          <button class="refresh-btn" onclick={() => appStore.fetchAllNotes()}>Refresh</button>
-        {/if}
-      </div>
+      </span>
     </div>
-    {#if scanProgress}
-      <div class="scan-progress">
-        <div class="progress-bar">
-          <div
-            class="progress-fill"
-            style="width: {scanProgress.total > 0
-              ? (scanProgress.current / scanProgress.total) * 100
-              : 0}%"
-          ></div>
-        </div>
-        <span class="progress-text">
-          {#if scanProgress.status === 'scanning'}
-            Scanning slide {scanProgress.current} of {scanProgress.total}...
-          {:else if scanProgress.status === 'complete'}
-            Scan complete
-          {:else if scanProgress.status === 'cancelled'}
-            Scan cancelled
-          {/if}
-        </span>
-      </div>
-    {/if}
-  </header>
+  {/if}
 
   {#if totalSlides === 0}
     <p class="empty">Select a presentation and start presenting to see notes.</p>
   {:else}
-    {#each slides as slide (slide.number)}
-      <button
-        class="slide-row"
-        class:current={slide.number === currentSlide}
-        data-slide={slide.number}
-        disabled={!appStore.supportsGoto}
-        onclick={() => appStore.gotoSlide(slide.number)}
-      >
-        <span class="slide-number">{slide.number}</span>
-        <span class="slide-notes" class:empty-notes={!slide.notes}>
-          {slide.notes ?? 'No notes'}
-        </span>
-      </button>
-    {/each}
+    <div class="slides">
+      {#each slides as slide (slide.number)}
+        <button
+          type="button"
+          class="slide-row"
+          class:current={slide.number === currentSlide}
+          data-slide={slide.number}
+          disabled={!appStore.supportsGoto}
+          onclick={() => appStore.gotoSlide(slide.number)}
+        >
+          <span class="slide-number">{slide.number}</span>
+          <span class="slide-notes" class:empty-notes={!slide.notes}>
+            {slide.notes ?? 'No notes'}
+          </span>
+        </button>
+      {/each}
+    </div>
   {/if}
 </main>
 
 <style>
-  .container {
+  .notes-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     overflow-y: auto;
     max-height: calc(100vh - 50px);
   }
 
-  .header {
-    margin-bottom: 1rem;
-  }
-
-  .header-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  .header-title {
-    flex-shrink: 0;
-  }
-
-  .header h1 {
-    margin: 0;
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .subtitle {
-    margin: 0.25rem 0 0;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-
-  .refresh-btn {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--input-bg);
-    color: #555;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .refresh-btn:hover {
-    background: #f5f5f5;
-    border-color: var(--border-strong);
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-shrink: 0;
-  }
-
-  .scan-btn {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
-    border: 1px solid #1a73e8;
-    border-radius: 6px;
-    background: #1a73e8;
-    color: #fff;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .scan-btn:hover {
-    background: #1557b0;
-    border-color: #1557b0;
-  }
-
-  .cancel-btn {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
-    border: 1px solid #d93025;
-    border-radius: 6px;
-    background: #d93025;
-    color: #fff;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .cancel-btn:hover {
-    background: #b3261e;
-    border-color: #b3261e;
-  }
-
-  .scan-progress {
-    margin-top: 0.75rem;
-  }
-
   .progress-bar {
     height: 4px;
-    background: #e8e8e8;
+    background: var(--border-subtle);
     border-radius: 2px;
     overflow: hidden;
   }
@@ -265,18 +177,10 @@
     transition: width 0.3s ease;
   }
 
-  .progress-text {
-    display: block;
-    margin-top: 0.25rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-
-  .empty {
-    text-align: center;
-    color: var(--text-muted);
-    font-style: italic;
-    padding: 2rem 0;
+  .slides {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
   .slide-row {
@@ -286,87 +190,51 @@
     width: 100%;
     text-align: left;
     padding: 0.75rem 1rem;
-    margin-bottom: 0.5rem;
+    color: inherit;
     background: var(--surface);
-    border: 1px solid #e8e8e8;
+    border: 1px solid var(--border-subtle);
     border-radius: 8px;
     border-left: 3px solid transparent;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
     font: inherit;
   }
 
   .slide-row:hover:not(:disabled) {
-    background: #f8f9fa;
+    background: var(--hover);
     border-color: var(--border);
     border-left-color: var(--border-strong);
   }
 
   .slide-row:disabled {
     cursor: default;
-    color: inherit;
   }
 
   .slide-row.current {
     border-left-color: var(--link);
-    background: #f0f6ff;
+    background: var(--info-bg);
   }
 
   .slide-number {
     font-weight: 700;
     font-size: 0.9rem;
-    color: #555;
+    color: var(--text-secondary);
     min-width: 2rem;
     flex-shrink: 0;
   }
 
   .slide-notes {
     font-size: 0.85rem;
-    color: #333;
+    color: var(--text);
     line-height: 1.4;
     white-space: pre-wrap;
     word-break: break-word;
   }
 
   .empty-notes {
-    color: #bbb;
+    color: var(--text-faint);
     font-style: italic;
-  }
-  @media (prefers-color-scheme: dark) {
-    .refresh-btn {
-      color: #ccc;
-    }
-
-    .refresh-btn:hover {
-      background: #3a3a3a;
-    }
-
-    .slide-row {
-      border-color: #444;
-    }
-
-    .slide-row:hover:not(:disabled) {
-      background: #333;
-    }
-
-    .slide-row.current {
-      background: #1e2d3d;
-    }
-
-    .slide-number {
-      color: #aaa;
-    }
-
-    .slide-notes {
-      color: #ddd;
-    }
-
-    .empty-notes {
-      color: #666;
-    }
-
-    .progress-bar {
-      background: #444;
-    }
   }
 </style>

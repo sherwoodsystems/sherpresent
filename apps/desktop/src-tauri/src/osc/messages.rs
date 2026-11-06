@@ -24,13 +24,16 @@
 //! - `/clicker/scrollUp`, `/clicker/scrollDown` - Scroll the notes views
 //! - `/clicker/notesPage` - Next screenful of the current slide's notes,
 //!   wrapping to the top after the last (teleprompter style)
+//! - `/clicker/discover` - Who's there? Answered with `/clicker/here`
+//! - `/oscpoint/next`, `/oscpoint/previous` - What the bridge sends
 //!
-//! ### Outgoing Feedback (what we send on port 9001)
+//! ### Outgoing Feedback (sent to whoever sent us a command)
 //! - `/clicker/state/presenting` - 0 or 1: is slideshow active?
 //! - `/clicker/state/open` - 0 or 1: is presentation file open?
 //! - `/clicker/slide/current` - Current slide number
 //! - `/clicker/slide/total` - Total slide count
 //! - `/clicker/zoom/level` - Current zoom percentage (100, 150, 200, etc.)
+//! - `/clicker/here` - Our name, in reply to `/clicker/discover`
 
 use rosc::{OscMessage, OscType};
 
@@ -66,6 +69,9 @@ pub enum OscCommand {
     ScrollDown,
     /// Next screenful of the current slide's notes, wrapping to the top
     NotesPage,
+
+    /// A client looking for us (replied to with `/clicker/here`)
+    Discover,
 
     /// An OSC address we don't recognize
     /// The String contains the original address for logging
@@ -103,8 +109,8 @@ impl OscCommand {
     /// Parse an OSC message (address + arguments) into a command variant.
     pub fn from_message(address: &str, args: &[OscType]) -> Self {
         match address {
-            "/clicker/next" => Self::Next,
-            "/clicker/prev" | "/clicker/previous" => Self::Previous,
+            "/clicker/next" | "/oscpoint/next" => Self::Next,
+            "/clicker/prev" | "/clicker/previous" | "/oscpoint/previous" => Self::Previous,
             "/clicker/zoom" => Self::Zoom,
             "/clicker/zoomIn" => Self::ZoomIn,
             "/clicker/zoomOut" => Self::ZoomOut,
@@ -117,6 +123,7 @@ impl OscCommand {
             "/clicker/scrollUp" => Self::ScrollUp,
             "/clicker/scrollDown" => Self::ScrollDown,
             "/clicker/notesPage" => Self::NotesPage,
+            "/clicker/discover" => Self::Discover,
 
             other => Self::Unknown(other.to_string()),
         }
@@ -205,6 +212,15 @@ impl OscFeedback {
         messages
     }
 
+    /// The reply to `/clicker/discover`: who we are. The client already knows
+    /// our address from the packet.
+    pub fn here(name: &str) -> OscMessage {
+        OscMessage {
+            addr: "/clicker/here".to_string(),
+            args: vec![OscType::String(name.to_string())],
+        }
+    }
+
     /// Create a single feedback message for just the zoom level.
     ///
     /// Used when responding to `/clicker/zoom` query.
@@ -223,6 +239,18 @@ impl OscFeedback {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_addresses_are_next_and_previous() {
+        assert_eq!(
+            OscCommand::from_message("/oscpoint/next", &[]),
+            OscCommand::Next
+        );
+        assert_eq!(
+            OscCommand::from_message("/oscpoint/previous", &[]),
+            OscCommand::Previous
+        );
+    }
 
     #[test]
     fn test_command_parsing() {

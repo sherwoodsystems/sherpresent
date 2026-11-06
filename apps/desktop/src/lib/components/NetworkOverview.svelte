@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { usePeers } from '$lib/usePeers.svelte';
-  import type { DiscoveredPeer } from '../types';
   import SelfPeerEditor from './SelfPeerEditor.svelte';
   import PeerList from './PeerList.svelte';
 
@@ -9,22 +7,14 @@
 
   let selfPeer = $derived(peerState.peers.find((p) => p.isSelf));
   let otherPeers = $derived(peerState.peers.filter((p) => !p.isSelf));
-
-  function handlePeerClick(peer: DiscoveredPeer) {
-    if (peer.version === 'bridge') {
-      goto(`/bridges?bridge=${peer.instanceId}`);
-    }
-  }
 </script>
 
 <div class="network-overview">
-  <h3 class="section-title">Network Overview</h3>
-
   {#if selfPeer}
     <SelfPeerEditor peer={selfPeer} />
   {/if}
 
-  <PeerList peers={otherPeers} emptyMessage="No other peers found" onpeerclick={handlePeerClick} />
+  <PeerList peers={otherPeers} emptyMessage="No other peers found" />
 </div>
 
 <style>
@@ -32,9 +22,5 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-  .section-title {
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border-subtle);
   }
 </style>

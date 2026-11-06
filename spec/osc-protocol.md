@@ -10,8 +10,13 @@
 
 Point-to-point communication between a single controller and a desktop app.
 
-- **Receive port**: 9000 (desktop app listens here)
-- **Feedback port**: 9001 (desktop app sends feedback here)
+- **Port**: 9000. The desktop app receives commands here and sends feedback from here.
+- **Connecting**: send any command. The sender gets feedback at the address and port it
+  sent from, until 15 seconds pass without a command from it. Clients send
+  `/clicker/status` every few seconds to stay connected; replies also tell them the
+  desktop app is alive. Use one socket to send and receive.
+- **Listen-only devices**: add them to the configured feedback destinations, which
+  always get feedback (default port 9001).
 
 ### Incoming Commands
 
@@ -30,10 +35,12 @@ Received by the desktop app on port 9000.
 | `/clicker/scrollUp` | none | Scroll the notes views (stage page, Syphon notes) up |
 | `/clicker/scrollDown` | none | Scroll the notes views down |
 | `/clicker/notesPage` | none | Teleprompter: next screenful of the current slide's notes in every notes view, wrapping to the top after the last; resets on slide change |
+| `/clicker/discover` | none | Find desktop apps: send as a UDP broadcast to the subnet (e.g. `192.168.1.255:9000`). Replied to with `/clicker/here`, and doesn't connect |
+| `/oscpoint/next`, `/oscpoint/previous` | none | Aliases of next and previous, as sent by the bridge |
 
 ### Outgoing Feedback
 
-Sent by the desktop app to the feedback address on port 9001.
+Sent by the desktop app to connected clients and configured destinations.
 
 | Address | Arguments | Description |
 |---------|-----------|-------------|
@@ -42,3 +49,4 @@ Sent by the desktop app to the feedback address on port 9001.
 | `/clicker/slide/current` | int | Current slide number (0 if not presenting) |
 | `/clicker/slide/total` | int | Total slide count |
 | `/clicker/zoom/level` | int | Current zoom percentage (0 if unavailable) |
+| `/clicker/here` | string | The desktop app's name; sent only to the sender of `/clicker/discover` |

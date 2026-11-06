@@ -1,4 +1,4 @@
-import type { QLabCountdown } from './types';
+import type { FoundQLabWorkspace, QLabCountdown } from './types';
 
 /**
  * `m:ss` or `h:mm:ss`, rounded up so `0:00` shows only as the cue ends.
@@ -24,4 +24,19 @@ export function parseCueList(text: string): string[] {
 
 export function formatCueList(cues: string[]): string {
   return cues.join(', ');
+}
+
+/**
+ * The workspaces to list from the last two scans, so one lost reply doesn't
+ * make a row blink. Newest details win.
+ */
+export function listFound(
+  previous: FoundQLabWorkspace[],
+  latest: FoundQLabWorkspace[]
+): FoundQLabWorkspace[] {
+  const key = (w: FoundQLabWorkspace) => `${w.host} ${w.id}`;
+  const rows = new Map([...previous, ...latest].map((w) => [key(w), w]));
+  return [...rows.values()].sort(
+    (a, b) => a.host.localeCompare(b.host) || a.name.localeCompare(b.name)
+  );
 }

@@ -1,65 +1,29 @@
 <script lang="ts">
+  import Card from '$lib/components/ui/Card.svelte';
+  import PageHeader from '$lib/components/ui/PageHeader.svelte';
   import OscConfig from '$lib/components/OscConfig.svelte';
   import WebServerConfig from '$lib/components/WebServerConfig.svelte';
   import { appStore } from '$lib/state.svelte';
 </script>
 
-<main class="container">
-  <header class="header">
-    <h1>Settings</h1>
-    <p class="subtitle">Network & OSC configuration</p>
-  </header>
+<main class="page">
+  <PageHeader title="Settings" subtitle="Network & OSC configuration" />
 
   {#if appStore.configLoaded}
-    <section class="section">
+    <Card title="OSC Configuration">
       <OscConfig config={appStore.config.osc} onchange={(c) => appStore.updateOscConfig(c)} />
-    </section>
+    </Card>
 
-    <section class="section">
+    <Card
+      title="Stage View Server"
+      description="Always running — serves notes and timer to browsers on your network"
+    >
       <WebServerConfig
         config={appStore.config.webServer}
         onchange={(c) => appStore.updateWebServerConfig(c)}
       />
-    </section>
+    </Card>
   {:else}
-    <p class="loading">Loading...</p>
+    <p class="empty loading">Loading...</p>
   {/if}
 </main>
-
-<style>
-  .container {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .header {
-    text-align: center;
-  }
-
-  .header h1 {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .subtitle {
-    margin: 0.25rem 0 0;
-    font-size: 0.875rem;
-    color: var(--text-muted);
-  }
-
-  .section {
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 1rem;
-    box-shadow: var(--shadow-card);
-  }
-
-  .loading {
-    text-align: center;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-</style>

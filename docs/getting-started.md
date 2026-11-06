@@ -47,4 +47,4 @@ ssh pi@<PI_IP> '
 The bridge runs as an unprivileged service and reads USB input devices via the `input`
 group (already configured on Raspberry Pi OS).
 
-Configure via the desktop app Bridges page or the HTTP API at `http://<pi-ip>:8080/status`.
+Configure it in the bridge app, or in its config file (see [Deployment](deployment.md)).
