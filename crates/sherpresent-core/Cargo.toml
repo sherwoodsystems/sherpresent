@@ -1,0 +1,18 @@
+[package]
+name = "sherpresent-core"
+version = "0.1.0"
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+description = "Shared mDNS discovery and OSC types for SherPresent apps"
+publish = false
+
+[dependencies]
+mdns-sd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+hostname = "0.4"
+if-addrs = "0.13"
+tokio = { version = "1", features = ["net", "time", "sync", "rt-multi-thread", "macros"] }
+log = "0.4"

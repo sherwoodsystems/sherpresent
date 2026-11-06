@@ -1,0 +1,290 @@
+import Foundation
+
+/// Wire protocol with `output/` in Rust.
+///
+/// - **stdin**: NDJSON, depending on `--content`:
+///   - `captions`: the same messages the web overlay's `/api/captions/ws`
+///     socket carries (`segment`, `replay`, `status`, `settings`, `clear`),
+///     so there is one caption message format for every output.
+///   - `notes`: the stage view's `/api/ws` messages (`status`, `notes`,
+///     `scroll`), plus
+///     `timer` from the app's Ontime client.
+///   - `slideshow`: nothing; it finds PowerPoint's window itself.
+///   - `qlab`: the `/qlab` page's messages, `{"type":"qlab","payload":…}`
+///     with the app's QLab count-out state.
+///   EOF = graceful stop.
+/// - **stdout**: NDJSON — `ready`, `sinks`, `error`, and for `slideshow`
+///   `capture` (`waiting|capturing|denied`) whenever that changes.
+/// - **stderr**: plain-text logs.
+enum WireProtocol {
+    static let version = 5
+}
+
+// MARK: - Inbound
+
+struct Segment: Decodable, Equatable {
+    var id: UInt64
+    var source: String
+    var translated: String
+    var final: Bool
+}
+
+/// The fields of `OverlaySettings` (`captions/mod.rs`) that affect the
+/// picture; the rest (key colour, silence timeout) don't apply here. Rust has
+/// already clamped every field.
+struct OverlaySettings: Decodable, Equatable {
+    var fontSize: Double = 56
+    var maxLines: Int = 2
+    var safeArea: Double = 5
+    var width: Double = 80
+    var shadow: Bool = false
+    var uppercase: Bool = false
+    var background: Bool = false
+    /// Fill of the background box, `0xRRGGBB`
+    var boxColor: UInt32 = 0x000000
+
+    init() {}
+
+    /// Field by field with defaults, so a newer or older app that adds or
+    /// drops a field can't make the whole settings message undecodable.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = OverlaySettings()
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize) ?? d.fontSize
+        maxLines = try c.decodeIfPresent(Int.self, forKey: .maxLines) ?? d.maxLines
+        safeArea = try c.decodeIfPresent(Double.self, forKey: .safeArea) ?? d.safeArea
+        width = try c.decodeIfPresent(Double.self, forKey: .width) ?? d.width
+        shadow = try c.decodeIfPresent(Bool.self, forKey: .shadow) ?? d.shadow
+        uppercase = try c.decodeIfPresent(Bool.self, forKey: .uppercase) ?? d.uppercase
+        background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? d.background
+        boxColor = try c.decodeIfPresent(String.self, forKey: .boxColor).flatMap(hexColor) ?? d.boxColor
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fontSize, maxLines, safeArea, width, shadow, uppercase, background, boxColor
+    }
+}
+
+struct StatusPayload: Decodable {
+    var translateEnabled: Bool?
+}
+
+enum InMessage {
+    case segment(Segment)
+    case replay([Segment])
+    case status(StatusPayload)
+    case settings(OverlaySettings)
+    case clear
+    case unknown
+
+    private struct Envelope: Decodable {
+        var type: String
+        var segment: Segment?
+        var segments: [Segment]?
+        var status: StatusPayload?
+        var settings: OverlaySettings?
+    }
+
+    /// Unknown types and malformed lines are dropped, never fatal: a version
+    /// skew or stray write must not take the output down mid-show.
+    static func parse(_ line: String) -> InMessage {
+        guard let data = line.data(using: .utf8),
+            let env = try? JSONDecoder().decode(Envelope.self, from: data)
+        else { return .unknown }
+
+        switch env.type {
+        case "segment": return env.segment.map(InMessage.segment) ?? .unknown
+        case "replay": return .replay(env.segments ?? [])
+        case "status": return env.status.map(InMessage.status) ?? .unknown
+        case "settings": return env.settings.map(InMessage.settings) ?? .unknown
+        case "clear": return .clear
+        default: return .unknown
+        }
+    }
+}
+
+// MARK: - Inbound, notes
+
+/// The slice of Rust's `LiveStatus` the notes feed shows.
+struct SlideStatus: Decodable, Equatable {
+    var current = 0
+    var total = 0
+    var presenting = false
+
+    private enum CodingKeys: String, CodingKey {
+        case current = "current_slide"
+        case total = "total_slides"
+        case presenting = "is_presenting"
+    }
+}
+
+/// Rust's `ScrollDirection` (`osc/messages.rs`).
+enum ScrollDirection: String, Decodable {
+    case up, down
+    /// Teleprompter: the next screenful, wrapping to the top after the last
+    case page
+}
+
+private struct ScrollPayload: Decodable {
+    var direction: ScrollDirection
+}
+
+/// Rust's `ontime::TimerState`.
+struct TimerPayload: Decodable, Equatable {
+    var connected: Bool
+    /// Milliseconds remaining; negative is overtime
+    var current: Double?
+    /// Ontime playback state: `play`, `pause`, `stop`, `armed`, `roll`
+    var playback: String?
+    var title: String
+}
+
+enum NotesMessage {
+    case status(SlideStatus)
+    /// Every slide's notes, keyed by 1-based slide number
+    case notes([Int: String])
+    /// nil when Ontime isn't configured
+    case timer(TimerPayload?)
+    case scroll(ScrollDirection)
+    case unknown
+
+    private struct Envelope<P: Decodable>: Decodable {
+        var payload: P
+    }
+
+    private struct TypeOnly: Decodable {
+        var type: String
+    }
+
+    /// Unknown types and malformed lines are dropped, never fatal.
+    static func parse(_ line: String) -> NotesMessage {
+        let decoder = JSONDecoder()
+        guard let data = line.data(using: .utf8),
+            let kind = try? decoder.decode(TypeOnly.self, from: data).type
+        else { return .unknown }
+
+        switch kind {
+        case "status":
+            return (try? decoder.decode(Envelope<SlideStatus>.self, from: data)).map { .status($0.payload) }
+                ?? .unknown
+        case "notes":
+            // JSON object keys are strings; slide numbers are ints.
+            guard let env = try? decoder.decode(Envelope<[String: String]>.self, from: data) else {
+                return .unknown
+            }
+            var notes: [Int: String] = [:]
+            for (k, v) in env.payload {
+                if let n = Int(k) { notes[n] = v }
+            }
+            return .notes(notes)
+        case "timer":
+            return (try? decoder.decode(Envelope<TimerPayload?>.self, from: data)).map { .timer($0.payload) }
+                ?? .unknown
+        case "scroll":
+            return (try? decoder.decode(Envelope<ScrollPayload>.self, from: data)).map {
+                .scroll($0.payload.direction)
+            } ?? .unknown
+        default:
+            return .unknown
+        }
+    }
+}
+
+// MARK: - Inbound, QLab
+
+/// Rust's `qlab::QLabState`, the fields the picture uses.
+struct QLabPayload: Decodable, Equatable {
+    var configured: Bool
+    var connected: Bool
+    var message: String?
+    var video: QLabCountdown?
+    var audio: QLabCountdown?
+    /// The cue at the playhead
+    var next: QLabCue?
+}
+
+/// Rust's `qlab::Countdown`.
+struct QLabCountdown: Decodable, Equatable {
+    var number: String
+    var name: String
+    /// Seconds left
+    var remaining: Double
+    /// Seconds in all
+    var duration: Double
+    var paused: Bool
+    /// Other linear cues of the same kind, ending sooner
+    var others: Int
+}
+
+/// Rust's `qlab::CueLabel`.
+struct QLabCue: Decodable, Equatable {
+    var number: String
+    var name: String
+}
+
+enum QLabMessage {
+    private struct Envelope: Decodable {
+        var type: String
+        var payload: QLabPayload?
+    }
+
+    /// The state in a `qlab` line; nil for anything else. Never fatal.
+    static func parse(_ line: String) -> QLabPayload? {
+        guard let data = line.data(using: .utf8),
+            let env = try? JSONDecoder().decode(Envelope.self, from: data),
+            env.type == "qlab"
+        else { return nil }
+        return env.payload
+    }
+}
+
+// MARK: - Outbound
+
+struct SinkStatus: Encodable {
+    var kind: String
+    var name: String
+    var hasClients: Bool
+}
+
+enum OutMessage {
+    case ready(width: Int, height: Int, sinks: [SinkStatus])
+    case sinks([SinkStatus])
+    case error(code: String, fatal: Bool, message: String)
+    case capture(state: String)
+
+    private struct Wire: Encodable {
+        var type: String
+        var `protocol`: Int?
+        var width: Int?
+        var height: Int?
+        var sinks: [SinkStatus]?
+        var code: String?
+        var fatal: Bool?
+        var message: String?
+        var state: String?
+    }
+
+    var line: String {
+        let wire: Wire
+        switch self {
+        case .ready(let w, let h, let sinks):
+            wire = Wire(type: "ready", protocol: WireProtocol.version, width: w, height: h, sinks: sinks)
+        case .sinks(let sinks):
+            wire = Wire(type: "sinks", sinks: sinks)
+        case .error(let code, let fatal, let message):
+            wire = Wire(type: "error", code: code, fatal: fatal, message: message)
+        case .capture(let state):
+            wire = Wire(type: "capture", state: state)
+        }
+        let data = (try? JSONEncoder().encode(wire)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+func emit(_ message: OutMessage) {
+    FileHandle.standardOutput.write(Data((message.line + "\n").utf8))
+}
+
+func logErr(_ text: String, level: String = "info") {
+    FileHandle.standardError.write(Data("[\(level)] \(text)\n".utf8))
+}

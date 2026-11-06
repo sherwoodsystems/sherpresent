@@ -5,6 +5,7 @@
 - [Getting Started](getting-started.md) — installation and first run
 - [Development](development.md) — building from source
 - [Deployment](deployment.md) — deploying the bridge to a Raspberry Pi
+- [Windows Build](windows-build.md) — building Windows installers via Dockurr VM
 - [Architecture](architecture.md) — system design overview
 
 ## Plans

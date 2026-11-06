@@ -23,36 +23,16 @@ export interface OscConfig {
 }
 
 // =============================================================================
-// CHANNEL CONFIG
+// DISCOVERY CONFIG
 // =============================================================================
 
-/** Valid channel names for broadcast mode */
-export const VALID_CHANNELS = [
-  'main', 'backup',
-  'keynote1', 'keynote2', 'keynote3', 'keynote4', 'keynote5',
-  'keynote6', 'keynote7', 'keynote8', 'keynote9',
-  'aux1', 'aux2', 'aux3', 'aux4', 'aux5',
-  'aux6', 'aux7', 'aux8', 'aux9'
-] as const;
-
-export type ChannelName = typeof VALID_CHANNELS[number];
-
-/** Default broadcast port for channel communication */
-export const DEFAULT_BROADCAST_PORT = 9002;
-
-export interface ChannelConfig {
-  /** Whether channel sync is enabled */
+export interface DiscoveryConfig {
+  /** Whether discovery is enabled */
   enabled: boolean;
-  /** Name of the channel (e.g., "main", "backup", "keynote1") */
-  channelName: string;
   /** Unique instance identifier (auto-generated UUID) */
   instanceId: string;
   /** Human-readable display name for this instance */
   displayName: string | null;
-  /** Whether to use UDP broadcast mode (vs direct IP) */
-  broadcastMode: boolean;
-  /** Port for broadcast communication (default: 9002) */
-  broadcastPort: number;
   /** Network interface to advertise mDNS on (null = auto/all interfaces) */
   networkInterface: string | null;
 }
@@ -86,12 +66,12 @@ export interface DiscoveredPeer {
   host: string;
   /** OSC port */
   port: number;
-  /** Channel name */
-  channel: string;
   /** Protocol version */
   version: string;
   /** Whether this is our own instance */
   isSelf: boolean;
+  /** Config API port (bridges only) */
+  configPort: number | null;
 }
 
 // =============================================================================
@@ -107,26 +87,307 @@ export interface LoggingConfig {
 // APP CONFIG
 // =============================================================================
 
-export type AdapterType = 'powerpoint' | 'keynote' | 'libreoffice';
+export type AdapterType = 'powerpoint' | 'keynote' | 'libreoffice' | 'canva';
+
+/** Per-adapter network configuration */
+export type AdapterConfig =
+  | { type: 'libreoffice'; host: string; port: number }
+  | { type: 'canva'; url: string }
+  | { type: 'none' };
+
+/** Connection status for network-based adapters */
+export type ConnectionStatus = 'Disconnected' | 'Connecting' | 'Connected' | { Error: string };
+
+/** Whether PowerPoint's slide show events are arriving (PowerPoint for Windows only) */
+export type PowerPointEvents =
+  | { state: 'no_show' }
+  | { state: 'listening' }
+  | { state: 'receiving' }
+  | { state: 'failed'; error: string };
+
+/** LAN web server configuration (notes + timer view for external browsers) */
+export interface WebServerConfig {
+  port: number;
+  ontimeHost: string;
+  ontimePort: number;
+  /** Font size in px for stage view notes (default: 32) */
+  fontSize: number;
+  /** Current slide's notes and the Ontime timer as a Syphon source */
+  syphon: SyphonOutputConfig;
+  /** PowerPoint's slide show window, captured while a show runs */
+  slideshowSyphon: SyphonOutputConfig;
+}
+
+/** Live caption provider id */
+export type CaptionProviderId = 'gemini' | 'openai' | 'apple';
+
+/** Providers that bill per minute and need a key in `apiKeys`. */
+export type CaptionApiKeyProviderId = 'gemini' | 'openai';
+
+/** Whether an Apple translation language pack is present for a language pair */
+export type TranslationPackStatus = 'installed' | 'notInstalled' | 'unsupported';
+
+/**
+ * What the Apple on-device provider can do on this machine.
+ *
+ * Reported by the `check_apple_captions_support` command, which runs the speech
+ * helper's `--probe` mode. Translation language packs can only be installed by
+ * the user in System Settings, so this has to be legible before a show.
+ */
+export interface AppleCaptionSupport {
+  /** macOS 26 (Tahoe) or later */
+  osSupported: boolean;
+  osVersion: string | null;
+  /** Apple Silicon */
+  archSupported: boolean;
+  /** The spoken language has a SpeechTranscriber model available */
+  speechLocaleSupported: boolean;
+  /** That model is already downloaded (it downloads automatically if not) */
+  speechModelInstalled: boolean;
+  supportedLocales: string[];
+  translationStatus: TranslationPackStatus;
+  /** Why the provider is unusable, when it is */
+  message: string | null;
+}
+
+/** API keys for caption providers. Stored in plaintext in config.json. */
+export interface CaptionApiKeys {
+  gemini: string;
+  openai: string;
+}
+
+/** Live caption / translation configuration */
+/** Native caption outputs: two Syphon sources, so the original and the
+ * translation can be keyed separately. NDI would be a sibling. */
+export interface CaptionOutputsConfig {
+  syphon: CaptionSyphonConfig;
+  syphon2: CaptionSyphonConfig;
+}
+
+/** Which language(s) a captions output shows; the overlay's `?text=` */
+export type CaptionText = 'translated' | 'source' | 'both';
+
+export interface CaptionSyphonConfig extends SyphonOutputConfig {
+  text: CaptionText;
+}
+
+/** A 1920x1080 Syphon source (macOS), for captions or notes */
+export interface SyphonOutputConfig {
+  enabled: boolean;
+  /** Name receivers list the source under */
+  serverName: string;
+}
+
+export type OutputState = 'stopped' | 'starting' | 'running' | 'error';
+
+export interface OutputStatus {
+  /** Whether this machine can run the output at all */
+  supported: boolean;
+  state: OutputState;
+  name: string;
+  /** Whether any receiver is connected right now */
+  hasClients: boolean;
+  message: string | null;
+}
+
+/** Payload of `get_outputs_status` and the `outputs-status` event */
+export interface OutputsStatus {
+  captions: OutputStatus;
+  captions2: OutputStatus;
+  notes: OutputStatus;
+  slideshow: OutputStatus;
+  qlab: OutputStatus;
+}
+
+// =============================================================================
+// QLAB
+// =============================================================================
+
+/** QLab count-out: time left on running, non-looping video and audio cues */
+export interface QLabConfig {
+  /** QLab machine's IP or hostname; empty = off */
+  host: string;
+  /** QLab's OSC port (TCP, default 53000) */
+  port: number;
+  /** The workspace's OSC passcode, if it has one */
+  passcode: string;
+  /** Workspace name or unique ID; empty = the first open workspace */
+  workspace: string;
+  /** Cue numbers never counted out */
+  hiddenCues: string[];
+  /** On a slide change during a show, start the cue numbered prefix + slide (`/cue/S7/start`) */
+  slideGo: boolean;
+  slideCuePrefix: string;
+  /** More OSC sent on a slide change: one message per line, `{slide}`
+   *  replaced by the slide number; empty = none */
+  slideCommand: string;
+  /** The count-out as a Syphon source */
+  syphon: SyphonOutputConfig;
+}
+
+/** One cue counting out */
+export interface QLabCountdown {
+  number: string;
+  name: string;
+  /** Seconds left */
+  remaining: number;
+  /** Seconds in all */
+  duration: number;
+  paused: boolean;
+  /** Other linear cues of the same kind, ending sooner */
+  others: number;
+}
+
+/** A workspace open in QLab on this network, from `find_qlab_workspaces` */
+export interface FoundQLabWorkspace {
+  /** Where to reach it: `127.0.0.1` for a QLab on this computer */
+  host: string;
+  name: string;
+  id: string;
+  version: string;
+}
+
+/** Payload of `get_qlab_state` and the `qlab-state` event */
+export interface QLabState {
+  configured: boolean;
+  connected: boolean;
+  message: string | null;
+  workspace: string | null;
+  workspaces: string[];
+  video: QLabCountdown | null;
+  audio: QLabCountdown | null;
+  /** The cue at the playhead */
+  next: { number: string; name: string } | null;
+  /** The last slide or build step fired: `step` is `3`, or `3.1` for a build */
+  slideTrigger: { step: string; sent: string[]; error: string | null } | null;
+}
+
+export interface CaptionsConfig {
+  /** Auto-start captions on app launch */
+  enabled: boolean;
+  provider: CaptionProviderId;
+  /** cpal input device name; null = system default input */
+  inputDevice: string | null;
+  /** BCP-47 source language; null = provider auto-detects */
+  sourceLanguage: string | null;
+  /** BCP-47 target language for caption output (default: 'fr'). Same
+   *  language as the source = straight captions, no translation. */
+  targetLanguage: string;
+  /** Caption font size in px, relative to a 1080p frame */
+  fontSize: number;
+  /** How many finalized lines stay on screen */
+  maxLines: number;
+  /** Overlay background: hex colour, or 'transparent' for OBS */
+  chromaColor: string;
+  /** Gap below the captions, % of frame height */
+  safeArea: number;
+  /** Caption block width, % of frame width (centred) */
+  width: number;
+  /** Drop shadow behind caption text (default off) */
+  shadow: boolean;
+  /** Caption text in all caps (default off) */
+  uppercase: boolean;
+  /** Closed-caption style opaque box behind each row */
+  background: boolean;
+  /** Fill of that box, hex (default '#000000') */
+  boxColor: string;
+  /** Seconds without new speech before captions clear; 0 = never */
+  clearAfter: number;
+  /** Native video outputs beyond the always-on web overlay */
+  outputs: CaptionOutputsConfig;
+  apiKeys: CaptionApiKeys;
+}
 
 export interface AppConfig {
   osc: OscConfig;
   adapter: AdapterType;
   presentationName: string;
   logging: LoggingConfig;
-  /** Channel synchronization settings */
-  channel: ChannelConfig;
+  /** Peer discovery settings */
+  discovery: DiscoveryConfig;
+  /** Per-adapter network configuration */
+  adapterConfig: AdapterConfig;
+  /** LAN web server settings */
+  webServer: WebServerConfig;
+  /** Live caption / translation settings */
+  captions: CaptionsConfig;
+  /** QLab count-out settings */
+  qlab: QLabConfig;
 }
+
+// =============================================================================
+// CAPTIONS
+// =============================================================================
+
+/** An audio input device reported by cpal */
+export interface AudioDevice {
+  /** Device name, used as the stable identifier in config */
+  name: string;
+  /** Whether this is the system default input */
+  isDefault: boolean;
+  /** Native sample rate in Hz */
+  sampleRate: number;
+  /** Native channel count */
+  channels: number;
+}
+
+/**
+ * One caption line. `interim` segments are replaced as deltas arrive;
+ * they become final on turn completion.
+ */
+export interface CaptionSegment {
+  /** Monotonic id; interim updates reuse the id of the line they replace */
+  id: number;
+  /** Transcript in the speaker's original language */
+  source: string;
+  /** Translation in the configured target language */
+  translated: string;
+  /** False while the provider is still streaming deltas for this line */
+  final: boolean;
+  /** Unix ms when the segment was last updated */
+  timestamp: number;
+}
+
+/** Connection state of the caption engine */
+export type CaptionEngineState =
+  'stopped' | 'starting' | 'running' | 'reconnecting' | { error: string };
+
+/** Status snapshot emitted on the `caption-status` event */
+export interface CaptionStatus {
+  state: CaptionEngineState;
+  /** Seconds of audio streamed this session — drives the cost readout */
+  elapsedSeconds: number;
+  /** How many times the provider session has been resumed */
+  reconnects: number;
+  provider: CaptionProviderId;
+}
+
+// =============================================================================
+// LATENCY / DEBUG
+// =============================================================================
+
+export type CommandSource = 'osc' | 'ws' | 'ui';
+
+export interface LatencyEvent {
+  command_received_ms: number;
+  adapter_complete_ms: number;
+  latency_ms: number;
+  command: string;
+  source: CommandSource;
+  adapter: string;
+  wall_clock_ms: number;
+}
+
+// =============================================================================
+// PRESENTATION STATE
+// =============================================================================
 
 export interface PresentationState {
   is_open: boolean;
   is_presenting: boolean;
 }
 
-export interface SlideInfo {
-  current: number;
-  total: number;
-}
+export type NotesCache = Record<string, string>;
 
 export interface LiveStatus {
   is_open: boolean;
@@ -134,6 +395,11 @@ export interface LiveStatus {
   current_slide: number;
   total_slides: number;
   zoom_level: number | null;
+  presenter_notes?: string | null;
+  /** Current build/animation step (0 = none fired). Only present when slide has builds. */
+  current_build?: number | null;
+  /** Total click-triggered build steps on this slide. Only present when slide has builds. */
+  total_builds?: number | null;
 }
 
 export const defaultConfig: AppConfig = {
@@ -150,13 +416,52 @@ export const defaultConfig: AppConfig = {
     enabled: true,
     verbose: false
   },
-  channel: {
+  discovery: {
     enabled: true,
-    channelName: 'main',
     instanceId: '', // Will be generated by backend
     displayName: null,
-    broadcastMode: true,
-    broadcastPort: DEFAULT_BROADCAST_PORT,
     networkInterface: null // Auto (all interfaces)
+  },
+  adapterConfig: { type: 'none' },
+  webServer: {
+    port: 8080,
+    ontimeHost: '',
+    ontimePort: 4001,
+    fontSize: 32,
+    syphon: { enabled: false, serverName: 'SherPresent Notes' },
+    slideshowSyphon: { enabled: false, serverName: 'SherPresent Slideshow' }
+  },
+  captions: {
+    enabled: false,
+    provider: 'gemini',
+    inputDevice: null, // System default input
+    sourceLanguage: null, // Provider auto-detects
+    targetLanguage: 'fr',
+    fontSize: 56,
+    maxLines: 2,
+    chromaColor: '#00B140', // Broadcast green
+    safeArea: 5,
+    width: 80,
+    shadow: false,
+    uppercase: false,
+    background: false,
+    boxColor: '#000000',
+    clearAfter: 8,
+    outputs: {
+      syphon: { enabled: false, serverName: 'SherPresent Captions', text: 'translated' },
+      syphon2: { enabled: false, serverName: 'SherPresent Captions (Original)', text: 'source' }
+    },
+    apiKeys: { gemini: '', openai: '' }
+  },
+  qlab: {
+    host: '',
+    port: 53000,
+    passcode: '',
+    workspace: '',
+    hiddenCues: [],
+    slideGo: false,
+    slideCuePrefix: 'S',
+    slideCommand: '',
+    syphon: { enabled: false, serverName: 'SherPresent QLab' }
   }
 };

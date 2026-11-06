@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    sher_present_settings_lib::run()
+    sherpresent_lib::run()
 }

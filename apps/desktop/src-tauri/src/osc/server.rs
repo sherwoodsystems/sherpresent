@@ -4,9 +4,8 @@
 //!
 //! ## How It Works
 //!
-//! 1. **Bind two UDP sockets:**
-//!    - Receive socket (port 9000) - listens for incoming commands
-//!    - Feedback socket - sends state updates to clients (port 9001)
+//! 1. **Bind one UDP socket (port 9000):** commands arrive on it and feedback
+//!    leaves from it, so replies get back through stateful firewalls.
 //!
 //! 2. **Main event loop using `tokio::select!`:**
 //!    - Wait for incoming OSC packets
@@ -17,85 +16,81 @@
 //! 3. **On incoming OSC packet:**
 //!    - Decode the OSC message
 //!    - Parse the address to determine the command
+//!    - Remember the sender, so it gets feedback (see `FeedbackTargets`)
 //!    - Execute the command via StateManager
 //!
 //! 4. **On state change:**
 //!    - Build feedback messages
-//!    - Send them to the feedback address
+//!    - Send them to every recent sender and configured destination
 //!
 //! ## Graceful Shutdown
 //!
 //! We use a channel to signal shutdown. When `OscServerHandle::stop()` is called,
 //! it sends a message through the channel, and the main loop exits cleanly.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rosc::{encoder, OscPacket};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
-use super::messages::{OscCommand, OscFeedback};
+use super::latency::CommandSource;
+use super::messages::{OscCommand, OscFeedback, ScrollDirection};
 use super::state_manager::{CachedState, StateManager};
-use super::CommandSourcePeer;
-use crate::config::{ChannelConfig, OscConfig};
+use crate::config::OscConfig;
+
+/// How long a client keeps getting feedback after the last command it sent.
+/// Clients send `/clicker/status` every few seconds to stay on the list.
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long to wait for a configured feedback hostname to resolve at startup.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 // =============================================================================
-// SUBNET BROADCAST CALCULATION
+// FEEDBACK TARGETS
 // =============================================================================
 
-/// Calculate the subnet broadcast address from the local network interface.
-/// Returns the broadcast address (e.g., 192.168.1.255) or falls back to 255.255.255.255.
-fn get_subnet_broadcast_address() -> Ipv4Addr {
-    match if_addrs::get_if_addrs() {
-        Ok(interfaces) => {
-            // Find the first non-loopback IPv4 interface with a broadcast address
-            for iface in interfaces {
-                if iface.is_loopback() {
-                    continue;
-                }
-
-                if let if_addrs::IfAddr::V4(v4_addr) = &iface.addr {
-                    // Get the IP and netmask
-                    let ip = v4_addr.ip;
-                    let netmask = v4_addr.netmask;
-
-                    // Skip link-local addresses (169.254.x.x)
-                    if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
-                        continue;
-                    }
-
-                    // Calculate broadcast address: IP | ~netmask
-                    let ip_u32 = u32::from(ip);
-                    let mask_u32 = u32::from(netmask);
-                    let broadcast_u32 = ip_u32 | !mask_u32;
-                    let broadcast = Ipv4Addr::from(broadcast_u32);
-
-                    log::debug!(
-                        "Using subnet broadcast {} (from {} on {})",
-                        broadcast, ip, iface.name
-                    );
-                    return broadcast;
-                }
-            }
-
-            log::warn!("No suitable network interface found, using 255.255.255.255");
-            Ipv4Addr::BROADCAST
-        }
-        Err(e) => {
-            log::warn!("Failed to enumerate network interfaces: {}, using 255.255.255.255", e);
-            Ipv4Addr::BROADCAST
-        }
-    }
+/// Where feedback goes: whoever has sent us a command recently, at the address
+/// it sent from, plus any configured destinations (for listen-only devices).
+struct FeedbackTargets {
+    configured: Vec<SocketAddr>,
+    clients: HashMap<SocketAddr, Instant>,
 }
 
-/// Configuration for broadcast mode
-#[derive(Debug, Clone)]
-pub struct BroadcastConfig {
-    /// Channel name to filter on
-    pub channel_name: String,
-    /// Port for broadcast communication
-    pub broadcast_port: u16,
+impl FeedbackTargets {
+    fn new(configured: Vec<SocketAddr>) -> Self {
+        Self {
+            configured,
+            clients: HashMap::new(),
+        }
+    }
+
+    fn heard_from(&mut self, addr: SocketAddr, now: Instant) {
+        if self.clients.insert(addr, now).is_none() {
+            log::info!("OSC client connected: {}", addr);
+        }
+    }
+
+    fn current(&mut self, now: Instant) -> Vec<SocketAddr> {
+        self.clients.retain(|addr, last| {
+            let alive = now.duration_since(*last) < CLIENT_TIMEOUT;
+            if !alive {
+                log::info!("OSC client timed out: {}", addr);
+            }
+            alive
+        });
+
+        let mut addrs = self.configured.clone();
+        addrs.extend(
+            self.clients
+                .keys()
+                .filter(|addr| !self.configured.contains(addr)),
+        );
+        addrs
+    }
 }
 
 // =============================================================================
@@ -106,13 +101,6 @@ pub struct BroadcastConfig {
 ///
 /// When you start the OSC server, you get this handle back.
 /// Store it and call `stop()` when you want to shut down the server.
-///
-/// ## Why a Separate Handle?
-///
-/// The actual server runs in a spawned async task. The handle gives you
-/// a way to communicate with that task (specifically, to tell it to stop).
-/// This is the "actor pattern" - the task is an actor, and we communicate
-/// via channels.
 pub struct OscServerHandle {
     /// Channel to signal shutdown
     shutdown_tx: mpsc::Sender<()>,
@@ -123,16 +111,9 @@ pub struct OscServerHandle {
 
 impl OscServerHandle {
     /// Stop the OSC server gracefully.
-    ///
-    /// This sends a shutdown signal and waits for the server task to exit.
-    /// After calling this, the handle is consumed (can't be used again).
     pub async fn stop(self) {
-        // Send shutdown signal (ignore errors if already closed)
         let _ = self.shutdown_tx.send(()).await;
-
-        // Wait for the task to finish (ignore errors if it panicked)
         let _ = self.task_handle.await;
-
         log::info!("OSC server stopped");
     }
 }
@@ -156,58 +137,37 @@ pub struct OscServer {
     /// State manager for handling commands
     state_manager: Arc<StateManager>,
 
-    /// Broadcast mode configuration (optional)
-    broadcast_config: Option<BroadcastConfig>,
+    /// Broadcast channel for scroll commands (forwarded to web server)
+    scroll_broadcast: Option<tokio::sync::broadcast::Sender<ScrollDirection>>,
 
-    /// Channel to send discovered command source peers
-    peer_tx: Option<mpsc::Sender<CommandSourcePeer>>,
+    /// The name clients see when they look for us with `/clicker/discover`
+    name: String,
 }
 
 impl OscServer {
     /// Create a new OSC server.
-    ///
-    /// ## Parameters
-    ///
-    /// - `config` - OSC port and host configuration
-    /// - `state_manager` - Shared state manager (wrapped in Arc for sharing)
     pub fn new(config: OscConfig, state_manager: Arc<StateManager>) -> Self {
         Self {
             config,
             state_manager,
-            broadcast_config: None,
-            peer_tx: None,
+            scroll_broadcast: None,
+            name: sherpresent_core::machine_name(),
         }
     }
 
-    /// Create a new OSC server with broadcast mode and peer tracking.
-    ///
-    /// ## Parameters
-    ///
-    /// - `config` - OSC port and host configuration
-    /// - `state_manager` - Shared state manager
-    /// - `channel_config` - Channel configuration
-    /// - `peer_tx` - Channel to send discovered command source peers
-    pub fn with_broadcast_and_peer_tracking(
-        config: OscConfig,
-        state_manager: Arc<StateManager>,
-        channel_config: &ChannelConfig,
-        peer_tx: mpsc::Sender<CommandSourcePeer>,
-    ) -> Self {
-        let broadcast_config = if channel_config.enabled && channel_config.broadcast_mode {
-            Some(BroadcastConfig {
-                channel_name: channel_config.channel_name.clone(),
-                broadcast_port: channel_config.broadcast_port,
-            })
-        } else {
-            None
-        };
+    /// Set the name clients see when they look for us with `/clicker/discover`.
+    pub fn with_name(mut self, name: String) -> Self {
+        self.name = name;
+        self
+    }
 
-        Self {
-            config,
-            state_manager,
-            broadcast_config,
-            peer_tx: Some(peer_tx),
-        }
+    /// Set the scroll broadcast channel for forwarding scroll commands to the web server.
+    pub fn with_scroll_broadcast(
+        mut self,
+        tx: tokio::sync::broadcast::Sender<ScrollDirection>,
+    ) -> Self {
+        self.scroll_broadcast = Some(tx);
+        self
     }
 
     /// Start the OSC server.
@@ -216,154 +176,84 @@ impl OscServer {
     ///
     /// - `Ok(OscServerHandle)` - Server is running, use handle to stop it
     /// - `Err(String)` - Failed to bind sockets
-    ///
-    /// ## What Happens
-    ///
-    /// 1. Bind receive socket to listen for commands
-    /// 2. Bind feedback socket to send state updates
-    /// 3. Optionally bind broadcast socket for channel-based communication
-    /// 4. Spawn the main event loop as a background task
-    /// 5. Start state polling (every 2 seconds)
-    /// 6. Return the handle
-    pub async fn start(
-        self,
-        mut state_change_rx: mpsc::Receiver<CachedState>,
-    ) -> Result<OscServerHandle, String> {
+    pub async fn start(self) -> Result<OscServerHandle, String> {
+        // Subscribe before binding so no change published meanwhile is missed.
+        let mut state_changes = self.state_manager.subscribe();
+
         // =====================================================================
-        // BIND SOCKETS
+        // BIND SOCKET
         // =====================================================================
 
-        // Receive socket - where we listen for direct commands (port 9000)
+        // Commands arrive here (port 9000) and feedback leaves from here
         let receive_addr = format!("{}:{}", self.config.host, self.config.receive_port);
-        let receive_socket = UdpSocket::bind(&receive_addr)
+        let socket = UdpSocket::bind(&receive_addr)
             .await
-            .map_err(|e| format!("Failed to bind receive socket on {}: {}", receive_addr, e))?;
+            .map_err(|e| format!("Failed to bind OSC socket on {}: {}", receive_addr, e))?;
 
         log::info!("OSC server listening on {}", receive_addr);
 
-        // Feedback socket - we bind to any available port since we're only sending
-        // Using 0.0.0.0:0 lets the OS pick an available port
-        let feedback_socket = UdpSocket::bind("0.0.0.0:0")
-            .await
-            .map_err(|e| format!("Failed to bind feedback socket: {}", e))?;
+        #[cfg(target_os = "windows")]
+        log::info!(
+            "Windows firewall note: If LAN access doesn't work, run PowerShell as Admin: \
+             New-NetFirewallRule -DisplayName 'SherPresent OSC' -Direction Inbound -Protocol UDP -LocalPort {} -Action Allow",
+            self.config.receive_port
+        );
 
-        // Enable broadcast on feedback socket (needed for broadcast mode)
-        feedback_socket
-            .set_broadcast(true)
-            .map_err(|e| format!("Failed to enable broadcast on feedback socket: {}", e))?;
-
-        // Parse all feedback destination addresses
-        let feedback_addrs = Self::parse_feedback_destinations(&self.config)?;
-
-        if feedback_addrs.is_empty() {
-            log::warn!("No feedback destinations configured");
-        } else {
-            log::info!(
-                "OSC feedback will be sent to {} destination(s): {:?}",
-                feedback_addrs.len(),
-                feedback_addrs
-            );
-        }
-
-        // =====================================================================
-        // BROADCAST SOCKET (optional)
-        // =====================================================================
-
-        let broadcast_socket = if let Some(ref bc) = self.broadcast_config {
-            let broadcast_addr = format!("0.0.0.0:{}", bc.broadcast_port);
-            let socket = UdpSocket::bind(&broadcast_addr)
-                .await
-                .map_err(|e| format!("Failed to bind broadcast socket on {}: {}", broadcast_addr, e))?;
-
-            // Enable receiving broadcast packets
-            socket
-                .set_broadcast(true)
-                .map_err(|e| format!("Failed to enable broadcast on socket: {}", e))?;
-
-            log::info!(
-                "Broadcast mode enabled: listening on port {} for channel '{}'",
-                bc.broadcast_port,
-                bc.channel_name
-            );
-
-            Some(socket)
-        } else {
-            None
-        };
-
-        // Calculate broadcast address for sending feedback
-        let broadcast_feedback_addr: Option<SocketAddr> = if let Some(ref bc) = self.broadcast_config {
-            // Calculate subnet broadcast address (e.g., 192.168.1.255) instead of 255.255.255.255
-            let broadcast_ip = get_subnet_broadcast_address();
-            let addr = SocketAddr::new(std::net::IpAddr::V4(broadcast_ip), bc.broadcast_port);
-            log::info!("Broadcast feedback will be sent to {}", addr);
-            Some(addr)
-        } else {
-            None
-        };
+        let configured = Self::resolve_feedback_destinations(&self.config).await;
+        log::info!("OSC feedback destinations: {:?}", configured);
+        let mut targets = FeedbackTargets::new(configured);
 
         // =====================================================================
         // CREATE SHUTDOWN CHANNEL
         // =====================================================================
 
-        // mpsc channel with buffer size 1 - we only need to send one shutdown signal
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-
-        // =====================================================================
-        // START POLLING
-        // =====================================================================
-
-        // Start background polling for external state changes
-        self.state_manager.start_polling(2000);
 
         // =====================================================================
         // SPAWN MAIN EVENT LOOP
         // =====================================================================
 
-        // Clone what we need for the spawned task
         let state_manager = self.state_manager.clone();
-        let broadcast_config = self.broadcast_config.clone();
-        let peer_tx = self.peer_tx.clone();
+        let scroll_broadcast = self.scroll_broadcast.clone();
+        let name = self.name;
 
         let task_handle = tokio::spawn(async move {
-            // Buffer for incoming UDP packets
-            // OSC messages are typically small, 1024 bytes is plenty
             let mut buf = [0u8; 1024];
-            let mut broadcast_buf = [0u8; 1024];
 
             log::info!("OSC server event loop started");
 
-            // Main event loop
             loop {
-                // `tokio::select!` waits for multiple async operations
-                // and runs the code for whichever completes first.
-                //
-                // This is like Promise.race() in JavaScript, but more powerful
-                // because it can handle multiple branches with different types.
                 tokio::select! {
                     // =========================================================
-                    // BRANCH 1: Incoming OSC packet (direct mode - port 9000)
+                    // BRANCH 1: Incoming OSC packet (port 9000)
                     // =========================================================
-                    result = receive_socket.recv_from(&mut buf) => {
+                    result = socket.recv_from(&mut buf) => {
                         match result {
                             Ok((len, src)) => {
-                                // Decode the OSC packet
-                                // rosc::decoder::decode_udp expects a slice of the actual data
                                 match rosc::decoder::decode_udp(&buf[..len]) {
                                     Ok((_, packet)) => {
-                                        // Log ALL incoming packets at info level
-                                        log::info!(
+                                        let address = Self::get_packet_address(&packet);
+                                        // Status is the clients' heartbeat.
+                                        let level = if address == "/clicker/status" {
+                                            log::Level::Debug
+                                        } else {
+                                            log::Level::Info
+                                        };
+                                        log::log!(
+                                            level,
                                             "📥 OSC packet from {}: {} {}",
                                             src,
-                                            Self::get_packet_address(&packet),
+                                            address,
                                             Self::get_packet_args(&packet)
                                         );
                                         Self::handle_packet(
                                             packet,
+                                            src,
                                             &state_manager,
-                                            &feedback_socket,
-                                            &feedback_addrs,
-                                            None, // No channel filtering for direct mode
+                                            &socket,
+                                            &mut targets,
+                                            scroll_broadcast.as_ref(),
+                                            &name,
                                         ).await;
                                     }
                                     Err(e) => {
@@ -378,76 +268,20 @@ impl OscServer {
                     }
 
                     // =========================================================
-                    // BRANCH 2: Incoming broadcast packet (broadcast mode - port 9002)
+                    // BRANCH 2: State changed -> send feedback
                     // =========================================================
-                    result = async {
-                        if let Some(ref socket) = broadcast_socket {
-                            socket.recv_from(&mut broadcast_buf).await
-                        } else {
-                            // If no broadcast socket, pend forever (won't be selected)
-                            std::future::pending().await
-                        }
-                    } => {
-                        if let Ok((len, src)) = result {
-                            match rosc::decoder::decode_udp(&broadcast_buf[..len]) {
-                                Ok((_, packet)) => {
-                                    // Log ALL incoming broadcast packets at info level
-                                    log::info!(
-                                        "📡 OSC broadcast from {}: {} {}",
-                                        src,
-                                        Self::get_packet_address(&packet),
-                                        Self::get_packet_args(&packet)
-                                    );
-
-                                    // Track the command source for peer discovery
-                                    if let (Some(ref bc), Some(ref tx)) = (&broadcast_config, &peer_tx) {
-                                        if Self::is_command_packet(&packet) {
-                                            let _ = tx.try_send(CommandSourcePeer {
-                                                address: src,
-                                                channel: bc.channel_name.clone(),
-                                            });
-                                        }
-                                    }
-
-                                    Self::handle_packet(
-                                        packet,
-                                        &state_manager,
-                                        &feedback_socket,
-                                        &feedback_addrs,
-                                        broadcast_config.as_ref().map(|c| c.channel_name.as_str()),
-                                    ).await;
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to decode broadcast OSC packet from {}: {}", src, e);
-                                }
-                            }
-                        }
+                    changed = state_changes.recv() => {
+                        // Lagged: skip the backlog and send where things are now.
+                        let state = changed.unwrap_or_else(|_| state_manager.get_state());
+                        let addrs = targets.current(Instant::now());
+                        Self::send_feedback_to_all(&state, &socket, &addrs).await;
                     }
 
                     // =========================================================
-                    // BRANCH 3: State changed -> send feedback
-                    // =========================================================
-                    Some(state) = state_change_rx.recv() => {
-                        // Send to direct destinations
-                        Self::send_feedback_to_all(&state, &feedback_socket, &feedback_addrs).await;
-
-                        // Also broadcast feedback if in broadcast mode
-                        if let (Some(ref bc), Some(ref addr)) = (&broadcast_config, &broadcast_feedback_addr) {
-                            Self::send_broadcast_feedback(
-                                &state,
-                                &bc.channel_name,
-                                &feedback_socket,
-                                addr,
-                            ).await;
-                        }
-                    }
-
-                    // =========================================================
-                    // BRANCH 4: Shutdown signal
+                    // BRANCH 3: Shutdown signal
                     // =========================================================
                     _ = shutdown_rx.recv() => {
                         log::info!("OSC server received shutdown signal");
-                        state_manager.stop_polling();
                         break;
                     }
                 }
@@ -465,30 +299,6 @@ impl OscServer {
     // =========================================================================
     // PACKET HANDLING
     // =========================================================================
-
-    /// Check if an OSC packet contains a command (not feedback).
-    ///
-    /// Used for peer tracking - we only want to track devices that send commands,
-    /// not our own feedback messages bouncing back.
-    fn is_command_packet(packet: &OscPacket) -> bool {
-        match packet {
-            OscPacket::Message(msg) => {
-                // Command addresses contain /next, /prev, /goto, /status, /refresh
-                // Feedback addresses contain /state/
-                let addr = &msg.addr;
-                !addr.contains("/state/")
-                    && (addr.contains("/next")
-                        || addr.contains("/prev")
-                        || addr.contains("/goto")
-                        || addr.contains("/status")
-                        || addr.contains("/refresh"))
-            }
-            OscPacket::Bundle(bundle) => {
-                // If any message in the bundle is a command, consider it a command packet
-                bundle.content.iter().any(Self::is_command_packet)
-            }
-        }
-    }
 
     /// Extract the OSC address from a packet for logging.
     fn get_packet_address(packet: &OscPacket) -> String {
@@ -512,54 +322,63 @@ impl OscServer {
         }
     }
 
-    /// Parse all feedback destinations from config into SocketAddrs
-    fn parse_feedback_destinations(config: &OscConfig) -> Result<Vec<SocketAddr>, String> {
-        let destinations = config.get_all_destinations();
-        let mut addrs = Vec::with_capacity(destinations.len());
+    /// Resolve the configured feedback destinations (IPs or hostnames). One
+    /// that can't be resolved is skipped, so a typo can't stop OSC commands.
+    async fn resolve_feedback_destinations(config: &OscConfig) -> Vec<SocketAddr> {
+        let mut addrs = Vec::new();
 
-        for dest in destinations {
-            let addr: SocketAddr = dest
-                .to_addr_string()
-                .parse()
-                .map_err(|e| format!("Invalid feedback address {}: {}", dest.to_addr_string(), e))?;
-            addrs.push(addr);
+        for dest in config.get_all_destinations() {
+            if dest.host.trim().is_empty() {
+                continue;
+            }
+            let target = dest.to_addr_string();
+            let lookup = tokio::time::timeout(RESOLVE_TIMEOUT, tokio::net::lookup_host(&target));
+            // Our socket is IPv4.
+            let resolved = match lookup.await {
+                Ok(Ok(mut found)) => found.find(SocketAddr::is_ipv4),
+                Ok(Err(e)) => {
+                    log::warn!("Skipping feedback destination {}: {}", target, e);
+                    continue;
+                }
+                Err(_) => {
+                    log::warn!("Skipping feedback destination {}: lookup timed out", target);
+                    continue;
+                }
+            };
+            match resolved {
+                Some(addr) => addrs.push(addr),
+                None => log::warn!("Skipping feedback destination {}: no IPv4 address", target),
+            }
         }
 
-        Ok(addrs)
+        addrs
     }
 
     /// Handle an incoming OSC packet.
-    ///
-    /// OSC packets can contain:
-    /// - A single message
-    /// - A bundle of messages (with a timestamp)
-    ///
-    /// We handle both cases recursively.
-    ///
-    /// ## Parameters
-    /// - `channel_filter` - If Some, only process messages for this channel (broadcast mode)
     async fn handle_packet(
         packet: OscPacket,
-        state_manager: &StateManager,
-        feedback_socket: &UdpSocket,
-        feedback_addrs: &[SocketAddr],
-        channel_filter: Option<&str>,
+        src: SocketAddr,
+        state_manager: &Arc<StateManager>,
+        socket: &UdpSocket,
+        targets: &mut FeedbackTargets,
+        scroll_tx: Option<&tokio::sync::broadcast::Sender<ScrollDirection>>,
+        name: &str,
     ) {
         match packet {
             OscPacket::Message(msg) => {
-                Self::handle_message(&msg, state_manager, feedback_socket, feedback_addrs, channel_filter)
+                Self::handle_message(&msg, src, state_manager, socket, targets, scroll_tx, name)
                     .await;
             }
             OscPacket::Bundle(bundle) => {
-                // Process all messages in the bundle
                 for packet in bundle.content {
-                    // Recursive call to handle nested messages/bundles
                     Box::pin(Self::handle_packet(
                         packet,
+                        src,
                         state_manager,
-                        feedback_socket,
-                        feedback_addrs,
-                        channel_filter,
+                        socket,
+                        targets,
+                        scroll_tx,
+                        name,
                     ))
                     .await;
                 }
@@ -568,74 +387,31 @@ impl OscServer {
     }
 
     /// Handle a single OSC message.
-    ///
-    /// ## Parameters
-    /// - `channel_filter` - If Some, only process channel-based messages for this channel
     async fn handle_message(
         msg: &rosc::OscMessage,
-        state_manager: &StateManager,
-        feedback_socket: &UdpSocket,
-        feedback_addrs: &[SocketAddr],
-        channel_filter: Option<&str>,
+        src: SocketAddr,
+        state_manager: &Arc<StateManager>,
+        socket: &UdpSocket,
+        targets: &mut FeedbackTargets,
+        scroll_tx: Option<&tokio::sync::broadcast::Sender<ScrollDirection>>,
+        name: &str,
     ) {
-        // If we have a channel filter, try to parse as a channel command first
-        if let Some(filter_channel) = channel_filter {
-            if let Some(channel_cmd) = OscCommand::from_channel_message(&msg.addr, &msg.args) {
-                // Only process if the channel matches our filter
-                if channel_cmd.channel != filter_channel {
-                    log::trace!(
-                        "Ignoring message for channel '{}' (we are on '{}')",
-                        channel_cmd.channel,
-                        filter_channel
-                    );
-                    return;
-                }
-
-                log::debug!(
-                    "Received broadcast command for channel '{}': {:?}",
-                    channel_cmd.channel,
-                    channel_cmd.command
-                );
-
-                // Execute the command
-                match channel_cmd.command {
-                    OscCommand::Next => state_manager.next_slide(),
-                    OscCommand::Previous => state_manager.prev_slide(),
-                    OscCommand::Status => {
-                        let state = state_manager.get_state();
-                        Self::send_feedback_to_all(&state, feedback_socket, feedback_addrs).await;
-                    }
-                    OscCommand::Refresh => state_manager.refresh_state(),
-                    OscCommand::ChannelCmdGoto { slide, .. } => {
-                        // TODO: Implement goto_slide in StateManager
-                        log::debug!("Goto slide {} requested (not yet implemented)", slide);
-                    }
-                    _ => {}
-                }
-                return;
-            }
-
-            // If it's not a valid channel command in broadcast mode, ignore it
-            // (unless it matches our channel prefix for state feedback, etc.)
-            if !OscCommand::matches_channel(&msg.addr, filter_channel) {
-                log::trace!("Ignoring non-channel message in broadcast mode: {}", msg.addr);
-                return;
-            }
-        }
-
-        // Standard (direct mode) message handling
         let command = OscCommand::from_message(&msg.addr, &msg.args);
 
         log::debug!("Received OSC command: {:?}", command);
 
+        // Looking for us isn't connecting, and stray traffic isn't a client.
+        if !matches!(command, OscCommand::Discover | OscCommand::Unknown(_)) {
+            targets.heard_from(src, Instant::now());
+        }
+
         match command {
             OscCommand::Next => {
-                state_manager.next_slide();
-                // Feedback is sent automatically when state changes
+                state_manager.next_slide(CommandSource::Osc);
             }
 
             OscCommand::Previous => {
-                state_manager.prev_slide();
+                state_manager.prev_slide(CommandSource::Osc);
             }
 
             OscCommand::ZoomIn => {
@@ -647,50 +423,47 @@ impl OscServer {
             }
 
             OscCommand::Zoom => {
-                // Query only - send current zoom level to all destinations
                 let state = state_manager.get_state();
                 let msg = OscFeedback::zoom_only(state.zoom_level);
-                Self::send_single_message_to_all(&msg, feedback_socket, feedback_addrs).await;
+                let addrs = targets.current(Instant::now());
+                Self::send_single_message_to_all(&msg, socket, &addrs).await;
             }
 
             OscCommand::Status => {
-                // Query only - send full state to all destinations
                 let state = state_manager.get_state();
-                Self::send_feedback_to_all(&state, feedback_socket, feedback_addrs).await;
+                let addrs = targets.current(Instant::now());
+                Self::send_feedback_to_all(&state, socket, &addrs).await;
+            }
+
+            OscCommand::Discover => {
+                let msg = OscFeedback::here(name);
+                Self::send_single_message_to_all(&msg, socket, &[src]).await;
+            }
+
+            OscCommand::Goto { slide } => {
+                state_manager.goto_slide(slide, CommandSource::Osc);
             }
 
             OscCommand::Refresh => {
-                // Force a state refresh (will trigger feedback when done)
                 state_manager.refresh_state();
             }
 
-            // Channel commands - handled separately when channel sync is enabled
-            OscCommand::ChannelAnnounce { instance_id, channel, ip, port } => {
-                log::debug!(
-                    "Channel announce from {} (channel: {}, addr: {}:{})",
-                    instance_id, channel, ip, port
-                );
-                // TODO: Forward to channel manager when integrated
+            OscCommand::ScrollUp => {
+                if let Some(tx) = scroll_tx {
+                    let _ = tx.send(ScrollDirection::Up);
+                }
             }
-            OscCommand::ChannelLeave { instance_id } => {
-                log::debug!("Channel leave from {}", instance_id);
-                // TODO: Forward to channel manager when integrated
+
+            OscCommand::ScrollDown => {
+                if let Some(tx) = scroll_tx {
+                    let _ = tx.send(ScrollDirection::Down);
+                }
             }
-            OscCommand::ChannelHeartbeat { instance_id } => {
-                log::trace!("Channel heartbeat from {}", instance_id);
-                // TODO: Forward to channel manager when integrated
-            }
-            OscCommand::ChannelCmdNext { origin } => {
-                log::debug!("Channel cmd/next from {}", origin);
-                // TODO: Execute if channel enabled and origin != self
-            }
-            OscCommand::ChannelCmdPrev { origin } => {
-                log::debug!("Channel cmd/prev from {}", origin);
-                // TODO: Execute if channel enabled and origin != self
-            }
-            OscCommand::ChannelCmdGoto { origin, slide } => {
-                log::debug!("Channel cmd/goto from {} to slide {}", origin, slide);
-                // TODO: Execute if channel enabled and origin != self
+
+            OscCommand::NotesPage => {
+                if let Some(tx) = scroll_tx {
+                    let _ = tx.send(ScrollDirection::Page);
+                }
             }
 
             OscCommand::Unknown(addr) => {
@@ -704,11 +477,7 @@ impl OscServer {
     // =========================================================================
 
     /// Send all state feedback messages to all destinations.
-    async fn send_feedback_to_all(
-        state: &CachedState,
-        socket: &UdpSocket,
-        addrs: &[SocketAddr],
-    ) {
+    async fn send_feedback_to_all(state: &CachedState, socket: &UdpSocket, addrs: &[SocketAddr]) {
         let messages = OscFeedback::from_state(state);
 
         for msg in messages {
@@ -724,80 +493,20 @@ impl OscServer {
         );
     }
 
-    /// Send channel-aware feedback via broadcast.
-    ///
-    /// Uses the format `/clicker/<channel>/state/<property>` so receivers
-    /// can filter by channel.
-    async fn send_broadcast_feedback(
-        state: &CachedState,
-        channel: &str,
-        socket: &UdpSocket,
-        broadcast_addr: &SocketAddr,
-    ) {
-        let messages = OscFeedback::from_state_with_channel(state, channel);
-
-        for msg in messages {
-            let packet = OscPacket::Message(msg);
-            match encoder::encode(&packet) {
-                Ok(bytes) => {
-                    if let Err(e) = socket.send_to(&bytes, broadcast_addr).await {
-                        log::warn!("Failed to broadcast feedback to {}: {}", broadcast_addr, e);
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to encode broadcast feedback: {}", e);
-                }
-            }
-        }
-
-        log::debug!(
-            "Broadcast feedback for channel '{}': presenting={}, slide={}/{}",
-            channel,
-            state.is_presenting,
-            state.current_slide,
-            state.total_slides
-        );
-    }
-
     /// Send a single OSC message to all destinations.
     async fn send_single_message_to_all(
         msg: &rosc::OscMessage,
         socket: &UdpSocket,
         addrs: &[SocketAddr],
     ) {
-        // Wrap the message in a packet for encoding
         let packet = OscPacket::Message(msg.clone());
 
-        // Encode to bytes once, send to all destinations
         match encoder::encode(&packet) {
             Ok(bytes) => {
                 for addr in addrs {
                     if let Err(e) = socket.send_to(&bytes, addr).await {
                         log::warn!("Failed to send OSC feedback to {}: {}", addr, e);
                     }
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to encode OSC message: {}", e);
-            }
-        }
-    }
-
-    /// Send a single OSC message to a specific destination.
-    #[allow(dead_code)]
-    async fn send_single_message(
-        msg: &rosc::OscMessage,
-        socket: &UdpSocket,
-        addr: &SocketAddr,
-    ) {
-        // Wrap the message in a packet for encoding
-        let packet = OscPacket::Message(msg.clone());
-
-        // Encode to bytes
-        match encoder::encode(&packet) {
-            Ok(bytes) => {
-                if let Err(e) = socket.send_to(&bytes, addr).await {
-                    log::warn!("Failed to send OSC feedback to {}: {}", addr, e);
                 }
             }
             Err(e) => {
@@ -815,13 +524,133 @@ impl OscServer {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_socket_addr_parsing() {
-        // Test that we can parse typical addresses
-        let addr: Result<SocketAddr, _> = "127.0.0.1:9001".parse();
-        assert!(addr.is_ok());
+    use crate::osc::state_manager::StateSinks;
+    use rosc::{OscMessage, OscType};
 
-        let addr: Result<SocketAddr, _> = "0.0.0.0:9000".parse();
-        assert!(addr.is_ok());
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn a_client_gets_feedback_until_it_goes_quiet() {
+        let now = Instant::now();
+        let client = addr("10.0.0.5:50000");
+        let mut targets = FeedbackTargets::new(vec![]);
+
+        targets.heard_from(client, now);
+        assert_eq!(targets.current(now + CLIENT_TIMEOUT / 2), vec![client]);
+
+        targets.heard_from(client, now + CLIENT_TIMEOUT / 2);
+        assert_eq!(targets.current(now + CLIENT_TIMEOUT), vec![client]);
+
+        assert!(targets.current(now + CLIENT_TIMEOUT * 2).is_empty());
+    }
+
+    #[test]
+    fn configured_destinations_stay_and_are_not_doubled() {
+        let now = Instant::now();
+        let fixed = addr("10.0.0.9:9001");
+        let mut targets = FeedbackTargets::new(vec![fixed]);
+
+        targets.heard_from(fixed, now);
+        assert_eq!(targets.current(now), vec![fixed]);
+        assert_eq!(targets.current(now + CLIENT_TIMEOUT * 2), vec![fixed]);
+    }
+
+    /// A port nothing is listening on, for the server under test.
+    async fn free_port() -> u16 {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.local_addr().unwrap().port()
+    }
+
+    async fn start_server(feedback_host: &str) -> (OscServerHandle, u16) {
+        let port = free_port().await;
+        let config = OscConfig {
+            receive_port: port,
+            host: "127.0.0.1".to_string(),
+            feedback_host: feedback_host.to_string(),
+            ..OscConfig::default()
+        };
+        let state_manager = Arc::new(StateManager::new(StateSinks::default()));
+        let handle = OscServer::new(config, state_manager)
+            .with_name("Stage Left".to_string())
+            .start()
+            .await
+            .unwrap();
+        (handle, port)
+    }
+
+    async fn client(port: u16) -> UdpSocket {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket.connect(("127.0.0.1", port)).await.unwrap();
+        socket
+    }
+
+    async fn send(socket: &UdpSocket, address: &str) {
+        let packet = OscPacket::Message(OscMessage {
+            addr: address.to_string(),
+            args: vec![],
+        });
+        socket
+            .send(&encoder::encode(&packet).unwrap())
+            .await
+            .unwrap();
+    }
+
+    async fn receive(socket: &UdpSocket) -> OscMessage {
+        let mut buf = [0u8; 1024];
+        let len = tokio::time::timeout(Duration::from_secs(2), socket.recv(&mut buf))
+            .await
+            .expect("no reply from the OSC server")
+            .unwrap();
+        match rosc::decoder::decode_udp(&buf[..len]).unwrap().1 {
+            OscPacket::Message(msg) => msg,
+            OscPacket::Bundle(_) => panic!("expected a message"),
+        }
+    }
+
+    // The sockets are connected, so these also prove replies come from the
+    // port the client sent to.
+    #[tokio::test]
+    async fn status_replies_to_the_sender() {
+        let (handle, port) = start_server("127.0.0.1").await;
+        let socket = client(port).await;
+
+        send(&socket, "/clicker/status").await;
+        assert_eq!(receive(&socket).await.addr, "/clicker/state/presenting");
+
+        handle.stop().await;
+    }
+
+    #[tokio::test]
+    async fn discover_replies_with_our_name_without_connecting() {
+        let (handle, port) = start_server("127.0.0.1").await;
+        let looking = client(port).await;
+        let connected = client(port).await;
+
+        send(&looking, "/clicker/discover").await;
+        let reply = receive(&looking).await;
+        assert_eq!(reply.addr, "/clicker/here");
+        assert_eq!(reply.args, vec![OscType::String("Stage Left".to_string())]);
+
+        // Only the connected client hears the status it asked for.
+        send(&connected, "/clicker/status").await;
+        assert_eq!(receive(&connected).await.addr, "/clicker/state/presenting");
+        let mut buf = [0u8; 64];
+        let heard = tokio::time::timeout(Duration::from_millis(100), looking.recv(&mut buf)).await;
+        assert!(heard.is_err(), "discovering should not subscribe");
+
+        handle.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_bad_feedback_host_does_not_stop_commands() {
+        let (handle, port) = start_server("not a host!!").await;
+        let socket = client(port).await;
+
+        send(&socket, "/clicker/status").await;
+        assert_eq!(receive(&socket).await.addr, "/clicker/state/presenting");
+
+        handle.stop().await;
     }
 }

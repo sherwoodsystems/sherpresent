@@ -1,0 +1,27 @@
+services:
+  windows:
+    image: dockurr/windows
+    container_name: sherpresent-windows-build
+    environment:
+      RAM_SIZE: '8G'
+      CPU_CORES: '4'
+      DISK_SIZE: '64G'
+      VERSION: 'win11'
+      USERNAME: 'Docker'
+      PASSWORD: 'admin'
+    devices:
+      - /dev/kvm
+    ports:
+      - '2222:22' # SSH (headless builds)
+      - '3389:3389' # RDP (initial setup only)
+      - '8006:8006' # Web viewer (noVNC)
+    volumes:
+      - windows_data:/storage
+      - ./oem:/oem
+    cap_add:
+      - NET_ADMIN
+    stop_grace_period: 120s
+    restart: unless-stopped
+
+volumes:
+  windows_data:

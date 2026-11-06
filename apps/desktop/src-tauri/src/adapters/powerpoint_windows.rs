@@ -36,14 +36,13 @@
 
 #![cfg(target_os = "windows")]
 
-use super::{PresentationAdapter, PresentationState, SlideInfo};
+use super::{Builds, LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
 
 use windows::{
     core::{Interface, BSTR, GUID, PCWSTR},
     Win32::System::Com::{
-        CLSIDFromProgID, CoCreateInstance, CoInitializeEx,
-        CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED,
-        IDispatch, DISPATCH_METHOD, DISPATCH_PROPERTYGET,
+        CLSIDFromProgID, CoCreateInstance, CoInitializeEx, IDispatch, CLSCTX_LOCAL_SERVER,
+        COINIT_APARTMENTTHREADED, DISPATCH_FLAGS, DISPATCH_METHOD, DISPATCH_PROPERTYGET,
         DISPPARAMS,
     },
     Win32::System::Ole::GetActiveObject,
@@ -51,9 +50,6 @@ use windows::{
 };
 
 use std::ptr;
-
-/// PowerPoint's fixed zoom levels for presenter view notes (same as macOS)
-const ZOOM_LEVELS: [i32; 5] = [100, 150, 200, 300, 400];
 
 /// Windows PowerPoint adapter using COM automation
 pub struct PowerPointWindowsAdapter;
@@ -72,10 +68,30 @@ impl PowerPointWindowsAdapter {
                 // Only fail on actual errors, not S_FALSE (already initialized)
                 let code = hr.0;
                 if code < 0 {
-                    return Err(format!("Failed to initialize COM: HRESULT 0x{:08X}", code as u32));
+                    return Err(format!(
+                        "Failed to initialize COM: HRESULT 0x{:08X}",
+                        code as u32
+                    ));
                 }
             }
             Ok(())
+        }
+    }
+
+    /// The running PowerPoint Application, or `None` if it isn't running.
+    /// Never starts PowerPoint.
+    pub(super) fn get_running_application() -> Result<Option<IDispatch>, String> {
+        unsafe {
+            let clsid = Self::clsid()?;
+            let mut punk = None;
+            if GetActiveObject(&clsid, None, &mut punk).is_err() {
+                return Ok(None);
+            }
+            punk.map(|unk| {
+                unk.cast::<IDispatch>()
+                    .map_err(|e| format!("Failed to get IDispatch from running instance: {}", e))
+            })
+            .transpose()
         }
     }
 
@@ -84,29 +100,24 @@ impl PowerPointWindowsAdapter {
     /// First tries to attach to an existing PowerPoint instance using GetActiveObject.
     /// If no instance is running, creates a new one with CoCreateInstance.
     fn get_application() -> Result<IDispatch, String> {
+        if let Some(app) = Self::get_running_application()? {
+            return Ok(app);
+        }
         unsafe {
-            // Get CLSID from ProgID
-            let prog_id: Vec<u16> = "PowerPoint.Application\0".encode_utf16().collect();
-
-            let clsid = CLSIDFromProgID(PCWSTR(prog_id.as_ptr()))
-                .map_err(|e| format!("PowerPoint not installed or ProgID not found: {}", e))?;
-
-            // Try to get running instance first
-            let mut punk = None;
-            if GetActiveObject(&clsid, None, &mut punk).is_ok() {
-                if let Some(unk) = punk {
-                    return unk.cast::<IDispatch>()
-                        .map_err(|e| format!("Failed to get IDispatch from running instance: {}", e));
-                }
-            }
-
             // No running instance, try to create one
             // Note: This will start PowerPoint if not running
-            let app: IDispatch = CoCreateInstance(&clsid, None, CLSCTX_LOCAL_SERVER)
+            let app: IDispatch = CoCreateInstance(&Self::clsid()?, None, CLSCTX_LOCAL_SERVER)
                 .map_err(|e| format!("Failed to create PowerPoint instance: {}", e))?;
 
             Ok(app)
         }
+    }
+
+    /// PowerPoint's CLSID, from its ProgID.
+    fn clsid() -> Result<GUID, String> {
+        let prog_id: Vec<u16> = "PowerPoint.Application\0".encode_utf16().collect();
+        unsafe { CLSIDFromProgID(PCWSTR(prog_id.as_ptr())) }
+            .map_err(|e| format!("PowerPoint not installed or ProgID not found: {}", e))
     }
 
     /// Get DISPID (dispatch identifier) for a property or method name
@@ -126,114 +137,107 @@ impl PowerPointWindowsAdapter {
         }
     }
 
-    /// Get a property from an IDispatch object
+    /// Invoke `name` on `disp` with `args`, retrying while PowerPoint is busy.
     ///
-    /// Equivalent to VBA: `obj.PropertyName`
-    fn get_property(disp: &IDispatch, name: &str) -> Result<VARIANT, String> {
-        unsafe {
-            let dispid = Self::get_dispid(disp, name)?;
+    /// PowerPoint rejects incoming COM calls while it shows a modal dialog or is
+    /// mid-transition (`RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER`).
+    /// Those clear on their own, so a few short retries ride them out instead
+    /// of dropping the poll.
+    fn invoke(
+        disp: &IDispatch,
+        name: &str,
+        flags: DISPATCH_FLAGS,
+        args: &mut [VARIANT],
+    ) -> Result<VARIANT, String> {
+        const RPC_E_CALL_REJECTED: i32 = 0x8001_0001_u32 as i32;
+        const RPC_E_SERVERCALL_RETRYLATER: i32 = 0x8001_010A_u32 as i32;
+        const RETRIES: u32 = 3;
+
+        let dispid = Self::get_dispid(disp, name)?;
+        let params = DISPPARAMS {
+            rgvarg: if args.is_empty() {
+                ptr::null_mut()
+            } else {
+                args.as_mut_ptr()
+            },
+            rgdispidNamedArgs: ptr::null_mut(),
+            cArgs: args.len() as u32,
+            cNamedArgs: 0,
+        };
+
+        let mut attempt = 0;
+        loop {
             let mut result = VARIANT::default();
-            let params = DISPPARAMS {
-                rgvarg: ptr::null_mut(),
-                rgdispidNamedArgs: ptr::null_mut(),
-                cArgs: 0,
-                cNamedArgs: 0,
+            let outcome = unsafe {
+                disp.Invoke(
+                    dispid,
+                    &GUID::zeroed(),
+                    0, // LOCALE_SYSTEM_DEFAULT
+                    flags,
+                    &params,
+                    Some(&mut result),
+                    None,
+                    None,
+                )
             };
-
-            disp.Invoke(
-                dispid,
-                &GUID::zeroed(),
-                0, // LOCALE_SYSTEM_DEFAULT
-                DISPATCH_PROPERTYGET,
-                &params,
-                Some(&mut result),
-                None,
-                None,
-            )
-            .map_err(|e| format!("Failed to get property '{}': {}", name, e))?;
-
-            Ok(result)
+            match outcome {
+                Ok(()) => return Ok(result),
+                Err(e)
+                    if attempt < RETRIES
+                        && matches!(
+                            e.code().0,
+                            RPC_E_CALL_REJECTED | RPC_E_SERVERCALL_RETRYLATER
+                        ) =>
+                {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(50 * attempt as u64));
+                }
+                Err(e) => return Err(format!("'{}' failed: {}", name, e)),
+            }
         }
     }
 
-    /// Get an indexed property from a collection
+    /// Get a property from an IDispatch object
     ///
-    /// Equivalent to VBA: `collection(index)` or `collection.Item(index)`
-    /// Uses DISPATCH_METHOD because Item is a method in Office collections
+    /// Equivalent to VBA: `obj.PropertyName`
+    pub(super) fn get_property(disp: &IDispatch, name: &str) -> Result<VARIANT, String> {
+        Self::invoke(disp, name, DISPATCH_PROPERTYGET, &mut [])
+    }
+
+    /// Get an indexed item from a collection
+    ///
+    /// Equivalent to VBA: `collection.Item(index)`. Office's `Item` is a
+    /// method, not a property, so this uses DISPATCH_METHOD.
     fn get_indexed_property(disp: &IDispatch, name: &str, index: i32) -> Result<VARIANT, String> {
-        unsafe {
-            let dispid = Self::get_dispid(disp, name)?;
-            let mut result = VARIANT::default();
-
-            // Create VARIANT for the index argument using the new API
-            let arg = VARIANT::from(index);
-
-            // COM passes arguments in reverse order
-            let mut args = [arg];
-            let params = DISPPARAMS {
-                rgvarg: args.as_mut_ptr(),
-                rgdispidNamedArgs: ptr::null_mut(),
-                cArgs: 1,
-                cNamedArgs: 0,
-            };
-
-            // Use DISPATCH_METHOD for Office Item() calls - they are methods, not properties
-            disp.Invoke(
-                dispid,
-                &GUID::zeroed(),
-                0,
-                DISPATCH_METHOD,
-                &params,
-                Some(&mut result),
-                None,
-                None,
-            )
-            .map_err(|e| format!("Failed to get indexed property '{}[{}]': {}", name, index, e))?;
-
-            Ok(result)
-        }
+        Self::invoke(disp, name, DISPATCH_METHOD, &mut [VARIANT::from(index)])
     }
 
     /// Call a method with no arguments
     ///
     /// Equivalent to VBA: `obj.MethodName`
     fn invoke_method(disp: &IDispatch, name: &str) -> Result<VARIANT, String> {
-        unsafe {
-            let dispid = Self::get_dispid(disp, name)?;
-            let mut result = VARIANT::default();
-            let params = DISPPARAMS {
-                rgvarg: ptr::null_mut(),
-                rgdispidNamedArgs: ptr::null_mut(),
-                cArgs: 0,
-                cNamedArgs: 0,
-            };
+        Self::invoke(disp, name, DISPATCH_METHOD, &mut [])
+    }
 
-            disp.Invoke(
-                dispid,
-                &GUID::zeroed(),
-                0,
-                DISPATCH_METHOD,
-                &params,
-                Some(&mut result),
-                None,
-                None,
-            )
-            .map_err(|e| format!("Failed to invoke method '{}': {}", name, e))?;
-
-            Ok(result)
-        }
+    /// Call a method with a single integer argument
+    ///
+    /// Equivalent to VBA: `obj.MethodName(intArg)`
+    fn invoke_method_with_int_arg(
+        disp: &IDispatch,
+        name: &str,
+        arg_value: i32,
+    ) -> Result<VARIANT, String> {
+        Self::invoke(disp, name, DISPATCH_METHOD, &mut [VARIANT::from(arg_value)])
     }
 
     /// Extract an IDispatch from a VARIANT
-    fn variant_to_dispatch(var: &VARIANT) -> Result<IDispatch, String> {
-        IDispatch::try_from(var)
-            .map_err(|e| format!("Expected IDispatch variant: {}", e))
+    pub(super) fn variant_to_dispatch(var: &VARIANT) -> Result<IDispatch, String> {
+        IDispatch::try_from(var).map_err(|e| format!("Expected IDispatch variant: {}", e))
     }
 
     /// Extract an i32 from a VARIANT
-    fn variant_to_i32(var: &VARIANT) -> Result<i32, String> {
-        i32::try_from(var)
-            .map_err(|e| format!("Expected i32 variant: {}", e))
+    pub(super) fn variant_to_i32(var: &VARIANT) -> Result<i32, String> {
+        i32::try_from(var).map_err(|e| format!("Expected i32 variant: {}", e))
     }
 
     /// Extract a String from a VARIANT (BSTR)
@@ -291,6 +295,94 @@ impl PowerPointWindowsAdapter {
         let var = Self::get_property(pres, "Slides")?;
         Self::variant_to_dispatch(&var)
     }
+
+    /// Presentation `name`, starting PowerPoint if it isn't running.
+    fn presentation(name: &str) -> Result<IDispatch, String> {
+        Self::init_com()?;
+        Self::get_presentation_by_name(&Self::get_application()?, name)
+    }
+
+    /// The deck's slide count.
+    fn slide_count(pres: &IDispatch) -> Result<i32, String> {
+        Self::variant_to_i32(&Self::get_property(&Self::get_slides(pres)?, "Count")?)
+    }
+
+    /// The SlideShowView of `pres`, if it is presenting.
+    fn show_view(pres: &IDispatch) -> Result<IDispatch, String> {
+        Self::get_slideshow_view(&Self::get_slideshow_window(pres)?)
+    }
+
+    /// The running show of presentation `name`: its SlideShowView, and the
+    /// deck's slide count.
+    fn show(name: &str) -> Result<(IDispatch, i32), String> {
+        let pres = Self::presentation(name)?;
+        Ok((Self::show_view(&pres)?, Self::slide_count(&pres)?))
+    }
+
+    /// Speaker notes of the slide on screen, if it has any.
+    fn notes_on_screen(view: &IDispatch) -> Result<Option<String>, String> {
+        let slide = Self::variant_to_dispatch(&Self::get_property(view, "Slide")?)?;
+        let text = Self::slide_notes(&slide)?;
+        Ok((!text.is_empty()).then_some(text))
+    }
+
+    /// Where the show stands: slide, slide count and builds.
+    fn position(view: &IDispatch, total: i32) -> Result<SlideInfo, String> {
+        let current = Self::variant_to_i32(&Self::get_property(view, "CurrentShowPosition")?)?;
+        Ok(SlideInfo {
+            current,
+            total,
+            transition_duration: None,
+            builds: Self::builds(view),
+        })
+    }
+
+    /// The slide's click-triggered builds: how many have played
+    /// (`GetClickIndex`) of how many (`GetClickCount`).
+    fn builds(view: &IDispatch) -> Option<Builds> {
+        let read = |method: &str| {
+            Self::invoke_method(view, method)
+                .ok()
+                .and_then(|v| Self::variant_to_i32(&v).ok())
+        };
+        Some(Builds {
+            done: read("GetClickIndex")?,
+            total: read("GetClickCount")?,
+        })
+    }
+
+    /// Speaker notes text of `slide`, trimmed.
+    ///
+    /// The notes live in the notes page's body placeholder. Its position in
+    /// `Placeholders` depends on the notes master (index 2 on the default
+    /// master, but not on customised ones), so find it by type, as the macOS
+    /// adapter does.
+    fn slide_notes(slide: &IDispatch) -> Result<String, String> {
+        const PP_PLACEHOLDER_BODY: i32 = 2;
+
+        let notes_page = Self::variant_to_dispatch(&Self::get_property(slide, "NotesPage")?)?;
+        let shapes = Self::variant_to_dispatch(&Self::get_property(&notes_page, "Shapes")?)?;
+        let placeholders =
+            Self::variant_to_dispatch(&Self::get_property(&shapes, "Placeholders")?)?;
+        let count = Self::variant_to_i32(&Self::get_property(&placeholders, "Count")?)?;
+
+        for i in 1..=count {
+            let shape =
+                Self::variant_to_dispatch(&Self::get_indexed_property(&placeholders, "Item", i)?)?;
+            let format =
+                Self::variant_to_dispatch(&Self::get_property(&shape, "PlaceholderFormat")?)?;
+            if Self::variant_to_i32(&Self::get_property(&format, "Type")?)? != PP_PLACEHOLDER_BODY {
+                continue;
+            }
+            let text_frame = Self::variant_to_dispatch(&Self::get_property(&shape, "TextFrame")?)?;
+            let text_range =
+                Self::variant_to_dispatch(&Self::get_property(&text_frame, "TextRange")?)?;
+            let text = Self::variant_to_string(&Self::get_property(&text_range, "Text")?)?;
+            return Ok(text.trim().to_string());
+        }
+
+        Ok(String::new())
+    }
 }
 
 impl PresentationAdapter for PowerPointWindowsAdapter {
@@ -317,6 +409,30 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
             let name_var = Self::get_property(&pres, "Name")?;
             let name = Self::variant_to_string(&name_var)?;
             names.push(name);
+        }
+
+        Ok(names)
+    }
+
+    fn get_presenting_presentations(&self) -> Result<Vec<String>, String> {
+        Self::init_com()?;
+
+        // Polled while nothing is presenting, so it must not start PowerPoint.
+        let Some(app) = Self::get_running_application()? else {
+            return Ok(vec![]);
+        };
+
+        let windows = Self::variant_to_dispatch(&Self::get_property(&app, "SlideShowWindows")?)?;
+        let count = Self::variant_to_i32(&Self::get_property(&windows, "Count")?)?;
+
+        let mut names = Vec::new();
+        for i in 1..=count {
+            let window =
+                Self::variant_to_dispatch(&Self::get_indexed_property(&windows, "Item", i)?)?;
+            let pres = Self::variant_to_dispatch(&Self::get_property(&window, "Presentation")?)?;
+            names.push(Self::variant_to_string(&Self::get_property(
+                &pres, "Name",
+            )?)?);
         }
 
         Ok(names)
@@ -356,98 +472,72 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
     }
 
     fn get_slide_info(&self, name: &str) -> Result<SlideInfo, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-
-        // Get slide count
-        let slides = Self::get_slides(&pres)?;
-        let count_var = Self::get_property(&slides, "Count")?;
-        let total = Self::variant_to_i32(&count_var)?;
-
-        // Get current position from slideshow view
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
-
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current = Self::variant_to_i32(&pos_var)?;
-
-        Ok(SlideInfo { current, total })
+        let (view, total) = Self::show(name)?;
+        Self::position(&view, total)
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
-        Self::init_com()?;
-
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
-
-        // Get current position before moving
-        let slides = Self::get_slides(&pres)?;
-        let count_var = Self::get_property(&slides, "Count")?;
-        let total = Self::variant_to_i32(&count_var)?;
-
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current_pos = Self::variant_to_i32(&pos_var)?;
-
-        // Don't go past the last slide
-        if current_pos >= total {
-            return Ok(SlideInfo {
-                current: current_pos,
-                total,
-            });
+        let (view, total) = Self::show(name)?;
+        let here = Self::position(&view, total)?;
+        // Next on the last slide's last build would end the show.
+        let builds_left = here.builds.is_some_and(|b| b.done < b.total);
+        if here.current >= total && !builds_left {
+            return Ok(here);
         }
-
-        // Call Next method
         Self::invoke_method(&view, "Next")?;
-
-        // Get new position
-        let new_pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let new_pos = Self::variant_to_i32(&new_pos_var)?;
-
-        Ok(SlideInfo {
-            current: new_pos,
-            total,
-        })
+        Self::position(&view, total)
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
-        Self::init_com()?;
+        let (view, total) = Self::show(name)?;
+        let here = Self::position(&view, total)?;
+        let builds_played = here.builds.is_some_and(|b| b.done > 0);
+        if here.current <= 1 && !builds_played {
+            return Ok(here);
+        }
+        Self::invoke_method(&view, "Previous")?;
+        Self::position(&view, total)
+    }
 
-        let app = Self::get_application()?;
-        let pres = Self::get_presentation_by_name(&app, name)?;
-        let window = Self::get_slideshow_window(&pres)?;
-        let view = Self::get_slideshow_view(&window)?;
+    fn goto_slide(&self, name: &str, slide: i32) -> Result<SlideInfo, String> {
+        let (view, total) = Self::show(name)?;
+        Self::invoke_method_with_int_arg(&view, "GotoSlide", slide.clamp(1, total))?;
+        Self::position(&view, total)
+    }
 
-        // Get current position before moving
-        let slides = Self::get_slides(&pres)?;
+    fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
+        Self::notes_on_screen(&Self::show_view(&Self::presentation(name)?)?)
+    }
+
+    fn get_all_presenter_notes(
+        &self,
+        name: &str,
+    ) -> Result<std::collections::HashMap<i32, String>, String> {
+        let slides = Self::get_slides(&Self::presentation(name)?)?;
+
         let count_var = Self::get_property(&slides, "Count")?;
-        let total = Self::variant_to_i32(&count_var)?;
+        let count = Self::variant_to_i32(&count_var)?;
 
-        let pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let current_pos = Self::variant_to_i32(&pos_var)?;
+        let mut notes = std::collections::HashMap::new();
 
-        // Don't go before the first slide
-        if current_pos <= 1 {
-            return Ok(SlideInfo {
-                current: current_pos,
-                total,
-            });
+        for i in 1..=count {
+            let slide_var = match Self::get_indexed_property(&slides, "Item", i) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let slide = match Self::variant_to_dispatch(&slide_var) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            if let Ok(text) = Self::slide_notes(&slide) {
+                if !text.is_empty() {
+                    notes.insert(i, text);
+                }
+            }
         }
 
-        // Call Previous method
-        Self::invoke_method(&view, "Previous")?;
-
-        // Get new position
-        let new_pos_var = Self::get_property(&view, "CurrentShowPosition")?;
-        let new_pos = Self::variant_to_i32(&new_pos_var)?;
-
-        Ok(SlideInfo {
-            current: new_pos,
-            total,
-        })
+        Ok(notes)
     }
 
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
@@ -464,42 +554,38 @@ impl PresentationAdapter for PowerPointWindowsAdapter {
         // Not implemented for Windows yet
         Err("Notes zoom not yet supported on Windows".to_string())
     }
-}
 
-impl PowerPointWindowsAdapter {
-    /// Get the next zoom level up from current
-    pub fn get_next_zoom_level(current: i32) -> i32 {
-        for &level in &ZOOM_LEVELS {
-            if level > current {
-                return level;
-            }
+    fn get_live_status(&self, name: &str) -> LiveStatus {
+        // Polled, so it must not start PowerPoint.
+        let pres = Self::init_com()
+            .and_then(|()| Self::get_running_application())
+            .ok()
+            .flatten()
+            .and_then(|app| Self::get_presentation_by_name(&app, name).ok());
+        let Some(pres) = pres else {
+            return LiveStatus::default();
+        };
+        let Ok(view) = Self::show_view(&pres) else {
+            return LiveStatus {
+                is_open: true,
+                ..Default::default()
+            };
+        };
+
+        // Builds are reported even when there are none (total 0), so the
+        // StateManager knows this slide's builds rather than guessing.
+        let builds = Self::builds(&view);
+        LiveStatus {
+            is_open: true,
+            is_presenting: true,
+            current_slide: Self::get_property(&view, "CurrentShowPosition")
+                .and_then(|v| Self::variant_to_i32(&v))
+                .unwrap_or(0),
+            total_slides: Self::slide_count(&pres).unwrap_or(0),
+            zoom_level: None,
+            presenter_notes: Self::notes_on_screen(&view).ok().flatten(),
+            current_build: builds.map(|b| b.done),
+            total_builds: builds.map(|b| b.total),
         }
-        ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]
-    }
-
-    /// Get the next zoom level down from current
-    pub fn get_prev_zoom_level(current: i32) -> i32 {
-        for &level in ZOOM_LEVELS.iter().rev() {
-            if level < current {
-                return level;
-            }
-        }
-        ZOOM_LEVELS[0]
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_zoom_levels() {
-        assert_eq!(PowerPointWindowsAdapter::get_next_zoom_level(100), 150);
-        assert_eq!(PowerPointWindowsAdapter::get_next_zoom_level(150), 200);
-        assert_eq!(PowerPointWindowsAdapter::get_next_zoom_level(400), 400);
-
-        assert_eq!(PowerPointWindowsAdapter::get_prev_zoom_level(400), 300);
-        assert_eq!(PowerPointWindowsAdapter::get_prev_zoom_level(150), 100);
-        assert_eq!(PowerPointWindowsAdapter::get_prev_zoom_level(100), 100);
     }
 }

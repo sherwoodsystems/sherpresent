@@ -5,6 +5,23 @@ use tauri::Manager;
 use uuid::Uuid;
 
 // =============================================================================
+// ADAPTER CONFIG
+// =============================================================================
+
+/// Per-adapter network configuration
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AdapterConfig {
+    #[serde(rename = "libreoffice")]
+    LibreOffice { host: String, port: u16 },
+    #[serde(rename = "canva")]
+    Canva { url: String },
+    #[default]
+    #[serde(rename = "none")]
+    None,
+}
+
+// =============================================================================
 // FEEDBACK DESTINATION
 // =============================================================================
 
@@ -33,7 +50,7 @@ impl FeedbackDestination {
 // OSC CONFIG
 // =============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OscConfig {
     #[serde(rename = "receivePort")]
     pub receive_port: u16,
@@ -77,73 +94,32 @@ impl Default for OscConfig {
 }
 
 // =============================================================================
-// CHANNEL CONFIG
+// DISCOVERY CONFIG
 // =============================================================================
 
-/// Valid channel names for broadcast mode
-pub const VALID_CHANNELS: &[&str] = &[
-    "main", "backup",
-    "keynote1", "keynote2", "keynote3", "keynote4", "keynote5",
-    "keynote6", "keynote7", "keynote8", "keynote9",
-    "aux1", "aux2", "aux3", "aux4", "aux5",
-    "aux6", "aux7", "aux8", "aux9",
-];
-
-/// Default broadcast port for channel communication
-pub const DEFAULT_BROADCAST_PORT: u16 = 9002;
-
-/// Configuration for peer-to-peer channel synchronization
+/// Configuration for mDNS peer discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelConfig {
-    /// Whether channel sync is enabled
+pub struct DiscoveryConfig {
+    /// Whether discovery is enabled
     pub enabled: bool,
-    /// Name of the channel to join (e.g., "main", "backup", "keynote1")
-    #[serde(rename = "channelName")]
-    pub channel_name: String,
     /// Unique instance identifier (auto-generated UUID)
     #[serde(rename = "instanceId")]
     pub instance_id: String,
     /// Human-readable display name for this instance (e.g., "Chris's Laptop")
     #[serde(rename = "displayName", default)]
     pub display_name: Option<String>,
-    /// Whether to use UDP broadcast mode (vs direct IP)
-    #[serde(rename = "broadcastMode", default)]
-    pub broadcast_mode: bool,
-    /// Port for broadcast communication (default: 9002)
-    #[serde(rename = "broadcastPort", default = "default_broadcast_port")]
-    pub broadcast_port: u16,
     /// Network interface to advertise mDNS on (None = "auto" = all interfaces)
     #[serde(rename = "networkInterface", default)]
     pub network_interface: Option<String>,
 }
 
-fn default_broadcast_port() -> u16 {
-    DEFAULT_BROADCAST_PORT
-}
-
-impl ChannelConfig {
-    /// Validate that a channel name is one of the allowed values
-    pub fn is_valid_channel_name(name: &str) -> bool {
-        VALID_CHANNELS.contains(&name)
-    }
-
-    /// Get the OSC address prefix for this channel
-    #[allow(dead_code)]
-    pub fn osc_prefix(&self) -> String {
-        format!("/clicker/{}", self.channel_name)
-    }
-}
-
-impl Default for ChannelConfig {
+impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            channel_name: "main".to_string(),
+            enabled: true,
             instance_id: Uuid::new_v4().to_string(),
             display_name: None,
-            broadcast_mode: false,
-            broadcast_port: DEFAULT_BROADCAST_PORT,
-            network_interface: None, // Auto (all interfaces)
+            network_interface: None,
         }
     }
 }
@@ -163,6 +139,380 @@ impl Default for LoggingConfig {
     }
 }
 
+// =============================================================================
+// WEB SERVER CONFIG
+// =============================================================================
+
+/// Configuration for the LAN-accessible web server (notes + timer view)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebServerConfig {
+    /// Port to serve on (default: 8080)
+    pub port: u16,
+    /// Ontime server host (IP or hostname)
+    #[serde(rename = "ontimeHost")]
+    pub ontime_host: String,
+    /// Ontime server port (default: 4001)
+    #[serde(rename = "ontimePort")]
+    pub ontime_port: u16,
+    /// Font size in px for stage view notes (default: 32)
+    #[serde(rename = "fontSize", default = "default_font_size")]
+    pub font_size: u16,
+    /// The current slide's notes and the Ontime timer as a Syphon source
+    #[serde(default = "default_notes_syphon")]
+    pub syphon: SyphonOutputConfig,
+    /// PowerPoint's slide show window, captured while a show runs, as a
+    /// Syphon source
+    #[serde(rename = "slideshowSyphon", default = "default_slideshow_syphon")]
+    pub slideshow_syphon: SyphonOutputConfig,
+}
+
+fn default_notes_syphon() -> SyphonOutputConfig {
+    SyphonOutputConfig {
+        enabled: false,
+        server_name: "SherPresent Notes".to_string(),
+    }
+}
+
+fn default_slideshow_syphon() -> SyphonOutputConfig {
+    SyphonOutputConfig {
+        enabled: false,
+        server_name: "SherPresent Slideshow".to_string(),
+    }
+}
+
+fn default_font_size() -> u16 {
+    32
+}
+
+impl Default for WebServerConfig {
+    fn default() -> Self {
+        Self {
+            port: 8080,
+            ontime_host: String::new(),
+            ontime_port: 4001,
+            font_size: default_font_size(),
+            syphon: default_notes_syphon(),
+            slideshow_syphon: default_slideshow_syphon(),
+        }
+    }
+}
+
+// =============================================================================
+// QLAB CONFIG
+// =============================================================================
+
+/// QLab count-out: follows a QLab workspace over OSC and shows the time left
+/// on its running, non-looping video and audio cues.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QLabConfig {
+    /// QLab machine's IP or hostname. Empty = off.
+    #[serde(default)]
+    pub host: String,
+    /// QLab's OSC port (TCP; default 53000)
+    #[serde(default = "default_qlab_port")]
+    pub port: u16,
+    /// The workspace's OSC passcode, if it has one
+    #[serde(default)]
+    pub passcode: String,
+    /// Workspace name or unique ID. Empty = the first open workspace.
+    #[serde(default)]
+    pub workspace: String,
+    /// Cue numbers never counted out, even when they run linearly
+    #[serde(rename = "hiddenCues", default)]
+    pub hidden_cues: Vec<String>,
+    /// On a slide change during a show, start the cue numbered prefix + slide
+    /// without moving the playhead (`/cue/S7/start` for slide 7)
+    #[serde(rename = "slideGo", default)]
+    pub slide_go: bool,
+    #[serde(rename = "slideCuePrefix", default = "default_slide_cue_prefix")]
+    pub slide_cue_prefix: String,
+    /// More OSC sent on a slide change: one message per line, `{slide}`
+    /// replaced by the new slide number. Empty = none.
+    #[serde(rename = "slideCommand", default)]
+    pub slide_command: String,
+    /// The count-out as a Syphon source
+    #[serde(default = "default_qlab_syphon")]
+    pub syphon: SyphonOutputConfig,
+}
+
+fn default_qlab_port() -> u16 {
+    53000
+}
+
+fn default_slide_cue_prefix() -> String {
+    "S".to_string()
+}
+
+fn default_qlab_syphon() -> SyphonOutputConfig {
+    SyphonOutputConfig {
+        enabled: false,
+        server_name: "SherPresent QLab".to_string(),
+    }
+}
+
+impl Default for QLabConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: default_qlab_port(),
+            passcode: String::new(),
+            workspace: String::new(),
+            hidden_cues: Vec::new(),
+            slide_go: false,
+            slide_cue_prefix: default_slide_cue_prefix(),
+            slide_command: String::new(),
+            syphon: default_qlab_syphon(),
+        }
+    }
+}
+
+/// API keys for live caption providers.
+///
+/// Stored in plaintext alongside the rest of the config. Fine for a
+/// single-operator production machine; do not sync this file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CaptionApiKeys {
+    #[serde(default)]
+    pub gemini: String,
+    #[serde(default)]
+    pub openai: String,
+}
+
+/// Live caption / translation settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptionsConfig {
+    /// Auto-start captions when the app launches
+    #[serde(default)]
+    pub enabled: bool,
+    /// Provider id: "gemini" (phase 1) or "openai" (phase 2)
+    #[serde(default = "default_caption_provider")]
+    pub provider: String,
+    /// cpal input device name. `None` = system default input.
+    #[serde(rename = "inputDevice", default)]
+    pub input_device: Option<String>,
+    /// BCP-47 source language. `None` = let the provider auto-detect.
+    #[serde(rename = "sourceLanguage", default = "default_source_language")]
+    pub source_language: Option<String>,
+    /// BCP-47 target language for the caption output
+    #[serde(rename = "targetLanguage", default = "default_target_language")]
+    pub target_language: String,
+    /// Caption font size in px, relative to a 1080p frame
+    #[serde(rename = "fontSize", default = "default_caption_font_size")]
+    pub font_size: u16,
+    /// How many finalized lines to keep on screen
+    #[serde(rename = "maxLines", default = "default_caption_max_lines")]
+    pub max_lines: u8,
+    /// Overlay background. Hex colour, or "transparent" for OBS browser sources.
+    #[serde(rename = "chromaColor", default = "default_chroma_color")]
+    pub chroma_color: String,
+    /// Title-safe inset from the bottom of the frame, in % of frame height
+    #[serde(rename = "safeArea", default = "default_caption_safe_area")]
+    pub safe_area: f32,
+    /// Width of the caption block, in % of frame width (centred)
+    #[serde(default = "default_caption_width")]
+    pub width: f32,
+    /// Drop shadow behind caption text. Off by default: clean white text keys
+    /// best; the shadow is for keying over busy, bright sources.
+    #[serde(default)]
+    pub shadow: bool,
+    /// Show caption text in all caps
+    #[serde(default)]
+    pub uppercase: bool,
+    /// Closed-caption style: an opaque box behind each row
+    #[serde(default)]
+    pub background: bool,
+    /// Fill of the closed-caption box. Hex colour; opaque, since a translucent
+    /// plate would key out along with the chroma behind it.
+    #[serde(rename = "boxColor", default = "default_caption_box_color")]
+    pub box_color: String,
+    /// Seconds without new speech before the captions clear; 0 = never
+    #[serde(rename = "clearAfter", default = "default_caption_clear_after")]
+    pub clear_after: f32,
+    /// Video outputs beyond the always-on web overlay
+    #[serde(default)]
+    pub outputs: CaptionOutputsConfig,
+    #[serde(rename = "apiKeys", default)]
+    pub api_keys: CaptionApiKeys,
+}
+
+/// Caption video outputs. The web overlay is always served and isn't listed;
+/// each entry here is an optional native output with its own helper process.
+/// Two Syphon sources so the original and the translation can be keyed and
+/// placed separately. NDI would be a sibling of these.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CaptionOutputsConfig {
+    #[serde(default)]
+    pub syphon: CaptionSyphonConfig,
+    #[serde(default = "default_second_caption_syphon")]
+    pub syphon2: CaptionSyphonConfig,
+}
+
+impl Default for CaptionOutputsConfig {
+    fn default() -> Self {
+        Self {
+            syphon: CaptionSyphonConfig::default(),
+            syphon2: default_second_caption_syphon(),
+        }
+    }
+}
+
+/// Which language(s) a captions output shows. Same values as the web
+/// overlay's `?text=`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptionText {
+    #[default]
+    Translated,
+    Source,
+    /// The original, smaller, above the translation
+    Both,
+}
+
+impl CaptionText {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Translated => "translated",
+            Self::Source => "source",
+            Self::Both => "both",
+        }
+    }
+}
+
+/// A captions Syphon source and what it shows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CaptionSyphonConfig {
+    #[serde(flatten)]
+    pub syphon: SyphonOutputConfig,
+    #[serde(default)]
+    pub text: CaptionText,
+}
+
+/// The second source defaults to the original language, so turning it on
+/// next to the first gives one Syphon source per language.
+fn default_second_caption_syphon() -> CaptionSyphonConfig {
+    CaptionSyphonConfig {
+        syphon: SyphonOutputConfig {
+            enabled: false,
+            server_name: "SherPresent Captions (Original)".to_string(),
+        },
+        text: CaptionText::Source,
+    }
+}
+
+/// A 1920x1080 Syphon source (macOS only), for OBS, Resolume, QLab and other
+/// receivers on the same Mac. Used for captions, notes and the slideshow.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SyphonOutputConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Name receivers list the source under
+    #[serde(rename = "serverName", default = "default_syphon_server_name")]
+    pub server_name: String,
+}
+
+fn default_syphon_server_name() -> String {
+    "SherPresent Captions".to_string()
+}
+
+impl Default for SyphonOutputConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_name: default_syphon_server_name(),
+        }
+    }
+}
+
+/// Apple on-device when this Mac can actually run it (macOS 26+, Apple
+/// Silicon); Gemini otherwise, as the cross-platform fallback.
+fn default_caption_provider() -> String {
+    if crate::captions::provider::apple::is_platform_supported() {
+        "apple".to_string()
+    } else {
+        "gemini".to_string()
+    }
+}
+
+fn default_target_language() -> String {
+    "fr".to_string()
+}
+
+/// Defaults the language dropdown to English -> French rather than an
+/// auto-detect that Apple's on-device provider can't actually support (it
+/// needs an explicit source locale up front).
+fn default_source_language() -> Option<String> {
+    Some("en-US".to_string())
+}
+
+pub(crate) fn default_caption_font_size() -> u16 {
+    56
+}
+
+pub(crate) fn default_caption_max_lines() -> u8 {
+    2
+}
+
+pub(crate) fn default_caption_safe_area() -> f32 {
+    5.0
+}
+
+pub(crate) fn default_caption_clear_after() -> f32 {
+    8.0
+}
+
+pub(crate) fn default_caption_width() -> f32 {
+    80.0
+}
+
+/// Broadcast chroma green
+pub(crate) const DEFAULT_CHROMA_COLOR: &str = "#00B140";
+pub(crate) const DEFAULT_CAPTION_BOX_COLOR: &str = "#000000";
+
+fn default_chroma_color() -> String {
+    DEFAULT_CHROMA_COLOR.to_string()
+}
+
+fn default_caption_box_color() -> String {
+    DEFAULT_CAPTION_BOX_COLOR.to_string()
+}
+
+impl CaptionsConfig {
+    /// Whether this session translates at all. Same source and target (region
+    /// aside) means straight captions. Auto-detect (`None`) always counts as
+    /// translating: the provider can't know yet whether the detected language
+    /// will match the target.
+    pub fn translates(&self) -> bool {
+        match self.source_language.as_deref() {
+            Some(src) => !crate::captions::provider::same_language(src, &self.target_language),
+            None => true,
+        }
+    }
+}
+
+impl Default for CaptionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_caption_provider(),
+            input_device: None,
+            source_language: default_source_language(),
+            target_language: default_target_language(),
+            font_size: default_caption_font_size(),
+            max_lines: default_caption_max_lines(),
+            chroma_color: default_chroma_color(),
+            safe_area: default_caption_safe_area(),
+            width: default_caption_width(),
+            shadow: false,
+            uppercase: false,
+            background: false,
+            box_color: default_caption_box_color(),
+            clear_after: default_caption_clear_after(),
+            outputs: CaptionOutputsConfig::default(),
+            api_keys: CaptionApiKeys::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub osc: OscConfig,
@@ -170,17 +520,29 @@ pub struct AppConfig {
     #[serde(rename = "presentationName")]
     pub presentation_name: String,
     pub logging: LoggingConfig,
-    /// Channel synchronization settings
+    /// Peer discovery settings
+    #[serde(default, alias = "channel")]
+    pub discovery: DiscoveryConfig,
+    /// Per-adapter network configuration
+    #[serde(rename = "adapterConfig", default)]
+    pub adapter_config: AdapterConfig,
+    /// LAN web server settings
+    #[serde(rename = "webServer", default)]
+    pub web_server: WebServerConfig,
+    /// Live caption / translation settings
     #[serde(default)]
-    pub channel: ChannelConfig,
+    pub captions: CaptionsConfig,
+    /// QLab count-out settings
+    #[serde(default)]
+    pub qlab: QLabConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        // Default to libreoffice on non-macOS platforms, powerpoint on macOS
-        #[cfg(target_os = "macos")]
+        // PowerPoint where it's available (macOS, Windows), LibreOffice elsewhere
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let default_adapter = "powerpoint".to_string();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let default_adapter = "libreoffice".to_string();
 
         Self {
@@ -188,7 +550,11 @@ impl Default for AppConfig {
             adapter: default_adapter,
             presentation_name: String::new(),
             logging: LoggingConfig::default(),
-            channel: ChannelConfig::default(),
+            discovery: DiscoveryConfig::default(),
+            adapter_config: AdapterConfig::default(),
+            web_server: WebServerConfig::default(),
+            captions: CaptionsConfig::default(),
+            qlab: QLabConfig::default(),
         }
     }
 }
@@ -231,4 +597,227 @@ pub fn save_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), Str
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     fs::write(&path, content).map_err(|e| format!("Failed to write config file: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CaptionsConfig;
+
+    #[test]
+    fn test_captions_translates() {
+        let cfg = |src: Option<&str>, target: &str| CaptionsConfig {
+            source_language: src.map(str::to_string),
+            target_language: target.to_string(),
+            ..CaptionsConfig::default()
+        };
+        assert!(cfg(Some("en-US"), "fr").translates());
+        assert!(!cfg(Some("en-US"), "en").translates(), "straight captions");
+        assert!(
+            cfg(None, "en").translates(),
+            "auto-detect may still translate"
+        );
+    }
+
+    use super::*;
+
+    #[test]
+    fn test_caption_outputs_upgrade_from_single_syphon() {
+        // A config saved before the second output and `text` existed.
+        let old = r#"{"syphon":{"enabled":true,"serverName":"Stage"}}"#;
+        let outputs: CaptionOutputsConfig = serde_json::from_str(old).unwrap();
+        assert!(outputs.syphon.syphon.enabled);
+        assert_eq!(outputs.syphon.syphon.server_name, "Stage");
+        assert_eq!(outputs.syphon.text, CaptionText::Translated);
+        assert_eq!(outputs.syphon2, default_second_caption_syphon());
+
+        // `text` sits beside the flattened Syphon fields on the wire.
+        let json = serde_json::to_value(&outputs).unwrap();
+        assert_eq!(json["syphon2"]["text"], "source");
+        assert_eq!(json["syphon"]["serverName"], "Stage");
+    }
+
+    #[test]
+    fn test_adapter_config_default_is_none() {
+        let config = AdapterConfig::default();
+        assert!(matches!(config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_adapter_config_libreoffice_serialization() {
+        let config = AdapterConfig::LibreOffice {
+            host: "10.0.0.5".to_string(),
+            port: 2002,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"libreoffice\""));
+        assert!(json.contains("\"host\":\"10.0.0.5\""));
+        assert!(json.contains("\"port\":2002"));
+    }
+
+    #[test]
+    fn test_adapter_config_libreoffice_deserialization() {
+        let json = r#"{"type":"libreoffice","host":"192.168.1.50","port":1599}"#;
+        let config: AdapterConfig = serde_json::from_str(json).unwrap();
+        match config {
+            AdapterConfig::LibreOffice { host, port } => {
+                assert_eq!(host, "192.168.1.50");
+                assert_eq!(port, 1599);
+            }
+            _ => panic!("Expected LibreOffice variant"),
+        }
+    }
+
+    #[test]
+    fn test_adapter_config_canva_serialization() {
+        let config = AdapterConfig::Canva {
+            url: "https://www.canva.com/design/remote?id2=abc123".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"canva\""));
+        assert!(json.contains("\"url\":\"https://www.canva.com/design/remote?id2=abc123\""));
+    }
+
+    #[test]
+    fn test_adapter_config_canva_deserialization() {
+        let json = r#"{"type":"canva","url":"https://example.com/remote?id2=test"}"#;
+        let config: AdapterConfig = serde_json::from_str(json).unwrap();
+        match config {
+            AdapterConfig::Canva { url } => {
+                assert_eq!(url, "https://example.com/remote?id2=test");
+            }
+            _ => panic!("Expected Canva variant"),
+        }
+    }
+
+    #[test]
+    fn test_adapter_config_none_serialization() {
+        let config = AdapterConfig::None;
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"none\""));
+    }
+
+    #[test]
+    fn test_adapter_config_none_deserialization() {
+        let json = r#"{"type":"none"}"#;
+        let config: AdapterConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_app_config_default_has_adapter_config_none() {
+        let config = AppConfig::default();
+        assert!(matches!(config.adapter_config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_app_config_roundtrip_with_adapter_config() {
+        let config = AppConfig {
+            adapter_config: AdapterConfig::LibreOffice {
+                host: "10.0.0.1".to_string(),
+                port: 1599,
+            },
+            ..AppConfig::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        match restored.adapter_config {
+            AdapterConfig::LibreOffice { host, port } => {
+                assert_eq!(host, "10.0.0.1");
+                assert_eq!(port, 1599);
+            }
+            _ => panic!("Expected LibreOffice variant after roundtrip"),
+        }
+    }
+
+    #[test]
+    fn test_app_config_missing_adapter_config_defaults_to_none() {
+        // Simulate a config JSON from before adapter_config was added
+        let json = r#"{
+            "osc": {"receivePort": 9000, "feedbackPort": 9001, "feedbackHost": "127.0.0.1", "host": "0.0.0.0", "feedbackDestinations": []},
+            "adapter": "libreoffice",
+            "presentationName": "",
+            "logging": {"enabled": true, "verbose": false}
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config.adapter_config, AdapterConfig::None));
+    }
+
+    #[test]
+    fn test_captions_config_defaults() {
+        let c = CaptionsConfig::default();
+        assert!(!c.enabled);
+        let expected_provider = if crate::captions::provider::apple::is_platform_supported() {
+            "apple"
+        } else {
+            "gemini"
+        };
+        assert_eq!(c.provider, expected_provider);
+        assert_eq!(c.target_language, "fr");
+        assert_eq!(c.max_lines, 2);
+        assert!(c.input_device.is_none());
+        assert_eq!(c.source_language.as_deref(), Some("en-US"));
+        assert!(c.api_keys.gemini.is_empty());
+    }
+
+    #[test]
+    fn test_app_config_missing_captions_defaults() {
+        // Config JSON written before captions existed must still load.
+        let json = r#"{
+            "osc": {"receivePort": 9000, "feedbackPort": 9001, "feedbackHost": "127.0.0.1", "host": "0.0.0.0", "feedbackDestinations": []},
+            "adapter": "libreoffice",
+            "presentationName": "",
+            "logging": {"enabled": true, "verbose": false}
+        }"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.captions.enabled);
+        assert_eq!(config.captions.target_language, "fr");
+        assert_eq!(config.captions.chroma_color, "#00B140");
+    }
+
+    #[test]
+    fn test_app_config_roundtrip_with_captions() {
+        let mut config = AppConfig::default();
+        config.captions.enabled = true;
+        config.captions.input_device = Some("Scarlett 2i2 USB".to_string());
+        config.captions.source_language = Some("en".to_string());
+        config.captions.target_language = "es".to_string();
+        config.captions.api_keys.gemini = "test-key".to_string();
+
+        let json = serde_json::to_string(&config).unwrap();
+        // camelCase over the wire, matching the rest of AppConfig
+        assert!(json.contains("\"inputDevice\":\"Scarlett 2i2 USB\""));
+        assert!(json.contains("\"targetLanguage\":\"es\""));
+
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(restored.captions.enabled);
+        assert_eq!(
+            restored.captions.input_device.as_deref(),
+            Some("Scarlett 2i2 USB")
+        );
+        assert_eq!(restored.captions.source_language.as_deref(), Some("en"));
+        assert_eq!(restored.captions.target_language, "es");
+        assert_eq!(restored.captions.api_keys.gemini, "test-key");
+    }
+
+    #[test]
+    fn test_captions_partial_json_fills_defaults() {
+        // A captions block written by an older build that only knew some fields.
+        let json = r#"{"enabled": true, "provider": "openai"}"#;
+        let c: CaptionsConfig = serde_json::from_str(json).unwrap();
+        assert!(c.enabled);
+        assert_eq!(c.provider, "openai");
+        assert_eq!(c.target_language, "fr");
+        assert_eq!(c.font_size, 56);
+    }
+
+    #[test]
+    fn test_captions_config_without_overlay_fields_gets_defaults() {
+        // Configs saved before safeArea/width existed must still load.
+        let c: CaptionsConfig = serde_json::from_str(r#"{"fontSize": 72}"#).unwrap();
+        assert_eq!(c.font_size, 72);
+        assert_eq!(c.safe_area, 5.0);
+        assert_eq!(c.width, 80.0);
+        assert!(!c.background);
+        assert_eq!(c.clear_after, 8.0);
+    }
 }

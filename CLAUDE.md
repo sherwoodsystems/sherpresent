@@ -9,11 +9,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **sher-present** is a cross-platform desktop application for remotely controlling presentation software (PowerPoint, Keynote, LibreOffice Impress) via OSC (Open Sound Control) protocol. Built with Tauri v2, SvelteKit, and Rust.
 
 - Desktop app: `apps/desktop/`
-- USB clicker bridge: `apps/bridge/`
-- Companion module: `apps/companion-module/` (git submodule)
+- Bridge (single Tauri app; core engine in `src-tauri/src/bridge/`): `apps/bridge/`
+- Shared discovery/OSC core: `crates/sherpresent-core/`
+- Companion module: `apps/companion-module-sherpresent/` (git submodule)
 - Specifications: `spec/`
 - Documentation: `docs/`
-- Legacy code: `archive/`
+
 
 ## Build Commands
 
@@ -23,9 +24,18 @@ bun install
 bun tauri dev      # Development
 bun tauri build    # Production
 bun run check      # Type checking
+bun run lint       # ESLint + Prettier check (`bun run format` to fix)
+bun run test       # Vitest
+bun run macos:test # Swift helper tests (`macos:format` to format them)
 ```
 
+`scripts/check-all.sh` runs every check in the repo (Rust fmt/clippy/tests,
+both frontends, Swift lint/tests). Run it before committing.
+
 For Rust debugging: `RUST_LOG=debug bun tauri dev`
+
+Linux also needs `libasound2-dev` at build time (cpal's ALSA backend, used by
+live captions).
 
 ## Architecture
 
@@ -39,9 +49,11 @@ Presentation Adapters              apps/desktop/src-tauri/src/adapters/
   - Keynote (macOS)
   - LibreOffice (cross-platform)
         ↓
+StateManager                       apps/desktop/src-tauri/src/osc/state_manager.rs
+  - the one state cache and poller; UI, OSC and web commands all go through it
+  - publishes `presentation-status` (UI), status_broadcast (web), subscribe() (OSC)
 OSC Server                         apps/desktop/src-tauri/src/osc/
   - server.rs - UDP listener
-  - state_manager.rs - State cache
   - messages.rs - OSC definitions
 ```
 
@@ -58,32 +70,40 @@ $effect(() => { /* side effects */ });
 
 See `spec/osc-protocol.md` for full specification.
 
-### Direct Mode (default)
-- **Receive port**: 9000
-- **Feedback port**: 9001
+- **Port**: 9000. Anything that sends a command gets feedback at its source address
+  until it's quiet for 15 s (clients heartbeat with `/clicker/status`).
+- **Extra feedback destinations** (default `127.0.0.1:9001`): for listen-only devices.
+- **Finding the app**: broadcast `/clicker/discover` to port 9000; it replies `/clicker/here` (name).
 
 | Command | Description |
 |---------|-------------|
 | `/clicker/next` | Next slide |
-| `/clicker/prev` | Previous slide |
+| `/clicker/prev` (or `/clicker/previous`) | Previous slide |
 | `/clicker/goto` (int) | Jump to slide N |
-| `/clicker/status` | Request state |
-| `/clicker/zoom/in` | Increase notes zoom |
-| `/clicker/zoom/out` | Decrease notes zoom |
+| `/clicker/status` | Request state (sends all feedback) |
+| `/clicker/refresh` | Re-read state from the presentation app |
+| `/clicker/zoom` | Request the notes zoom level |
+| `/clicker/zoomIn` | Increase notes zoom |
+| `/clicker/zoomOut` | Decrease notes zoom |
+| `/clicker/scrollUp`, `/clicker/scrollDown` | Scroll the notes views |
+| `/clicker/notesPage` | Next screenful of notes (stage page + Syphon notes), wraps to top |
+| `/clicker/discover` | Find the app; replies `/clicker/here` (name) to the sender only |
+| `/oscpoint/next`, `/oscpoint/previous` | Next and previous, as sent by the bridge |
 
-**Feedback:** `/clicker/slide/current`, `/clicker/slide/total`, `/clicker/state/presenting`, `/clicker/state/open`, `/clicker/state/zoom`
+**Feedback:** `/clicker/state/presenting`, `/clicker/state/open`, `/clicker/slide/current`,
+`/clicker/slide/total`, `/clicker/zoom/level`, plus `/clicker/slide/build` and
+`/clicker/slide/builds` when the slide has builds.
 
-### Broadcast Mode (multi-device)
-- **Port**: 9002 (configurable)
-- **Channels**: `main`, `backup`, `keynote1-9`, `aux1-9`
+### Bridge
 
-Commands use channel prefix: `/clicker/<channel>/next`, `/clicker/<channel>/prev`, etc.
+USB presentation clicker → OSC bridge. It's a single Tauri app (`apps/bridge/`)
+that speaks OSCPoint's `/oscpoint/...` schema (the desktop app accepts next and previous);
+the core engine (USB capture, OSC, mDNS discovery, config) lives in-crate under
+`apps/bridge/src-tauri/src/bridge/`.
 
-Feedback: `/clicker/<channel>/state/presenting`, `/clicker/<channel>/state/slide` (current, total)
-
-### rpi-osc-bridge
-
-Python bridge for USB presentation clickers → OSC. Devices appear in UI with "Bridge" badge.
+The Linux backend uses passive `evdev` input capture: devices are read without exclusive
+`grab()`, so no root privileges or udev rules are required as long as the user is in the
+`input` group (default on Raspberry Pi OS).
 
 ## Platform Notes
 

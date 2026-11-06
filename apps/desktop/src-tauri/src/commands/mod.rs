@@ -1,6 +1,9 @@
+pub mod app;
+pub mod canva;
+pub mod captions;
 pub mod config;
+pub mod debug;
+pub mod discovery;
 pub mod network;
 pub mod presentation;
-pub mod polling;
-pub mod osc;
-pub mod discovery;
+pub mod webserver;

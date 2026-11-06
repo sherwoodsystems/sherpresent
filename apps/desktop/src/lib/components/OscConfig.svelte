@@ -1,7 +1,9 @@
 <script lang="ts">
+  import Field from '$lib/components/ui/Field.svelte';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import type { OscConfig } from '../types';
+  import ConnectionInfo from './ConnectionInfo.svelte';
 
   interface Props {
     config: OscConfig;
@@ -24,171 +26,46 @@
   }
 </script>
 
-<div class="osc-config">
-  <h3 class="section-title">OSC Configuration</h3>
+{#if localIp}
+  <ConnectionInfo label="Remote clients connect to:" value="{localIp}:{config.receivePort}" />
+{/if}
 
-  {#if localIp}
-    <div class="connection-info">
-      <span class="connection-label">Remote clients connect to:</span>
-      <code class="connection-address">{localIp}:{config.receivePort}</code>
-    </div>
-  {/if}
+<div class="config-grid">
+  <Field label="Receive Port" for="receive-port" span>
+    <input
+      id="receive-port"
+      type="number"
+      class="input mono"
+      value={config.receivePort}
+      min="1"
+      max="65535"
+      onchange={(e) => updateField('receivePort', parseInt(e.currentTarget.value) || 9000)}
+    />
+  </Field>
 
-  <div class="config-grid">
-    <div class="field">
-      <label class="label" for="receive-port">Receive Port</label>
-      <input
-        id="receive-port"
-        type="number"
-        class="input"
-        value={config.receivePort}
-        min="1"
-        max="65535"
-        onchange={(e) => updateField('receivePort', parseInt(e.currentTarget.value) || 9000)}
-      />
-    </div>
+  <Field
+    label="Extra Feedback Host"
+    for="feedback-host"
+    hint="Only for devices that listen without sending. Anything that sends commands here gets feedback automatically."
+  >
+    <input
+      id="feedback-host"
+      type="text"
+      class="input mono"
+      value={config.feedbackHost}
+      onchange={(e) => updateField('feedbackHost', e.currentTarget.value)}
+    />
+  </Field>
 
-    <div class="field">
-      <label class="label" for="feedback-port">Feedback Port</label>
-      <input
-        id="feedback-port"
-        type="number"
-        class="input"
-        value={config.feedbackPort}
-        min="1"
-        max="65535"
-        onchange={(e) => updateField('feedbackPort', parseInt(e.currentTarget.value) || 9001)}
-      />
-    </div>
-
-    <div class="field">
-      <label class="label" for="feedback-host">Feedback Host</label>
-      <input
-        id="feedback-host"
-        type="text"
-        class="input"
-        value={config.feedbackHost}
-        onchange={(e) => updateField('feedbackHost', e.currentTarget.value)}
-      />
-      <span class="hint">IP of the OSC controller for feedback</span>
-    </div>
-  </div>
+  <Field label="Extra Feedback Port" for="feedback-port">
+    <input
+      id="feedback-port"
+      type="number"
+      class="input mono"
+      value={config.feedbackPort}
+      min="1"
+      max="65535"
+      onchange={(e) => updateField('feedbackPort', parseInt(e.currentTarget.value) || 9001)}
+    />
+  </Field>
 </div>
-
-<style>
-  .osc-config {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .section-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #333;
-    margin: 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid #eee;
-  }
-
-  .connection-info {
-    background: #e8f4fd;
-    border: 1px solid #b3d9f7;
-    border-radius: 8px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .connection-label {
-    font-size: 0.75rem;
-    color: #1a73e8;
-    font-weight: 500;
-  }
-
-  .connection-address {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #1a56c4;
-    background: transparent;
-    padding: 0;
-  }
-
-  .hint {
-    font-size: 0.7rem;
-    color: #888;
-    margin-top: 0.125rem;
-  }
-
-  .config-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #666;
-  }
-
-  .input {
-    padding: 0.5rem 0.75rem;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    background: #fff;
-    font-size: 0.875rem;
-    font-family: monospace;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: #007aff;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .section-title {
-      color: #eee;
-      border-bottom-color: #444;
-    }
-
-    .connection-info {
-      background: #1a3a5c;
-      border-color: #2a5a8c;
-    }
-
-    .connection-label {
-      color: #6ab7ff;
-    }
-
-    .connection-address {
-      color: #8fcfff;
-    }
-
-    .hint {
-      color: #777;
-    }
-
-    .label {
-      color: #aaa;
-    }
-
-    .input {
-      background: #333;
-      border-color: #555;
-      color: #eee;
-    }
-
-    .input:focus {
-      border-color: #0a84ff;
-    }
-  }
-</style>

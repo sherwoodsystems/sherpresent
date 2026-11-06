@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sher-present",
-  "version": "0.2.0",
-  "identifier": "com.cdslipp.sher-present",
+  "productName": "SherPresent",
+  "version": "1.2.4",
+  "identifier": "com.cdslipp.sherpresent",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,8 +12,8 @@
   "app": {
     "windows": [
       {
-        "title": "sher-present",
-        "width": 500,
+        "title": "SherPresent",
+        "width": 540,
         "height": 650
       }
     ],
@@ -30,6 +30,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    }
   }
 }

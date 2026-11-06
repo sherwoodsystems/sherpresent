@@ -26,20 +26,32 @@ bun tauri build
 
 ## Bridge
 
-The bridge runs on a Raspberry Pi. For local development:
+The bridge comes in two flavors sharing `crates/sherpresent-bridge-core`:
+
+- **Tauri GUI**: `apps/bridge/` — desktop app with a Svelte UI.
+- **Headless binary**: `apps/bridge-headless/` — single binary for Raspberry Pi / server deployments.
+
+### Run the Tauri bridge locally
 
 ```bash
 cd apps/bridge
-pip install -r requirements.txt
-python src/rpi_osc_bridge/bridge.py
+bun install
+bun tauri dev
 ```
 
-### Building the Installer
+### Run the headless bridge locally
 
 ```bash
-cd apps/bridge/scripts
-./build-installer.sh
-# Produces rpi-osc-bridge-installer.run
+cd apps/bridge-headless
+cargo run
+```
+
+### Build the headless release binary
+
+```bash
+cd apps/bridge-headless
+cargo build --release
+# Binary: target/release/bridge-headless
 ```
 
 ## Companion Module

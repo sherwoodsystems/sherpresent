@@ -1,0 +1,787 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use axum::extract::ws::{Message, WebSocket};
+use axum::extract::State as AxumState;
+use axum::extract::WebSocketUpgrade;
+use axum::response::{Html, Json};
+use axum::routing::{get, post};
+use axum::Router;
+
+use crate::adapters::LiveStatus;
+use crate::captions::CaptionSinks;
+use crate::config::WebServerConfig;
+use crate::osc::latency::CommandSource;
+use crate::osc::state_manager::StateManager;
+use crate::osc::ScrollDirection;
+use crate::output::feed::NotesSources;
+use crate::output::OutputSources;
+use crate::qlab::QLabState;
+use crate::util::LockExt;
+
+/// Handle for a running web server. Holds JoinHandles to keep tasks alive.
+#[allow(dead_code)]
+pub struct WebServerHandle {
+    serve_handle: tokio::task::JoinHandle<()>,
+}
+
+/// Shared state for the axum web server
+#[derive(Clone)]
+struct WebServerState {
+    notes_cache: Arc<Mutex<HashMap<i32, String>>>,
+    status_broadcast: tokio::sync::broadcast::Sender<LiveStatus>,
+    notes_broadcast: tokio::sync::broadcast::Sender<HashMap<i32, String>>,
+    scroll_broadcast: tokio::sync::broadcast::Sender<ScrollDirection>,
+    ontime_host: String,
+    ontime_port: u16,
+    font_size: u16,
+    /// Current status, and the target of commands via WebSocket/REST
+    state_manager: Arc<StateManager>,
+    /// Live caption fan-out and overlay styling for the /captions overlay
+    captions: CaptionSinks,
+    /// The QLab count-out, for the /qlab page
+    qlab: tokio::sync::watch::Receiver<QLabState>,
+}
+
+/// Start the web server on the given port. Returns a handle to stop it later.
+/// Its pages read the same sources as the native outputs.
+pub async fn start(
+    config: WebServerConfig,
+    sources: OutputSources,
+) -> Result<WebServerHandle, String> {
+    let OutputSources {
+        captions,
+        notes:
+            NotesSources {
+                notes: notes_cache,
+                notes_broadcast,
+                status_broadcast,
+                scroll_broadcast,
+                state_manager,
+            },
+        qlab,
+    } = sources;
+    let state = WebServerState {
+        notes_cache,
+        status_broadcast,
+        notes_broadcast,
+        scroll_broadcast,
+        ontime_host: config.ontime_host,
+        ontime_port: config.ontime_port,
+        font_size: config.font_size,
+        state_manager,
+        captions,
+        qlab,
+    };
+
+    let app = Router::new()
+        .route("/", get(page_handler))
+        .route("/api/state", get(state_handler))
+        .route("/api/ws", get(ws_handler))
+        .route("/api/command", post(command_handler))
+        // Separate page and socket from the stage view: the overlay must never
+        // receive slide/notes traffic it would only discard.
+        .route("/captions", get(captions_page_handler))
+        .route("/api/captions/ws", get(captions_ws_handler))
+        // The QLab count-out: same messages as the Syphon QLab output.
+        .route("/qlab", get(qlab_page_handler))
+        .route("/api/qlab/ws", get(qlab_ws_handler))
+        .with_state(state);
+
+    let addr = format!("0.0.0.0:{}", config.port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| format!("Failed to bind web server to {}: {}", addr, e))?;
+
+    log::info!("Web server listening on http://0.0.0.0:{}", config.port);
+
+    let serve_handle = tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            log::error!("Web server error: {}", e);
+        }
+    });
+
+    Ok(WebServerHandle { serve_handle })
+}
+
+// =============================================================================
+// COMMAND TYPES
+// =============================================================================
+
+#[derive(serde::Deserialize)]
+struct WsMessage {
+    #[serde(rename = "type")]
+    msg_type: String,
+    action: Option<String>,
+    slide: Option<i32>,
+}
+
+#[derive(serde::Deserialize)]
+struct CommandRequest {
+    action: String,
+    slide: Option<i32>,
+}
+
+#[derive(serde::Serialize)]
+struct CommandResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Execute a command from the stage page (WebSocket or REST).
+fn execute_command(state: &WebServerState, action: &str, slide: Option<i32>) -> Result<(), String> {
+    let sm = &state.state_manager;
+    let scroll = |dir| {
+        let _ = state.scroll_broadcast.send(dir);
+    };
+    match action {
+        "next" => sm.next_slide(CommandSource::Ws),
+        "prev" | "previous" => sm.prev_slide(CommandSource::Ws),
+        "goto" => {
+            let s = slide.ok_or("Missing 'slide' parameter for goto")?;
+            sm.goto_slide(s, CommandSource::Ws);
+        }
+        "status" | "refresh" => sm.refresh_state(),
+        "zoomIn" => sm.zoom_in(),
+        "zoomOut" => sm.zoom_out(),
+        "scrollUp" => scroll(ScrollDirection::Up),
+        "scrollDown" => scroll(ScrollDirection::Down),
+        "notesPage" => scroll(ScrollDirection::Page),
+        _ => return Err(format!("Unknown action: {}", action)),
+    }
+    Ok(())
+}
+
+// =============================================================================
+// HANDLERS
+// =============================================================================
+
+#[derive(serde::Serialize)]
+struct StateResponse {
+    #[serde(flatten)]
+    status: LiveStatus,
+    notes: HashMap<i32, String>,
+}
+
+async fn state_handler(AxumState(state): AxumState<WebServerState>) -> Json<StateResponse> {
+    let status = LiveStatus::from(&state.state_manager.get_state());
+    let notes = state.notes_cache.locked().clone();
+
+    Json(StateResponse { status, notes })
+}
+
+/// REST endpoint for sending commands: POST /api/command
+async fn command_handler(
+    AxumState(state): AxumState<WebServerState>,
+    axum::Json(cmd): axum::Json<CommandRequest>,
+) -> Json<CommandResponse> {
+    match execute_command(&state, &cmd.action, cmd.slide) {
+        Ok(()) => Json(CommandResponse {
+            ok: true,
+            error: None,
+        }),
+        Err(e) => Json(CommandResponse {
+            ok: false,
+            error: Some(e),
+        }),
+    }
+}
+
+// =============================================================================
+// WEBSOCKET HANDLER
+// =============================================================================
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    AxumState(state): AxumState<WebServerState>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_ws(socket, state))
+}
+
+async fn handle_ws(mut socket: WebSocket, state: WebServerState) {
+    log::info!("WebSocket client connected");
+
+    // Send initial state immediately
+    let initial_status = LiveStatus::from(&state.state_manager.get_state());
+    let initial_notes = state.notes_cache.locked().clone();
+
+    let status_json = serde_json::json!({
+        "type": "status",
+        "payload": initial_status,
+    });
+    let notes_json = serde_json::json!({
+        "type": "notes",
+        "payload": initial_notes,
+    });
+
+    if socket
+        .send(Message::Text(status_json.to_string().into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    if socket
+        .send(Message::Text(notes_json.to_string().into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    // Subscribe to broadcast channels
+    let mut status_rx = state.status_broadcast.subscribe();
+    let mut notes_rx = state.notes_broadcast.subscribe();
+    let mut scroll_rx = state.scroll_broadcast.subscribe();
+
+    loop {
+        tokio::select! {
+            result = status_rx.recv() => {
+                match result {
+                    Ok(status) => {
+                        let msg = serde_json::json!({
+                            "type": "status",
+                            "payload": status,
+                        });
+                        if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            result = notes_rx.recv() => {
+                match result {
+                    Ok(notes) => {
+                        let msg = serde_json::json!({
+                            "type": "notes",
+                            "payload": notes,
+                        });
+                        if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            result = scroll_rx.recv() => {
+                match result {
+                    Ok(direction) => {
+                        let msg = direction.message();
+                        if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Text(text))) => {
+                        // Parse incoming command
+                        if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
+                            if ws_msg.msg_type == "command" {
+                                if let Some(action) = &ws_msg.action {
+                                    match execute_command(&state, action, ws_msg.slide) {
+                                        Ok(()) => {
+                                            log::debug!("WS command executed: {}", action);
+                                        }
+                                        Err(e) => {
+                                            log::warn!("WS command failed: {}", e);
+                                            let err_msg = serde_json::json!({
+                                                "type": "error",
+                                                "payload": e,
+                                            });
+                                            let _ = socket.send(Message::Text(err_msg.to_string().into())).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {} // ignore other message types
+                }
+            }
+        }
+    }
+
+    log::info!("WebSocket client disconnected");
+}
+
+async fn page_handler(AxumState(state): AxumState<WebServerState>) -> Html<String> {
+    let ontime_host = html_escape(&state.ontime_host);
+    let ontime_port = state.ontime_port;
+    let font_size = state.font_size;
+    Html(build_page_html(&ontime_host, ontime_port, font_size))
+}
+
+// =============================================================================
+// CAPTION OVERLAY
+// =============================================================================
+
+/// Chroma-key caption overlay page.
+///
+/// Kept in a real `.html` file rather than a Rust `format!` literal (see
+/// `build_page_html` below) because this page gets tuned repeatedly against a
+/// live switcher and brace-escaping every CSS rule makes that miserable.
+const CAPTIONS_HTML: &str = include_str!("../assets/captions.html");
+
+async fn captions_page_handler(
+    AxumState(state): AxumState<WebServerState>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> Html<String> {
+    // First paint only: the socket's opening `settings` message (same
+    // overrides) is what the page actually runs on.
+    let s = state.captions.overlay.borrow().with_overrides(&params);
+
+    let html = CAPTIONS_HTML
+        .replace("{{CHROMA}}", &s.chroma_color)
+        .replace("{{BOX}}", &s.box_color)
+        .replace("{{FONT_SIZE}}", &s.font_size.to_string())
+        .replace("{{MAX_LINES}}", &s.max_lines.to_string())
+        .replace("{{SAFE}}", &format!("{:.2}", s.safe_area))
+        .replace("{{WIDTH}}", &format!("{:.2}", s.width));
+
+    Html(html)
+}
+
+async fn captions_ws_handler(
+    ws: WebSocketUpgrade,
+    AxumState(state): AxumState<WebServerState>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_captions_ws(socket, state, params))
+}
+
+/// `pins` is the overlay page's own query string, forwarded by the page, so
+/// every `settings` message this socket sends has the URL's pins applied.
+async fn handle_captions_ws(
+    mut socket: WebSocket,
+    state: WebServerState,
+    pins: HashMap<String, String>,
+) {
+    log::info!("Caption overlay connected");
+
+    // Subscribe before snapshotting, so nothing published in between is lost.
+    let mut rx = state.captions.broadcast.subscribe();
+    let mut overlay_rx = state.captions.overlay.subscribe();
+
+    // Styling, status, and what's on screen right now, so an overlay that
+    // reconnects mid-sentence doesn't go blank until the next turn completes.
+    let settings = overlay_rx.borrow_and_update().with_overrides(&pins);
+    for msg in state.captions.opening_messages(&settings) {
+        if socket.send(Message::Text(msg.into())).await.is_err() {
+            return;
+        }
+    }
+
+    loop {
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(update) => {
+                        if socket.send(Message::Text(update.to_json().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // Lagged: the overlay only ever renders the newest line, so
+                    // dropping the backlog is the correct recovery.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("Caption overlay lagged, skipped {} updates", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            Ok(()) = overlay_rx.changed() => {
+                let settings = overlay_rx.borrow_and_update().with_overrides(&pins);
+                let msg = crate::captions::settings_message(&settings);
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                // The overlay is receive-only; anything inbound means a close.
+                match msg {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    log::info!("Caption overlay disconnected");
+}
+
+const QLAB_HTML: &str = include_str!("../assets/qlab.html");
+
+async fn qlab_page_handler() -> Html<&'static str> {
+    Html(QLAB_HTML)
+}
+
+async fn qlab_ws_handler(
+    ws: WebSocketUpgrade,
+    AxumState(state): AxumState<WebServerState>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_qlab_ws(socket, state.qlab))
+}
+
+/// The current state, then every change. Receive-only, like the overlay.
+async fn handle_qlab_ws(mut socket: WebSocket, mut rx: tokio::sync::watch::Receiver<QLabState>) {
+    let opening = crate::output::feed::qlab_message(&rx.borrow_and_update());
+    if socket.send(Message::Text(opening.into())).await.is_err() {
+        return;
+    }
+    loop {
+        tokio::select! {
+            changed = rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let msg = crate::output::feed::qlab_message(&rx.borrow_and_update());
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Basic HTML attribute escaping to prevent injection via user-configured values
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn build_page_html(ontime_host: &str, ontime_port: u16, font_size: u16) -> String {
+    let has_ontime = !ontime_host.is_empty();
+
+    let ontime_section = if has_ontime {
+        format!(
+            r##"<div id="timer-section">
+                <div id="timer-display">
+                    <div id="timer-event-title"></div>
+                    <div id="timer-value">--:--:--</div>
+                    <div id="timer-phase-badge">STOPPED</div>
+                </div>
+                <div id="timer-status">Connecting to Ontime...</div>
+            </div>
+
+            <script>
+            (function() {{
+                const timerValue = document.getElementById('timer-value');
+                const timerPhase = document.getElementById('timer-phase-badge');
+                const timerTitle = document.getElementById('timer-event-title');
+                const timerStatus = document.getElementById('timer-status');
+
+                const ONTIME_HOST = '{ontime_host}';
+                const ONTIME_PORT = {ontime_port};
+
+                let lastPhase = null;
+
+                function formatTime(ms) {{
+                    if (ms == null) return '--:--:--';
+                    const negative = ms < 0;
+                    const abs = Math.abs(ms);
+                    const totalSeconds = Math.floor(abs / 1000);
+                    const hours = Math.floor(totalSeconds / 3600);
+                    const minutes = Math.floor((totalSeconds % 3600) / 60);
+                    const seconds = totalSeconds % 60;
+                    const pad = (n) => String(n).padStart(2, '0');
+                    const prefix = negative ? '-' : '';
+                    if (hours > 0) {{
+                        return prefix + hours + ':' + pad(minutes) + ':' + pad(seconds);
+                    }}
+                    return prefix + pad(minutes) + ':' + pad(seconds);
+                }}
+
+                function updateTimerDisplay(current, playback, duration) {{
+                    timerValue.textContent = formatTime(current);
+                    let badgeText = playback ? playback.toUpperCase() : 'STOPPED';
+                    if (playback === 'play') badgeText = 'RUNNING';
+                    if (playback === 'armed') badgeText = 'ARMED';
+                    timerPhase.textContent = badgeText;
+                    timerPhase.className = 'phase-' + (playback || 'stop');
+                    const isOvertime = current != null && current < 0;
+                    const isWarning = current != null && current > 0 && current < 60000;
+                    timerValue.classList.remove('overtime', 'warning', 'paused', 'stopped');
+                    if (isOvertime) {{
+                        timerValue.classList.add('overtime');
+                    }} else if (isWarning && playback === 'play') {{
+                        timerValue.classList.add('warning');
+                    }} else if (playback === 'pause') {{
+                        timerValue.classList.add('paused');
+                    }} else if (playback === 'stop' || playback === 'armed') {{
+                        timerValue.classList.add('stopped');
+                    }}
+                    if (playback !== lastPhase) {{
+                        lastPhase = playback;
+                    }}
+                }}
+
+                function handleMessage(data) {{
+                    const tag = data.tag;
+                    if (tag === 'runtime-data') {{
+                        const p = data.payload;
+                        if (p.timer) {{
+                            updateTimerDisplay(p.timer.current, p.timer.playback, p.timer.duration);
+                        }}
+                        if (p.eventNow) {{
+                            const title = p.eventNow.title || '';
+                            timerTitle.textContent = title;
+                        }}
+                    }}
+                }}
+
+                function connectOntime() {{
+                    const url = 'ws://' + ONTIME_HOST + ':' + ONTIME_PORT + '/ws';
+                    timerStatus.textContent = 'Connecting to Ontime...';
+                    timerStatus.style.display = 'block';
+                    const ws = new WebSocket(url);
+                    ws.onopen = function() {{
+                        timerStatus.style.display = 'none';
+                    }};
+                    ws.onmessage = function(event) {{
+                        try {{
+                            const data = JSON.parse(event.data);
+                            handleMessage(data);
+                        }} catch (e) {{
+                            console.error('[Ontime] Failed to parse message:', event.data, e);
+                        }}
+                    }};
+                    ws.onclose = function(event) {{
+                        timerStatus.textContent = 'Disconnected. Reconnecting...';
+                        timerStatus.style.display = 'block';
+                        setTimeout(connectOntime, 2000);
+                    }};
+                    ws.onerror = function(err) {{
+                        console.error('[Ontime] WebSocket error:', err);
+                    }};
+                }}
+
+                connectOntime();
+            }})();
+            </script>"##,
+            ontime_host = ontime_host,
+            ontime_port = ontime_port,
+        )
+    } else {
+        String::new()
+    };
+
+    let layout_class = if has_ontime { "split" } else { "notes-only" };
+
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sher Present - Stage View</title>
+    <style>
+        :root {{ --notes-font-size: {font_size}px; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ background: #1a1a1a; color: #eee; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; height: 100vh; overflow: hidden; }}
+        .container {{ display: flex; flex-direction: column; height: 100vh; }}
+        .container.split #notes-section {{ flex: 1; min-height: 0; }}
+        .container.split #timer-section {{ height: 30%; min-height: 150px; border-top: 2px solid #333; }}
+        .container.notes-only #notes-section {{ flex: 1; }}
+        #status-bar {{ display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1.5rem; background: #222; border-bottom: 2px solid #333; flex-shrink: 0; }}
+        #slide-indicator {{ font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }}
+        #presenting-badge {{ font-size: 0.875rem; padding: 0.25rem 0.75rem; border-radius: 999px; font-weight: 600; }}
+        #presenting-badge.live {{ background: #22c55e; color: #000; }}
+        #presenting-badge.idle {{ background: #555; color: #aaa; }}
+        #notes-section {{ overflow-y: auto; scroll-behavior: smooth; }}
+        #notes-scroll {{ padding: 40vh 2rem; }}
+        #notes-scroll.empty-state {{ display: flex; align-items: center; justify-content: center; min-height: 100%; padding: 2rem; }}
+        #notes-scroll .empty-message {{ color: #555; font-style: italic; font-size: 1.5rem; }}
+        .slide-notes {{ padding: 1rem 1.5rem; margin-bottom: 0.5rem; border-left: 3px solid transparent; border-radius: 4px; transition: border-color 0.3s, background 0.3s; }}
+        .slide-notes.active {{ border-left-color: #22c55e; background: rgba(34, 197, 94, 0.08); }}
+        .slide-marker {{ font-size: 0.75em; color: #666; text-transform: uppercase; letter-spacing: 0.05em; padding-bottom: 0.5rem; border-bottom: 1px solid #333; margin-bottom: 0.75rem; font-weight: 600; }}
+        .slide-notes.active .slide-marker {{ color: #22c55e; border-bottom-color: rgba(34, 197, 94, 0.3); }}
+        .slide-text {{ font-size: var(--notes-font-size); line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }}
+        .slide-text.no-notes {{ color: #555; font-style: italic; font-size: calc(var(--notes-font-size) * 0.75); }}
+        #timer-section {{ position: relative; display: flex; align-items: center; justify-content: center; }}
+        #timer-display {{ display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; padding: 1rem; }}
+        #timer-event-title {{ font-size: 1.25rem; color: #aaa; max-width: 80vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; min-height: 1.5em; }}
+        #timer-value {{ font-size: 6rem; font-weight: 700; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', 'Monaco', monospace; font-variant-numeric: tabular-nums; color: #22c55e; line-height: 1; }}
+        #timer-value.overtime {{ color: #ef4444; }}
+        #timer-value.warning {{ color: #eab308; }}
+        #timer-value.paused {{ color: #aaa; }}
+        #timer-value.stopped {{ color: #666; }}
+        #timer-phase-badge {{ font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 999px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }}
+        #timer-phase-badge.phase-play {{ background: #22c55e; color: #000; }}
+        #timer-phase-badge.phase-pause {{ background: #eab308; color: #000; }}
+        #timer-phase-badge.phase-roll {{ background: #3b82f6; color: #fff; }}
+        #timer-phase-badge.phase-stop {{ background: #555; color: #aaa; }}
+        #timer-phase-badge.phase-armed {{ background: #f97316; color: #000; }}
+        #timer-status {{ position: absolute; bottom: 0.5rem; right: 0.75rem; font-size: 0.75rem; color: #666; }}
+    </style>
+</head>
+<body>
+    <div class="container {layout_class}">
+        <div id="status-bar">
+            <span id="slide-indicator">--/--</span>
+            <span id="presenting-badge" class="idle">IDLE</span>
+        </div>
+        <div id="notes-section">
+            <div id="notes-scroll" class="empty-state">
+                <span class="empty-message">Waiting for presentation data...</span>
+            </div>
+        </div>
+        {ontime_section}
+    </div>
+    <script>
+        const slideIndicator = document.getElementById('slide-indicator');
+        const presentingBadge = document.getElementById('presenting-badge');
+        const notesScroll = document.getElementById('notes-scroll');
+        let currentSlide = 0;
+        let totalSlides = 0;
+        let isPresenting = false;
+        let notes = {{}};
+        const notesSection = document.getElementById('notes-section');
+
+        function escapeHtml(text) {{
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }}
+
+        function buildNotesBlocks() {{
+            const slideNums = Object.keys(notes).map(Number).sort(function(a, b) {{ return a - b; }});
+            if (slideNums.length === 0) {{
+                notesScroll.className = 'empty-state';
+                notesScroll.innerHTML = '<span class="empty-message">Waiting for presentation data...</span>';
+                return;
+            }}
+            notesScroll.className = '';
+            let html = '';
+            for (let i = 0; i < slideNums.length; i++) {{
+                const num = slideNums[i];
+                const text = notes[num];
+                const isActive = num === currentSlide;
+                const activeClass = isActive ? ' active' : '';
+                const hasText = text && text.trim();
+                html += '<div class="slide-notes' + activeClass + '" data-slide="' + num + '">';
+                html += '<div class="slide-marker">Slide ' + num + '</div>';
+                if (hasText) {{
+                    html += '<div class="slide-text">' + escapeHtml(text) + '</div>';
+                }} else {{
+                    html += '<div class="slide-text no-notes">No notes</div>';
+                }}
+                html += '</div>';
+            }}
+            notesScroll.innerHTML = html;
+        }}
+
+        function updateActiveSlide() {{
+            const blocks = notesScroll.querySelectorAll('.slide-notes');
+            for (let i = 0; i < blocks.length; i++) {{
+                const slideNum = parseInt(blocks[i].getAttribute('data-slide'));
+                if (slideNum === currentSlide) {{
+                    blocks[i].classList.add('active');
+                }} else {{
+                    blocks[i].classList.remove('active');
+                }}
+            }}
+            scrollToActive();
+        }}
+
+        // Where teleprompter paging has got to in the active slide's notes;
+        // null = its top. Kept rather than read back from scrollTop, which
+        // lags behind a smooth scroll when presses come quickly.
+        let pageTop = null;
+
+        function scrollToActive() {{
+            pageTop = null;
+            const active = notesScroll.querySelector('.slide-notes.active');
+            if (active) {{
+                const offset = active.offsetTop - notesSection.offsetTop - 32;
+                notesSection.scrollTo({{ top: offset, behavior: 'smooth' }});
+            }}
+        }}
+
+        // Next screenful of the active slide's notes; back to its top once
+        // its end is already on screen.
+        function pageNotes() {{
+            const active = notesScroll.querySelector('.slide-notes.active');
+            if (!active) return;
+            const top = active.offsetTop - notesSection.offsetTop - 32;
+            const bottom = active.offsetTop - notesSection.offsetTop + active.offsetHeight;
+            const view = notesSection.clientHeight;
+            const from = pageTop === null ? top : pageTop;
+            if (from + view >= bottom) {{
+                scrollToActive();
+                return;
+            }}
+            // Keep a little of the last screen as context.
+            pageTop = from + Math.round(view * 0.85);
+            notesSection.scrollTo({{ top: pageTop, behavior: 'smooth' }});
+        }}
+
+        function updateStatusBar() {{
+            slideIndicator.textContent = totalSlides > 0 ? currentSlide + ' / ' + totalSlides : '--/--';
+            if (isPresenting) {{
+                presentingBadge.textContent = 'LIVE';
+                presentingBadge.className = 'live';
+            }} else {{
+                presentingBadge.textContent = 'IDLE';
+                presentingBadge.className = 'idle';
+            }}
+        }}
+
+        function connectPresentation() {{
+            const wsUrl = 'ws://' + window.location.host + '/api/ws';
+            const ws = new WebSocket(wsUrl);
+            ws.onopen = function() {{ console.log('[Stage] WebSocket connected'); }};
+            ws.onmessage = function(event) {{
+                try {{
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'status') {{
+                        const s = data.payload;
+                        const slideChanged = currentSlide !== s.current_slide;
+                        currentSlide = s.current_slide;
+                        totalSlides = s.total_slides;
+                        isPresenting = s.is_presenting;
+                        updateStatusBar();
+                        if (slideChanged) {{ updateActiveSlide(); }}
+                    }} else if (data.type === 'notes') {{
+                        notes = data.payload;
+                        buildNotesBlocks();
+                    }} else if (data.type === 'scroll' && data.payload.direction === 'page') {{
+                        pageNotes();
+                    }} else if (data.type === 'scroll') {{
+                        const pixels = data.payload.pixels || 150;
+                        const direction = data.payload.direction === 'up' ? -1 : 1;
+                        notesSection.scrollBy({{ top: direction * pixels, behavior: 'smooth' }});
+                    }}
+                }} catch (e) {{
+                    console.error('[Stage] Failed to parse message:', event.data, e);
+                }}
+            }};
+            ws.onclose = function(event) {{
+                setTimeout(connectPresentation, 2000);
+            }};
+            ws.onerror = function(err) {{
+                console.error('[Stage] WebSocket error:', err);
+            }};
+        }}
+
+        connectPresentation();
+    </script>
+</body>
+</html>"##,
+        font_size = font_size,
+        layout_class = layout_class,
+        ontime_section = ontime_section,
+    )
+}

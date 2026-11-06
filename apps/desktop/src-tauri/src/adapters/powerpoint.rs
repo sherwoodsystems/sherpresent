@@ -1,26 +1,88 @@
-use super::{PresentationAdapter, PresentationState, SlideInfo};
-use crate::applescript::run_applescript;
+use super::reply::{
+    notes_text, parse_live_status, parse_names, parse_presentation_state, parse_slide_info,
+};
+use super::{parse_notes_response, LiveStatus, PresentationAdapter, PresentationState, SlideInfo};
+use crate::applescript::{is_app_running, require_running, run_applescript};
+use std::collections::HashMap;
 
-/// PowerPoint's fixed zoom levels for presenter view notes
-const ZOOM_LEVELS: [i32; 5] = [100, 150, 200, 300, 400];
+const APP_NAME: &str = "Microsoft PowerPoint";
+
+/// AppleScript that sets `noteText` to the notes of slide `idx` of `pres`.
+///
+/// Index, not `repeat with s in shapes of ...`: since PowerPoint 16.113
+/// iterating notes-page shape references hangs PowerPoint indefinitely (and
+/// our AppleScript lock with it). Match the body placeholder: "last shape
+/// with text" picks the slide number.
+const CURRENT_NOTES: &str = r#"
+                set notesSlide to notes page of slide idx of pres
+                repeat with j from 1 to count shapes of notesSlide
+                    try
+                        if placeholder type of placeholder format of shape j of notesSlide is placeholder type body placeholder then
+                            set t to content of text range of text frame of shape j of notesSlide
+                            if t is not missing value then set noteText to t
+                            exit repeat
+                        end if
+                    end try
+                end repeat"#;
 
 pub struct PowerPointAdapter;
 
+impl PowerPointAdapter {
+    /// Run a slide show command (`next slide`, `previous slide`) and report
+    /// where the show ended up.
+    fn step(&self, name: &str, command: &str) -> Result<SlideInfo, String> {
+        require_running(APP_NAME)?;
+        let script = format!(
+            r#"tell application "Microsoft PowerPoint"
+                set ssView to slide show view of slide show window of presentation "{name}"
+                set totalSlides to count slides of presentation "{name}"
+                go to {command} ssView
+                set newPos to current show position of ssView
+                return "OK," & (newPos as text) & "," & (totalSlides as text)
+            end tell"#
+        );
+        parse_slide_info(&run_applescript(&script)?)
+    }
+}
+
 impl PresentationAdapter for PowerPointAdapter {
     fn get_open_presentations(&self) -> Result<Vec<String>, String> {
-        let script = r#"tell application "Microsoft PowerPoint" to get name of every presentation"#;
-
-        match run_applescript(script) {
-            Ok(result) if result.is_empty() => Ok(vec![]),
-            Ok(result) => {
-                // AppleScript returns comma-separated list
-                Ok(result.split(", ").map(|s| s.trim().to_string()).collect())
-            }
-            Err(_) => Ok(vec![]), // PowerPoint not running or no presentations
+        if !is_app_running(APP_NAME) {
+            return Ok(vec![]);
         }
+        let script = r#"tell application "Microsoft PowerPoint" to get name of every presentation"#;
+        Ok(run_applescript(script)
+            .map(|r| parse_names(&r))
+            .unwrap_or_default())
+    }
+
+    fn get_presenting_presentations(&self) -> Result<Vec<String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(vec![]);
+        }
+        // Same presenting test as `get_presentation_state`.
+        let script = r#"tell application "Microsoft PowerPoint"
+                set names to {}
+                repeat with i from 1 to count presentations
+                    try
+                        set pres to presentation i
+                        set pos to current show position of slide show view of slide show window of pres
+                        set end of names to name of pres
+                    end try
+                end repeat
+                return names
+            end tell"#;
+        Ok(parse_names(&run_applescript(script)?))
     }
 
     fn get_presentation_state(&self, name: &str) -> Result<PresentationState, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(PresentationState {
+                is_open: false,
+                is_presenting: false,
+            });
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 set isOpen to false
@@ -44,121 +106,95 @@ impl PresentationAdapter for PowerPointAdapter {
             name
         );
 
-        let result = run_applescript(&script)?;
-        let parts: Vec<&str> = result.split(',').collect();
-
-        if parts.len() != 2 {
-            return Err("Unexpected response format".to_string());
-        }
-
-        Ok(PresentationState {
-            is_open: parts[0].trim() == "true",
-            is_presenting: parts[1].trim() == "true",
-        })
+        parse_presentation_state(&run_applescript(&script)?)
     }
 
     fn get_slide_info(&self, name: &str) -> Result<SlideInfo, String> {
+        require_running(APP_NAME)?;
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
-                set currentPos to current show position of slide show view of slide show window of presentation "{}"
-                set totalSlides to count slides of presentation "{}"
+                set currentPos to current show position of slide show view of slide show window of presentation "{name}"
+                set totalSlides to count slides of presentation "{name}"
                 return (currentPos as text) & "," & (totalSlides as text)
-            end tell"#,
-            name, name
+            end tell"#
         );
-
-        let result = run_applescript(&script)?;
-        let parts: Vec<&str> = result.split(',').collect();
-
-        if parts.len() != 2 {
-            return Err("Unexpected response format".to_string());
-        }
-
-        let current = parts[0]
-            .trim()
-            .parse()
-            .map_err(|_| "Failed to parse current slide")?;
-        let total = parts[1]
-            .trim()
-            .parse()
-            .map_err(|_| "Failed to parse total slides")?;
-
-        Ok(SlideInfo { current, total })
+        parse_slide_info(&run_applescript(&script)?)
     }
 
     fn next_slide(&self, name: &str) -> Result<SlideInfo, String> {
-        let script = format!(
-            r#"tell application "Microsoft PowerPoint"
-                set ssView to slide show view of slide show window of presentation "{}"
-                set pres to presentation "{}"
-                set oldPos to current show position of ssView
-                set totalSlides to count slides of pres
-                if oldPos >= totalSlides then
-                    return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
-                end if
-                go to next slide ssView
-                set newPos to current show position of ssView
-                return "OK," & (newPos as text) & "," & (totalSlides as text)
-            end tell"#,
-            name, name
-        );
-
-        let result = run_applescript(&script)?;
-        let parts: Vec<&str> = result.split(',').collect();
-
-        if parts.len() != 3 {
-            return Err("Unexpected response format".to_string());
-        }
-
-        let current = parts[1]
-            .trim()
-            .parse()
-            .map_err(|_| "Failed to parse current slide")?;
-        let total = parts[2]
-            .trim()
-            .parse()
-            .map_err(|_| "Failed to parse total slides")?;
-
-        Ok(SlideInfo { current, total })
+        self.step(name, "next slide")
     }
 
     fn prev_slide(&self, name: &str) -> Result<SlideInfo, String> {
+        self.step(name, "previous slide")
+    }
+
+    fn get_presenter_notes(&self, name: &str) -> Result<Option<String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(None);
+        }
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
-                set ssView to slide show view of slide show window of presentation "{}"
+                set pres to presentation "{name}"
+                set idx to current show position of slide show view of slide show window of pres
+                set noteText to ""
+                {CURRENT_NOTES}
+                return noteText
+            end tell"#
+        );
+
+        Ok(run_applescript(&script).ok().and_then(|r| notes_text(&r)))
+    }
+
+    fn get_all_presenter_notes(&self, name: &str) -> Result<HashMap<i32, String>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(HashMap::new());
+        }
+
+        let script = format!(
+            r#"tell application "Microsoft PowerPoint"
                 set pres to presentation "{}"
-                set oldPos to current show position of ssView
                 set totalSlides to count slides of pres
-                if oldPos <= 1 then
-                    return "BOUNDARY," & (oldPos as text) & "," & (totalSlides as text)
-                end if
-                go to previous slide ssView
-                set newPos to current show position of ssView
-                return "OK," & (newPos as text) & "," & (totalSlides as text)
+                set bodyIdx to -1
+                try
+                    set notesSlide to notes page of slide 1 of pres
+                    set shapeCount to count shapes of notesSlide
+                    repeat with j from 1 to shapeCount
+                        try
+                            if placeholder type of placeholder format of shape j of notesSlide is placeholder type body placeholder then
+                                set bodyIdx to j
+                                exit repeat
+                            end if
+                        end try
+                    end repeat
+                end try
+                if bodyIdx = -1 then set bodyIdx to 2
+                set output to ""
+                repeat with i from 1 to totalSlides
+                    set noteText to ""
+                    try
+                        set noteText to content of text range of text frame of shape bodyIdx of notes page of slide i of pres
+                        if noteText is missing value then set noteText to ""
+                    on error
+                        set noteText to ""
+                    end try
+                    set output to output & (i as text) & "|||" & noteText & linefeed
+                end repeat
+                return output
             end tell"#,
-            name, name
+            name
         );
 
         let result = run_applescript(&script)?;
-        let parts: Vec<&str> = result.split(',').collect();
-
-        if parts.len() != 3 {
-            return Err("Unexpected response format".to_string());
-        }
-
-        let current = parts[1]
-            .trim()
-            .parse()
-            .map_err(|_| "Failed to parse current slide")?;
-        let total = parts[2]
-            .trim()
-            .parse()
-            .map_err(|_| "Failed to parse total slides")?;
-
-        Ok(SlideInfo { current, total })
+        Ok(parse_notes_response(&result))
     }
 
     fn get_notes_zoom(&self) -> Result<Option<i32>, String> {
+        if !is_app_running(APP_NAME) {
+            return Ok(None);
+        }
+
         let script = r#"tell application "Microsoft PowerPoint"
             try
                 set pvWindow to presenter view window 1
@@ -170,19 +206,13 @@ impl PresentationAdapter for PowerPointAdapter {
             end try
         end tell"#;
 
-        let result = run_applescript(script)?;
-
-        if result.starts_with("ERROR:") {
-            return Ok(None);
-        }
-
-        match result.trim().parse() {
-            Ok(zoom) => Ok(Some(zoom)),
-            Err(_) => Ok(None),
-        }
+        // An "ERROR:" reply (no presenter view) fails to parse, which is None too.
+        Ok(run_applescript(script)?.trim().parse().ok())
     }
 
     fn set_notes_zoom(&self, level: i32) -> Result<(), String> {
+        require_running(APP_NAME)?;
+
         let script = format!(
             r#"tell application "Microsoft PowerPoint"
                 try
@@ -198,33 +228,64 @@ impl PresentationAdapter for PowerPointAdapter {
         );
 
         let result = run_applescript(&script)?;
-
-        if result.starts_with("ERROR:") {
-            Err(result[6..].to_string())
-        } else {
-            Ok(())
+        match result.strip_prefix("ERROR:") {
+            Some(err) => Err(err.to_string()),
+            None => Ok(()),
         }
     }
-}
 
-impl PowerPointAdapter {
-    /// Get the next zoom level up from current
-    pub fn get_next_zoom_level(current: i32) -> i32 {
-        for &level in &ZOOM_LEVELS {
-            if level > current {
-                return level;
-            }
+    /// Batched live status — one AppleScript call. No build info: PowerPoint
+    /// for Mac's dictionary has no click index/count (that's Windows COM
+    /// only), and naming them is a *compile* error that no try block catches.
+    fn get_live_status(&self, name: &str) -> LiveStatus {
+        if !is_app_running(APP_NAME) {
+            return LiveStatus::default();
         }
-        ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]
-    }
 
-    /// Get the next zoom level down from current
-    pub fn get_prev_zoom_level(current: i32) -> i32 {
-        for &level in ZOOM_LEVELS.iter().rev() {
-            if level < current {
-                return level;
+        let script = format!(
+            r#"tell application "Microsoft PowerPoint"
+                set isOpen to "false"
+                set isPresenting to "false"
+                set currentSlide to "0"
+                set totalSlides to "0"
+                set noteText to ""
+                set zoomLevel to "0"
+                try
+                    set pres to presentation "{name}"
+                    set isOpen to "true"
+                    try
+                        set ssw to slide show window of pres
+                        set ssView to slide show view of ssw
+                        set isPresenting to "true"
+                        set currentSlide to (current show position of ssView) as text
+                        set totalSlides to (count slides of pres) as text
+                        try
+                            set idx to current show position of ssView
+                            {CURRENT_NOTES}
+                        end try
+                        try
+                            set pvWindow to presenter view window 1
+                            set zoomLevel to (notes zoom of presenter tool of pvWindow) as text
+                        end try
+                    end try
+                end try
+                return isOpen & "|||" & isPresenting & "|||" & currentSlide & "|||" & totalSlides & "|||" & zoomLevel & "|||" & noteText
+            end tell"#
+        );
+
+        let reply = match run_applescript(&script) {
+            Ok(reply) => reply,
+            Err(e) => {
+                log::warn!("PowerPoint get_live_status error: {}", e);
+                return LiveStatus::default();
             }
+        };
+        let Some((status, extra)) = parse_live_status(&reply, 1) else {
+            return LiveStatus::default();
+        };
+        LiveStatus {
+            zoom_level: extra[0].trim().parse().ok().filter(|&z: &i32| z > 0),
+            ..status
         }
-        ZOOM_LEVELS[0]
     }
 }
